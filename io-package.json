@@ -1,0 +1,110 @@
+{
+  "common": {
+    "name": "assistant",
+    "version": "0.0.1",
+    "title": "Assistant",
+    "titleLang": {
+      "en": "Assistant",
+      "de": "Assistent"
+    },
+    "desc": {
+      "en": "LLM assistant that answers questions and controls any ioBroker state via tool-calling",
+      "de": "LLM-Assistent, der Fragen beantwortet und beliebige ioBroker-States per Tool-Calling steuert"
+    },
+    "authors": [
+      "GermanBluefox"
+    ],
+    "keywords": [
+      "assistant",
+      "llm",
+      "voice",
+      "openai",
+      "anthropic"
+    ],
+    "license": "MIT",
+    "platform": "Javascript/Node.js",
+    "main": "build/main.js",
+    "icon": "assistant.png",
+    "enabled": true,
+    "extIcon": "https://raw.githubusercontent.com/GermanBluefox/ioBroker.assistant/main/admin/assistant.png",
+    "readme": "https://github.com/GermanBluefox/ioBroker.assistant/blob/main/README.md",
+    "loglevel": "info",
+    "mode": "daemon",
+    "type": "general",
+    "compact": true,
+    "connectionType": "cloud",
+    "dataSource": "push",
+    "adminUI": {
+      "config": "json"
+    },
+    "dependencies": [
+      {
+        "js-controller": ">=5.0.0"
+      }
+    ],
+    "messagebox": true
+  },
+  "native": {
+    "provider": "openai",
+    "apiKey": "",
+    "model": "gpt-4o-mini",
+    "baseUrl": "",
+    "maxTokens": 1024,
+    "allowControl": true,
+    "systemPrompt": "Du bist ein hilfreicher Smart-Home-Assistent fuer ioBroker. Antworte kurz und auf Deutsch. Nutze die Tools, um States zu lesen (find_states/get_state) oder zu setzen (set_state). Erfinde niemals Werte - wenn du etwas nicht weisst, sag es."
+  },
+  "objects": [],
+  "instanceObjects": [
+    {
+      "_id": "info",
+      "type": "channel",
+      "common": { "name": "Information" },
+      "native": {}
+    },
+    {
+      "_id": "info.connection",
+      "type": "state",
+      "common": {
+        "name": "Provider configured/reachable",
+        "type": "boolean",
+        "role": "indicator.connected",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    },
+    {
+      "_id": "text",
+      "type": "channel",
+      "common": { "name": "Text interface" },
+      "native": {}
+    },
+    {
+      "_id": "text.request",
+      "type": "state",
+      "common": {
+        "name": "Ask the assistant (write your question here)",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": true,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "text.response",
+      "type": "state",
+      "common": {
+        "name": "Assistant answer",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    }
+  ]
+}

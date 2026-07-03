@@ -1,0 +1,67 @@
+{
+  "i18n": true,
+  "type": "panel",
+  "items": {
+    "_header": {
+      "type": "header",
+      "size": 2,
+      "text": "LLM assistant"
+    },
+    "provider": {
+      "type": "select",
+      "label": "Provider",
+      "options": [
+        { "label": "OpenAI", "value": "openai" },
+        { "label": "Anthropic (Claude)", "value": "anthropic" }
+      ],
+      "default": "openai",
+      "sm": 12,
+      "md": 4
+    },
+    "model": {
+      "type": "text",
+      "label": "Model",
+      "help": "e.g. gpt-4o-mini, gpt-4o, claude-sonnet-4-6",
+      "default": "gpt-4o-mini",
+      "sm": 12,
+      "md": 4
+    },
+    "apiKey": {
+      "type": "password",
+      "label": "API key",
+      "sm": 12,
+      "md": 4
+    },
+    "baseUrl": {
+      "type": "text",
+      "label": "Base URL (optional)",
+      "help": "Override the endpoint, e.g. https://api.groq.com/openai/v1 for Groq. Leave empty for the provider default.",
+      "sm": 12,
+      "md": 8
+    },
+    "maxTokens": {
+      "type": "number",
+      "label": "Max tokens",
+      "default": 1024,
+      "min": 64,
+      "max": 8192,
+      "sm": 6,
+      "md": 2
+    },
+    "allowControl": {
+      "type": "checkbox",
+      "label": "Allow controlling states",
+      "help": "If off, the assistant can only read states, not set_state.",
+      "default": true,
+      "sm": 6,
+      "md": 2
+    },
+    "systemPrompt": {
+      "type": "text",
+      "label": "System prompt",
+      "minRows": 4,
+      "sm": 12,
+      "md": 12
+    }
+  }
+}
