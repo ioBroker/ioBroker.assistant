@@ -2,7 +2,7 @@
     "name": "iobroker.assistant",
     "version": "0.0.1",
     "description": "LLM assistant for ioBroker — ask about and control any state via an LLM with tool-calling",
-    "author": "GermanBluefox",
+    "author": "ioBroker",
     "license": "MIT",
     "keywords": [
         "ioBroker",
@@ -44,9 +44,9 @@
         "update-packages": "npx -y npm-check-updates --upgrade"
     },
     "bugs": {
-        "url": "https://github.com/GermanBluefox/ioBroker.assistant/issues"
+        "url": "https://github.com/ioBroker/ioBroker.assistant/issues"
     },
-    "homepage": "https://github.com/GermanBluefox/ioBroker.assistant",
+    "homepage": "https://github.com/ioBroker/ioBroker.assistant",
     "files": [
         "admin/",
         "build/",
