@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Tool } from './tools';
 
 export interface LlmAgentOptions {
-    provider: 'openai' | 'anthropic';
+    provider: 'openai' | 'anthropic' | 'custom';
     apiKey: string;
     model: string;
     baseUrl?: string;
@@ -55,6 +55,43 @@ export class LlmAgent {
 
     public async ask(question: string): Promise<string> {
         return this.provider === 'anthropic' ? this.askAnthropic(question) : this.askOpenAI(question);
+    }
+
+    /** Lightweight validation of the provider credentials (used by the settings Test button). */
+    public async testConnection(): Promise<{ ok: boolean; error?: string }> {
+        try {
+            if (this.provider === 'anthropic') {
+                const client = this.anthropic as Anthropic;
+                await client.messages.create({
+                    model: this.model,
+                    max_tokens: 1,
+                    messages: [{ role: 'user', content: 'ping' }],
+                });
+            } else {
+                const client = this.openai as OpenAI;
+                await client.models.list();
+            }
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: (e as Error).message };
+        }
+    }
+
+    /** List the provider's available model ids (for the settings autocomplete). */
+    public async listModels(): Promise<string[]> {
+        if (this.provider === 'anthropic') {
+            const client = this.anthropic as Anthropic;
+            const res = (await client.models.list()) as unknown as { data?: { id: string }[] };
+            return (res.data || []).map(m => m.id);
+        }
+        const client = this.openai as OpenAI;
+        const res = (await client.models.list()) as unknown as { data?: { id: string }[] };
+        // OpenAI lists many non-chat models (embeddings, tts, whisper, …) — filter to chat-capable-ish.
+        const EXCLUDE = /embedding|whisper|tts|audio|dall-e|moderation|image|realtime|transcribe|search|davinci|babbage|codex/i;
+        return (res.data || [])
+            .map(m => String(m.id))
+            .filter(id => !EXCLUDE.test(id))
+            .sort();
     }
 
     private async runTool(name: string, args: Record<string, unknown>): Promise<unknown> {

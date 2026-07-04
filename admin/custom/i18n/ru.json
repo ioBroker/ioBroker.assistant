@@ -1,0 +1,12 @@
+{
+  "custom_assistant_No devices detected. Assign states to rooms and functions in ioBroker.": "Устройства не обнаружены. Назначьте состояния комнатам и функциям в ioBroker.",
+  "custom_assistant_Per-device permissions": "Разрешения для каждого устройства",
+  "custom_assistant_Start the assistant instance to load the device list.": "Запустите экземпляр помощника, чтобы загрузить список устройств.",
+  "custom_assistant_device": "Устройство",
+  "custom_assistant_filter": "Фильтр",
+  "custom_assistant_hint": "Снимите флажок «Чтение», чтобы скрыть устройство от голосового помощника, или снимите флажок «Запись», чтобы оставить его только для чтения (например, блокировка). По умолчанию устройствам разрешен полный доступ.",
+  "custom_assistant_read": "Читать",
+  "custom_assistant_room": "Комната",
+  "custom_assistant_type": "Тип",
+  "custom_assistant_write": "Писать"
+}

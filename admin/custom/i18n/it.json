@@ -1,0 +1,12 @@
+{
+  "custom_assistant_No devices detected. Assign states to rooms and functions in ioBroker.": "Nessun dispositivo rilevato. Assegna stati a stanze e funzioni in ioBroker.",
+  "custom_assistant_Per-device permissions": "Autorizzazioni per dispositivo",
+  "custom_assistant_Start the assistant instance to load the device list.": "Avvia l'istanza dell'assistente per caricare l'elenco dei dispositivi.",
+  "custom_assistant_device": "Dispositivo",
+  "custom_assistant_filter": "Filtro",
+  "custom_assistant_hint": "Deseleziona \"Lettura\" per nascondere un dispositivo all'assistente, oppure deseleziona \"Scrittura\" per mantenerlo in sola lettura (ad esempio, per bloccare le serrature). Per impostazione predefinita, i dispositivi sono completamente accessibili.",
+  "custom_assistant_read": "Leggere",
+  "custom_assistant_room": "Camera",
+  "custom_assistant_type": "Tipo",
+  "custom_assistant_write": "Scrivere"
+}

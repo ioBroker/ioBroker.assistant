@@ -1,0 +1,12 @@
+{
+  "custom_assistant_No devices detected. Assign states to rooms and functions in ioBroker.": "Пристроїв не виявлено. Призначте стани кімнатам та функціям в ioBroker.",
+  "custom_assistant_Per-device permissions": "Дозволи для кожного пристрою",
+  "custom_assistant_Start the assistant instance to load the device list.": "Запустіть екземпляр помічника, щоб завантажити список пристроїв.",
+  "custom_assistant_device": "Пристрій",
+  "custom_assistant_filter": "Фільтр",
+  "custom_assistant_hint": "Зніміть позначку «Читання», щоб приховати пристрій від помічника, або «Запис», щоб залишити його в режимі лише для читання (наприклад, блокування). За замовчуванням пристрої повністю дозволені.",
+  "custom_assistant_read": "Читати",
+  "custom_assistant_room": "Кімната",
+  "custom_assistant_type": "Тип",
+  "custom_assistant_write": "Написати"
+}

@@ -1,67 +1,192 @@
 {
-  "i18n": true,
-  "type": "panel",
-  "items": {
-    "_header": {
-      "type": "header",
-      "size": 2,
-      "text": "LLM assistant"
-    },
-    "provider": {
-      "type": "select",
-      "label": "Provider",
-      "options": [
-        { "label": "OpenAI", "value": "openai" },
-        { "label": "Anthropic (Claude)", "value": "anthropic" }
-      ],
-      "default": "openai",
-      "sm": 12,
-      "md": 4
-    },
-    "model": {
-      "type": "text",
-      "label": "Model",
-      "help": "e.g. gpt-4o-mini, gpt-4o, claude-sonnet-4-6",
-      "default": "gpt-4o-mini",
-      "sm": 12,
-      "md": 4
-    },
-    "apiKey": {
-      "type": "password",
-      "label": "API key",
-      "sm": 12,
-      "md": 4
-    },
-    "baseUrl": {
-      "type": "text",
-      "label": "Base URL (optional)",
-      "help": "Override the endpoint, e.g. https://api.groq.com/openai/v1 for Groq. Leave empty for the provider default.",
-      "sm": 12,
-      "md": 8
-    },
-    "maxTokens": {
-      "type": "number",
-      "label": "Max tokens",
-      "default": 1024,
-      "min": 64,
-      "max": 8192,
-      "sm": 6,
-      "md": 2
-    },
-    "allowControl": {
-      "type": "checkbox",
-      "label": "Allow controlling states",
-      "help": "If off, the assistant can only read states, not set_state.",
-      "default": true,
-      "sm": 6,
-      "md": 2
-    },
-    "systemPrompt": {
-      "type": "text",
-      "label": "System prompt",
-      "minRows": 4,
-      "sm": 12,
-      "md": 12
+    "i18n": true,
+    "type": "tabs",
+    "items": {
+        "_main": {
+            "type": "panel",
+            "label": "Settings",
+            "items": {
+                "_header": {
+                    "type": "header",
+                    "size": 2,
+                    "text": "LLM assistant"
+                },
+                "provider": {
+                    "newLine": true,
+                    "type": "select",
+                    "label": "Provider",
+                    "options": [
+                        { "label": "OpenAI", "value": "openai" },
+                        { "label": "Anthropic (Claude)", "value": "anthropic" },
+                        { "label": "OpenAI-compatible (custom)", "value": "custom" }
+                    ],
+                    "default": "openai",
+                    "sm": 12,
+                    "md": 4
+                },
+                "credentialType": {
+                    "newLine": true,
+                    "type": "select",
+                    "label": "Credential mode",
+                    "options": [
+                        { "label": "Store key in adapter", "value": "manual" },
+                        { "label": "Central credential store", "value": "manager" }
+                    ],
+                    "default": "manual",
+                    "sm": 12,
+                    "md": 4
+                },
+                "apiKey": {
+                    "type": "password",
+                    "label": "API key",
+                    "hidden": "data.credentialType === 'manager'",
+                    "sm": 12,
+                    "md": 4
+                },
+                "credentialIdApiKey": {
+                    "type": "credential",
+                    "credentialType": "ai",
+                    "label": "API-key credential",
+                    "hidden": "data.credentialType !== 'manager'",
+                    "sm": 12,
+                    "md": 4
+                },
+                "model": {
+                    "newLine": true,
+                    "type": "autocompleteSendTo",
+                    "command": "getModels",
+                    "jsonData": "{\"provider\":\"${data.provider}\",\"apiKey\":\"${data.apiKey}\",\"credentialType\":\"${data.credentialType}\",\"credentialId\":\"${data.credentialIdApiKey}\",\"baseUrl\":\"${data.baseUrl}\"}",
+                    "alsoDependsOn": ["provider", "credentialType", "apiKey", "credentialIdApiKey", "baseUrl"],
+                    "freeSolo": true,
+                    "label": "Model",
+                    "help": "Loaded from the provider (instance must run); you can also type a model id.",
+                    "default": "gpt-4o-mini",
+                    "sm": 12,
+                    "md": 4
+                },
+                "baseUrl": {
+                    "type": "text",
+                    "label": "Base URL (optional)",
+                    "help": "Override the endpoint, e.g. https://api.groq.com/openai/v1 for Groq. Leave empty for the provider default.",
+                    "hidden": "data.provider !== 'custom'",
+                    "sm": 12,
+                    "md": 8
+                },
+                "_testConnection": {
+                    "newLine": true,
+                    "type": "sendTo",
+                    "label": "Test connection",
+                    "command": "testApiConnection",
+                    "jsonData": "{\"provider\":\"${data.provider}\",\"apiKey\":\"${data.apiKey}\",\"credentialType\":\"${data.credentialType}\",\"credentialId\":\"${data.credentialIdApiKey}\"}",
+                    "variant": "outlined",
+                    "disabled": "data.credentialType === 'manager' ? !data.credentialIdApiKey : !data.apiKey",
+                    "sm": 12,
+                    "md": 4
+                },
+                "maxTokens": {
+                    "newLine": true,
+                    "type": "number",
+                    "label": "Max tokens",
+                    "default": 1024,
+                    "min": 64,
+                    "max": 8192,
+                    "sm": 6,
+                    "md": 2
+                },
+                "_accessHeader": {
+                    "newLine": true,
+                    "type": "header",
+                    "size": 2,
+                    "text": "Access / permissions"
+                },
+                "readObjects": {
+                    "newLine": true,
+                    "type": "select",
+                    "label": "Object read access",
+                    "options": [
+                        { "label": "Only devices, rooms, functions", "value": "devices" },
+                        { "label": "Any object (get_object/search_objects)", "value": "all" }
+                    ],
+                    "default": "devices",
+                    "sm": 12,
+                    "md": 4
+                },
+                "allowWriteStates": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Allow writing states (control devices)",
+                    "default": true,
+                    "sm": 6,
+                    "md": 3
+                },
+                "allowHistory": {
+                    "type": "checkbox",
+                    "label": "Allow reading history",
+                    "default": true,
+                    "sm": 6,
+                    "md": 3
+                },
+                "allowReadLogs": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Allow reading logs",
+                    "default": false,
+                    "sm": 6,
+                    "md": 3
+                },
+                "allowWriteLogs": {
+                    "type": "checkbox",
+                    "label": "Allow writing to the log",
+                    "default": false,
+                    "sm": 6,
+                    "md": 3
+                },
+                "allowFiles": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Allow reading files",
+                    "default": false,
+                    "sm": 6,
+                    "md": 3
+                },
+                "allowSystemInfo": {
+                    "type": "checkbox",
+                    "label": "Allow system info (hosts, instances, adapters)",
+                    "default": true,
+                    "sm": 6,
+                    "md": 3
+                },
+                "allowObjectChange": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Allow changing objects and files (dangerous)",
+                    "default": false,
+                    "sm": 12,
+                    "md": 6
+                },
+                "systemPrompt": {
+                    "newLine": true,
+                    "type": "text",
+                    "label": "System prompt",
+                    "minRows": 4,
+                    "sm": 12,
+                    "md": 12
+                }
+            }
+        },
+        "_devices": {
+            "type": "panel",
+            "label": "Devices",
+            "items": {
+                "_deviceAcl": {
+                    "type": "custom",
+                    "i18n": true,
+                    "url": "custom/customComponents.js",
+                    "name": "ConfigCustomAssistant/Components/DeviceAclComponent",
+                    "bundlerType": "module",
+                    "sm": 12
+                }
+            }
+        }
     }
-  }
 }

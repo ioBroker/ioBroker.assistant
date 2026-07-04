@@ -1,0 +1,12 @@
+{
+    "custom_assistant_No devices detected. Assign states to rooms and functions in ioBroker.": "No devices detected. Assign states to rooms and functions in ioBroker.",
+    "custom_assistant_Per-device permissions": "Per-device permissions",
+    "custom_assistant_Start the assistant instance to load the device list.": "Start the assistant instance to load the device list.",
+    "custom_assistant_device": "Device",
+    "custom_assistant_filter": "Filter",
+    "custom_assistant_hint": "Uncheck read to hide a device from the assistant, or uncheck write to keep it read-only (e.g. locks). Devices default to fully allowed.",
+    "custom_assistant_read": "Read",
+    "custom_assistant_room": "Room",
+    "custom_assistant_type": "Type",
+    "custom_assistant_write": "Write"
+}

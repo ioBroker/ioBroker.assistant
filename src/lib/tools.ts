@@ -1,10 +1,6 @@
-/**
- * Tools the LLM can call. Each is backed by the native ioBroker adapter API,
- * so the assistant can read and control ANY state — no virtual-device tree,
- * no rule-based NLU. The LLM decides which tool to use.
- */
-import type { AdapterConfig } from '../types';
+import type { InProcessMcp } from '@iobroker/mcp-server';
 
+/** An LLM-callable tool: name, description, JSON-schema parameters, and a runner. */
 export interface Tool {
     name: string;
     description: string;
@@ -13,178 +9,177 @@ export interface Tool {
     run(args: Record<string, unknown>): Promise<unknown>;
 }
 
-export function createTools(adapter: ioBroker.Adapter, config: AdapterConfig): Tool[] {
-    return [
-        {
-            name: 'list_rooms',
-            description: 'List all rooms defined in ioBroker (enum.rooms) with their member object ids.',
-            parameters: { type: 'object', properties: {}, additionalProperties: false },
-            run: async () => listEnum(adapter, 'rooms'),
-        },
-        {
-            name: 'list_functions',
-            description:
-                'List all functions/categories in ioBroker (enum.functions), e.g. light, heating, blinds, with their member object ids.',
-            parameters: { type: 'object', properties: {}, additionalProperties: false },
-            run: async () => listEnum(adapter, 'functions'),
-        },
-        {
-            name: 'find_states',
-            description:
-                'Find ioBroker states, optionally filtered by room and/or function (enum) and/or a text query on id/name. ' +
-                'Returns id, name, current value, unit, role and writable flag. Use this to answer questions about devices and sensors.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    room: { type: 'string', description: 'room enum id or name substring (optional)' },
-                    func: {
-                        type: 'string',
-                        description: 'function enum id or name substring, e.g. "light" (optional)',
-                    },
-                    query: { type: 'string', description: 'substring to match in the state id or name (optional)' },
-                },
-                additionalProperties: false,
-            },
-            run: async args => findStates(adapter, args),
-        },
-        {
-            name: 'get_state',
-            description: 'Read the current value of a specific ioBroker state id.',
-            parameters: {
-                type: 'object',
-                properties: { id: { type: 'string' } },
-                required: ['id'],
-                additionalProperties: false,
-            },
-            run: async args => {
-                const id = String(args.id);
-                const st = await adapter.getForeignStateAsync(id);
-                return { id, value: st ? st.val : null, ack: st ? st.ack : null, ts: st ? st.ts : null };
-            },
-        },
-        {
-            name: 'set_state',
-            description:
-                'Control an ioBroker state (writes with ack=false, i.e. a command to a device). Only use for actual device control.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    id: { type: 'string' },
-                    value: { description: 'boolean | number | string' },
-                },
-                required: ['id', 'value'],
-                additionalProperties: false,
-            },
-            run: async args => {
-                if (!config.allowControl) {
-                    return { ok: false, error: 'controlling states is disabled in the adapter settings' };
+/** Per-device read/write override, keyed by {@link deviceKey}. Absent → governed by the coarse toggles. */
+export type DeviceAcl = Record<string, { read: boolean; write: boolean }>;
+
+/** The access toggles from the adapter config that gate which MCP tools the LLM may use. */
+export interface ToolAccess {
+    allowWriteStates: boolean;
+    allowObjectChange: boolean;
+    readObjects: 'devices' | 'all';
+    allowReadLogs: boolean;
+    allowWriteLogs: boolean;
+    allowHistory: boolean;
+    allowFiles: boolean;
+    allowSystemInfo: boolean;
+    deviceAcl: DeviceAcl;
+}
+
+/** Stable key for a detected device across backend enforcement and the admin ACL editor. */
+export function deviceKey(room: string, name: string, type: string): string {
+    return `${room}|${name}|${type}`;
+}
+
+type ToolCategory =
+    | 'stateRead'
+    | 'stateWrite'
+    | 'devices'
+    | 'objectReadAll'
+    | 'logRead'
+    | 'logWrite'
+    | 'history'
+    | 'files'
+    | 'system'
+    | 'objectChange';
+
+/** Maps every known `@iobroker/mcp-server` tool to an access category. */
+const TOOL_CATEGORY: Record<string, ToolCategory> = {
+    get_states: 'stateRead',
+    list_devices: 'devices',
+    list_rooms: 'devices',
+    list_functions: 'devices',
+    set_state: 'stateWrite',
+    set_states: 'stateWrite',
+    get_object: 'objectReadAll',
+    search_objects: 'objectReadAll',
+    get_logs: 'logRead',
+    write_log: 'logWrite',
+    history_query: 'history',
+    read_file: 'files',
+    list_files: 'files',
+    file_exists: 'files',
+    system_info: 'system',
+    list_hosts: 'system',
+    list_instances: 'system',
+    list_adapters: 'system',
+    search_adapter_repository: 'system',
+    ping_host: 'system',
+    set_object: 'objectChange',
+    delete_object: 'objectChange',
+    create_state: 'objectChange',
+    create_scene: 'objectChange',
+    write_file: 'objectChange',
+    delete_file: 'objectChange',
+    rename_file: 'objectChange',
+    mkdir: 'objectChange',
+};
+
+/** Decide whether a tool is allowed by the current access configuration. Unknown tools are denied. */
+export function isToolAllowed(name: string, access: ToolAccess): boolean {
+    switch (TOOL_CATEGORY[name]) {
+        case 'stateRead':
+        case 'devices':
+            return true; // reading device/state values is always allowed
+        case 'stateWrite':
+            return access.allowWriteStates;
+        case 'objectReadAll':
+            return access.readObjects === 'all';
+        case 'logRead':
+            return access.allowReadLogs;
+        case 'logWrite':
+            return access.allowWriteLogs;
+        case 'history':
+            return access.allowHistory;
+        case 'files':
+            return access.allowFiles;
+        case 'system':
+            return access.allowSystemInfo;
+        case 'objectChange':
+            return access.allowObjectChange;
+        default:
+            return false; // unknown/unmapped tool → deny (safe default for an access list)
+    }
+}
+
+/** Build stateId -> deviceKey map from the MCP `list_devices` tool (best-effort; empty on any error). */
+async function loadStateDeviceMap(mcp: InProcessMcp): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    try {
+        const res = await mcp.callTool('list_devices', {});
+        const parsed = JSON.parse(res.text) as {
+            data?: { rooms?: { roomName: string; devicesInRoom?: { deviceName?: string; deviceType?: string; controls?: Record<string, { stateId?: string }> }[] }[] };
+        };
+        for (const room of parsed.data?.rooms || []) {
+            for (const dev of room.devicesInRoom || []) {
+                const key = deviceKey(room.roomName, String(dev.deviceName ?? ''), String(dev.deviceType ?? ''));
+                for (const control of Object.values(dev.controls || {})) {
+                    if (control?.stateId) {
+                        map.set(control.stateId, key);
+                    }
                 }
-                const id = String(args.id);
-                await adapter.setForeignStateAsync(id, args.value as ioBroker.StateValue, false);
-                return { ok: true, id, value: args.value };
-            },
-        },
-    ];
-}
-
-// ── helpers ─────────────────────────────────────────────────────────────────
-
-interface EnumInfo {
-    id: string;
-    name: string;
-    members: string[];
-}
-
-function nameOf(obj: ioBroker.AnyObject | null | undefined): string {
-    const n = obj?.common?.name;
-    if (!n) {
-        return '';
-    }
-    if (typeof n === 'string') {
-        return n;
-    }
-    return n.en || n.de || Object.values(n)[0] || '';
-}
-
-async function listEnum(adapter: ioBroker.Adapter, kind: 'rooms' | 'functions'): Promise<EnumInfo[]> {
-    const objs = await adapter.getForeignObjectsAsync(`enum.${kind}.*`, 'enum');
-    return Object.entries(objs).map(([id, e]) => ({
-        id,
-        name: nameOf(e),
-        members: (e.common.members as string[]) || [],
-    }));
-}
-
-async function membersFor(adapter: ioBroker.Adapter, kind: 'rooms' | 'functions', needle: string): Promise<string[]> {
-    const objs = await adapter.getForeignObjectsAsync(`enum.${kind}.*`, 'enum');
-    const nl = needle.toLowerCase();
-    const set = new Set<string>();
-    for (const [id, e] of Object.entries(objs)) {
-        if (id.toLowerCase().includes(nl) || nameOf(e).toLowerCase().includes(nl)) {
-            for (const m of (e.common.members as string[]) || []) {
-                set.add(m);
             }
         }
+    } catch {
+        /* no device map → no per-device enforcement */
     }
-    return [...set];
+    return map;
 }
 
-interface StateInfo {
-    id: string;
-    name: string;
-    value: ioBroker.StateValue | null;
-    unit?: string;
-    role?: string;
-    writable: boolean;
-}
-
-async function findStates(
-    adapter: ioBroker.Adapter,
-    { room, func, query }: { room?: string; func?: string; query?: string },
-): Promise<StateInfo[]> {
-    let ids: string[] | null = null;
-    if (room) {
-        ids = await membersFor(adapter, 'rooms', room);
-    }
-    if (func) {
-        const f = await membersFor(adapter, 'functions', func);
-        ids = ids ? ids.filter(id => f.includes(id)) : f;
-    }
-
-    let objects: Record<string, ioBroker.Object>;
-    if (ids) {
-        objects = {};
+/** Wrap a state-writing tool so it refuses writes to states of devices the user marked read-only. */
+function guardWrite(
+    name: string,
+    baseRun: (args: Record<string, unknown>) => Promise<unknown>,
+    stateToKey: Map<string, string>,
+    acl: DeviceAcl,
+): (args: Record<string, unknown>) => Promise<unknown> {
+    return async (args: Record<string, unknown>): Promise<unknown> => {
+        const ids =
+            name === 'set_states'
+                ? ((args.states as { id?: string }[] | undefined) || []).map(s => s?.id).filter((x): x is string => !!x)
+                : typeof args.id === 'string'
+                  ? [args.id]
+                  : [];
         for (const id of ids) {
-            const o = await adapter.getForeignObjectAsync(id);
-            if (o) {
-                objects[id] = o;
+            const key = stateToKey.get(id);
+            if (key && acl[key]?.write === false) {
+                return JSON.stringify({
+                    ok: false,
+                    error: `Writing "${id}" is not allowed: device "${key}" is set to read-only in the assistant settings.`,
+                });
             }
         }
-    } else {
-        objects = await adapter.getForeignObjectsAsync(query ? `*${query}*` : '*', 'state');
-    }
+        return baseRun(args);
+    };
+}
 
-    const out: StateInfo[] = [];
-    const q = query ? query.toLowerCase() : '';
-    for (const [id, o] of Object.entries(objects)) {
-        if (!o || o.type !== 'state') {
+/**
+ * Build the LLM tool set from the in-process ioBroker MCP server, filtered by the access config and
+ * enforcing the per-device write ACL.
+ *
+ * All tools come from `@iobroker/mcp-server` — nothing is duplicated here. Gating layers:
+ *  1. `createInProcessMcp({ allowSetState, allowObjectChange })` — which tools exist at all.
+ *  2. `isToolAllowed()` — fine-grained category toggles (logs/history/files/object-read scope/…).
+ *  3. `guardWrite()` — per-device write ACL (`access.deviceAcl`), e.g. keep a lock read-only.
+ */
+export async function buildMcpTools(mcp: InProcessMcp, access: ToolAccess): Promise<{ tools: Tool[]; denied: string[] }> {
+    const infos = await mcp.listTools();
+    const acl = access.deviceAcl || {};
+    const aclActive = access.allowWriteStates && Object.values(acl).some(a => a && a.write === false);
+    const stateToKey = aclActive ? await loadStateDeviceMap(mcp) : new Map<string, string>();
+
+    const tools: Tool[] = [];
+    const denied: string[] = [];
+    for (const info of infos) {
+        if (!isToolAllowed(info.name, access)) {
+            denied.push(info.name);
             continue;
         }
-        if (q && !(id.toLowerCase().includes(q) || nameOf(o).toLowerCase().includes(q))) {
-            continue;
-        }
-        const st = await adapter.getForeignStateAsync(id);
-        out.push({
-            id,
-            name: nameOf(o),
-            value: st ? st.val : null,
-            unit: o.common?.unit,
-            role: o.common?.role,
-            writable: !!o.common?.write,
-        });
-        if (out.length >= 60) {
-            break;
-        } // keep the payload small for the LLM context
+        const baseRun = async (args: Record<string, unknown>): Promise<unknown> => (await mcp.callTool(info.name, args)).text;
+        const run =
+            aclActive && (info.name === 'set_state' || info.name === 'set_states')
+                ? guardWrite(info.name, baseRun, stateToKey, acl)
+                : baseRun;
+        tools.push({ name: info.name, description: info.description || '', parameters: info.inputSchema, run });
     }
-    return out;
+    return { tools, denied };
 }

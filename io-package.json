@@ -5,12 +5,30 @@
         "title": "Assistant",
         "news": [],
         "titleLang": {
-            "en": "Assistant",
-            "de": "Assistent"
+            "en": "Voice Assistant",
+            "de": "Sprach-Assistent",
+            "ru": "Голосовой ассистент",
+            "pt": "Assistente de voz",
+            "nl": "Spraakassistent",
+            "fr": "Assistant vocal",
+            "it": "Assistente vocale",
+            "es": "Asistente de voz",
+            "pl": "Asystent głosowy",
+            "uk": "Голосовий помічник",
+            "zh-cn": "语音助手"
         },
         "desc": {
             "en": "LLM assistant that answers questions and controls any ioBroker state via tool-calling",
-            "de": "LLM-Assistent, der Fragen beantwortet und beliebige ioBroker-States per Tool-Calling steuert"
+            "de": "LLM-Assistent, der Fragen beantwortet und beliebige ioBroker-States per Tool-Calling steuert",
+            "ru": "Ассистент LLM, который отвечает на вопросы и управляет любым состоянием ioBroker с помощью вызова инструментов",
+            "pt": "Assistente LLM que responde a perguntas e controla qualquer estado do ioBroker via chamada de ferramenta",
+            "nl": "LLM-assistent die vragen beantwoordt en elke ioBroker-status via tool-aanroepen beheert",
+            "fr": "Assistant LLM qui répond aux questions et contrôle n'importe quel état ioBroker via des appels d'outils",
+            "it": "Assistente LLM che risponde alle domande e controlla qualsiasi stato di ioBroker tramite chiamate agli strumenti",
+            "es": "Asistente LLM que responde preguntas y controla cualquier estado de ioBroker mediante llamadas a herramientas",
+            "pl": "Asystent LLM, który odpowiada na pytania i kontroluje dowolny stan ioBroker za pomocą wywołań narzędzi",
+            "uk": "Асистент LLM, який відповідає на запитання та керує будь-яким станом ioBroker за допомогою викликів інструментів",
+            "zh-cn": "LLM助手，通过工具调用回答问题并控制任何ioBroker状态"
         },
         "authors": ["ioBroker"],
         "keywords": ["assistant", "llm", "voice", "openai", "anthropic"],
@@ -49,13 +67,25 @@
     },
     "native": {
         "provider": "openai",
+        "credentialType": "manual",
         "apiKey": "",
+        "credentialIdApiKey": "",
         "model": "gpt-4o-mini",
         "baseUrl": "",
         "maxTokens": 1024,
-        "allowControl": true,
-        "systemPrompt": "Du bist ein hilfreicher Smart-Home-Assistent fuer ioBroker. Antworte kurz und auf Deutsch. Nutze die Tools, um States zu lesen (find_states/get_state) oder zu setzen (set_state). Erfinde niemals Werte - wenn du etwas nicht weisst, sag es."
+        "allowWriteStates": true,
+        "allowObjectChange": false,
+        "readObjects": "devices",
+        "allowReadLogs": false,
+        "allowWriteLogs": false,
+        "allowHistory": true,
+        "allowFiles": false,
+        "allowSystemInfo": true,
+        "deviceAcl": {},
+        "systemPrompt": "Du bist ein Sprach-Assistent für ioBroker. Deine Antworten werden vorgelesen: schreibe reinen Fließtext, KEIN Markdown, keine Sternchen, keine Aufzählungen, keine Emojis, und fasse dich kurz. Beantworte Fragen über Geräte, Räume und Sensoren ausschließlich mit den verfügbaren Tools. Rufe immer zuerst ein Tool auf, bevor du etwas über ioBroker sagst, und behaupte nie, dass etwas nicht existiert, ohne es per Tool geprüft zu haben. Erfinde keine Werte."
     },
+    "encryptedNative": ["apiKey"],
+    "protectedNative": ["apiKey"],
     "objects": [],
     "instanceObjects": [
         {

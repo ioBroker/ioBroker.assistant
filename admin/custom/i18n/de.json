@@ -1,0 +1,12 @@
+{
+  "custom_assistant_No devices detected. Assign states to rooms and functions in ioBroker.": "Es wurden keine Geräte erkannt. Weisen Sie Räumen und Funktionen in ioBroker Zustände zu.",
+  "custom_assistant_Per-device permissions": "Gerätespezifische Berechtigungen",
+  "custom_assistant_Start the assistant instance to load the device list.": "Starten Sie die Assistenteninstanz, um die Geräteliste zu laden.",
+  "custom_assistant_device": "Gerät",
+  "custom_assistant_filter": "Filter",
+  "custom_assistant_hint": "Deaktivieren Sie die Leseberechtigung, um ein Gerät vor dem Assistenten auszublenden, oder die Schreibberechtigung, um es schreibgeschützt zu halten (z. B. bei Sperren). Geräte sind standardmäßig vollständig zugelassen.",
+  "custom_assistant_read": "Lesen",
+  "custom_assistant_room": "Zimmer",
+  "custom_assistant_type": "Typ",
+  "custom_assistant_write": "Schreiben"
+}

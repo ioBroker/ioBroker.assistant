@@ -1,0 +1,12 @@
+{
+  "custom_assistant_No devices detected. Assign states to rooms and functions in ioBroker.": "未检测到设备。请在ioBroker中为房间和功能分配状态。",
+  "custom_assistant_Per-device permissions": "每个设备的权限",
+  "custom_assistant_Start the assistant instance to load the device list.": "启动助手实例以加载设备列表。",
+  "custom_assistant_device": "设备",
+  "custom_assistant_filter": "筛选",
+  "custom_assistant_hint": "取消勾选“读取”选项可将设备对语音助手隐藏，取消勾选“写入”选项可将其设置为只读（例如，锁定设备）。设备默认设置为完全允许访问。",
+  "custom_assistant_read": "读",
+  "custom_assistant_room": "房间",
+  "custom_assistant_type": "类型",
+  "custom_assistant_write": "写"
+}
