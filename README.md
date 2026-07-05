@@ -1,3 +1,5 @@
+<img src="admin/assistant.svg" alt="ioBroker.assistant" width="200"/>
+
 # ioBroker.assistant
 
 An LLM-based assistant for ioBroker. Ask questions in natural language and let the
@@ -33,15 +35,99 @@ In the adapter admin (Instances → assistant → ⚙):
 | Allow controlling states | if off, the assistant is read-only                |
 | System prompt            | persona / behaviour                               |
 
-## Try it
+## Voice satellites (Hannah)
 
-1. `npm install` in this folder.
-2. `npm run build` — compiles `src/*.ts` → `build/*.js` (or `npm run watch` while developing).
-3. Install into ioBroker (e.g. `iobroker url .` from the folder, or `@iobroker/dev-server`).
-4. Enter provider + API key in the admin, save.
-5. Set `assistant.0.text.request` to `Welche Lichter sind an?` and watch `text.response`.
+The adapter runs a UDP voice server that speaks the **Hannah** satellite protocol
+(`0x01` control / `0x02` mic audio / `0x03` TTS), so an existing Hannah Pi/ESP satellite can
+talk to it directly. STT → LLM → TTS runs in the adapter; the satellite only captures audio,
+detects the wake word and plays the reply.
 
-> Written in **TypeScript** (`src/`), compiled to `build/`. The adapter entry point is `build/main.js`.
+**On the adapter side:** open the **Voice** tab, tick *Enable voice server*, pick the STT/TTS
+providers + credentials, keep the port (default `7775`). When the instance starts the log shows:
+
+```
+Voice server listening on UDP 7775
+```
+
+Recognised text and the reply also appear in `assistant.0.text.request` / `.text.response`, with
+the origin in `assistant.0.text.querySource` (satellite name, `chat`, or empty for a direct state write).
+
+**Announcements / TTS:** write to `assistant.0.tts.text` to speak on **all** satellites, or to
+`assistant.0.satellites.<id>.tts` for **one**. The value is spoken as text (via the configured TTS engine),
+or — if it is a URL/path to an audio file (`.mp3`/`.wav`/…) — played back (decoded with `ffmpeg`).
+
+### Start a Hannah satellite pointed at this adapter
+
+Match the audio rates to your device (`--sample-rate` = mic, `--tts-rate` = speaker); list devices
+and supported rates with `python3 -c "import pyaudio; p=pyaudio.PyAudio(); [print(i, p.get_device_info_by_index(i)) for i in range(p.get_device_count())]"`.
+
+The stock Hannah satellite locates the server via **MQTT discovery**, so it needs a broker reachable
+and one retained discovery message. Point `--host` at the ioBroker host explicitly:
+
+```bash
+# 1. publish the adapter address once (retained) so the satellite finds it:
+mosquitto_pub -h <broker-ip> -t hannah/server -r -m '{"host":"<iobroker-ip>","port":7775}'
+
+# 2. start the satellite (venv), --broker = MQTT broker, --host = this adapter:
+/opt/Hannah/satellite-pi/venv/bin/python3 /opt/Hannah/satellite-pi/satellite.py \
+  --device wohnzimmer --room Wohnzimmer \
+  --broker <broker-ip> --host <iobroker-ip> --port 7775 \
+  --mic 0 --speaker 0 --sample-rate 16000 --tts-rate 48000
+```
+
+Success looks like `Registrierung bestätigt (ACK empfangen)` in the satellite log and
+`Satellite registered: wohnzimmer` in the adapter log. Then say the wake word → speak → the answer
+is spoken back.
+
+### Without an MQTT broker
+
+The stock Hannah satellite always connects to MQTT (even with `--host`) and exits if no broker is
+reachable. To run **fully broker-free**, skip that one call — in `satellite.py`,
+`_resolve_hannah_address()`:
+
+```python
+if self.cfg.hannah_host:
+    self._hannah_addr = (self.cfg.hannah_host, self.cfg.hannah_port)
+    # self._mqtt.connect()   # ← comment out to run without a broker (disables MQTT status/LWT only)
+else:
+    self._hannah_addr = self._mqtt.connect()
+```
+
+Registration, audio and TTS all run over UDP, so only the (optional) MQTT status reporting is lost.
+Then start with just `--host` (no `--broker` needed):
+
+```bash
+/opt/Hannah/satellite-pi/venv/bin/python3 /opt/Hannah/satellite-pi/satellite.py \
+  --device wohnzimmer --room Wohnzimmer --host <iobroker-ip> --port 7775 \
+  --mic 0 --speaker 0 --sample-rate 16000 --tts-rate 48000
+```
+
+### Native Node.js satellite
+
+A standalone **Node.js satellite** is available — no ioBroker, no MQTT broker required. On a Pi (or any
+Linux/Windows/macOS box) with a mic + speaker:
+
+```bash
+npx @iobroker/assistant-satellite            # writes a default config, then edit "host"
+npx @iobroker/assistant-satellite config.json
+```
+
+It runs the wake word (OpenWakeWord) on the device and streams to this adapter's voice server. See
+[`@iobroker/assistant-satellite`](https://github.com/ioBroker/assistant-satellite) for setup, the
+`check` diagnostics and `install` (systemd service).
+
+### Wyoming satellites (planned — not yet supported)
+
+[Wyoming](https://github.com/rhasspy/wyoming) is the open voice protocol from the Home Assistant /
+Rhasspy project (JSONL events over **TCP**), used by `wyoming-satellite`, the **Home Assistant Voice PE**
+puck and **ESPHome** voice devices. It is a different protocol and transport from the Hannah UDP link
+this adapter speaks today, so **Wyoming satellites cannot connect yet.**
+
+Support is planned: the adapter will expose a **Wyoming server endpoint** (TCP) that bridges Wyoming
+events to the existing pipeline — `audio-chunk` → STT, the reply → `synthesize`/`audio-*`, plus
+`detection`/`transcript` events — so a stock `wyoming-satellite` or HA Voice PE can stream to it
+without Home Assistant in between. Until then, use a Hannah satellite (above) or the native
+Node.js satellite.
 
 ## Roadmap
 
@@ -50,7 +136,37 @@ In the adapter admin (Instances → assistant → ⚙):
 3. **TTS / STT engines** (Polly / Azure / OpenAI / AWS Transcribe) as adapter modules + config.
 4. **Satellite endpoint** — UDP audio + MQTT control, so ESP/Pi satellites talk to the adapter directly.
 5. **Wake word** — trained/managed via ioBroker, running on the device.
+6. **Wyoming server endpoint** — accept Home Assistant Voice PE / `wyoming-satellite` / ESPHome voice devices.
+
+## Changelog
+<!--
+    Placeholder for the next version (at the beginning of the line):
+    ### **WORK IN PROGRESS**
+-->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) Initial commit
 
 ## License
 
-MIT © GermanBluefox
+MIT License
+
+Copyright (c) 2025-2026 Denis Haev <dogafox@gmail.com>J 
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+

@@ -53,8 +53,63 @@ export class LlmAgent {
         }
     }
 
-    public async ask(question: string): Promise<string> {
-        return this.provider === 'anthropic' ? this.askAnthropic(question) : this.askOpenAI(question);
+    /** `systemPrompt` overrides the configured one for this call (e.g. to inject a device list). */
+    public async ask(question: string, systemPrompt?: string): Promise<string> {
+        this.log.debug(`llm ask [${this.provider}/${this.model}]: ${question}`);
+        const started = Date.now();
+        const sys = systemPrompt ?? this.systemPrompt;
+        const answer =
+            this.provider === 'anthropic'
+                ? await this.askAnthropic(question, sys)
+                : await this.askOpenAI(question, sys);
+        this.log.debug(`llm answer (${Date.now() - started} ms): ${answer}`);
+        return answer;
+    }
+
+    /** Compact, truncated JSON for debug logging of LLM requests/responses. */
+    private dump(label: string, payload: unknown): void {
+        if (this.log.level !== 'silly' && this.log.level !== 'debug') {
+            return; // avoid stringifying large payloads when debug logging is off
+        }
+        const max = this.log.level === 'silly' ? 8000 : 1500;
+        let text: string;
+        try {
+            text = JSON.stringify(payload);
+        } catch {
+            text = String(payload);
+        }
+        this.log.debug(`${label}: ${text.length > max ? `${text.slice(0, max)}…[${text.length}]` : text}`);
+    }
+
+    /** Translate a short device/room name into `targetLanguage` (single completion, no tools). */
+    public async translate(text: string, targetLanguage: string): Promise<string> {
+        const trimmed = (text || '').trim();
+        if (!trimmed) {
+            return '';
+        }
+        const prompt =
+            `Translate the following smart-home device or room name into ${targetLanguage}. ` +
+            `Reply with ONLY the translation — no quotes, no punctuation, no explanation.\n\nName: ${trimmed}`;
+        if (this.provider === 'anthropic') {
+            const client = this.anthropic as Anthropic;
+            const resp: any = await client.messages.create({
+                model: this.model,
+                max_tokens: 64,
+                messages: [{ role: 'user', content: prompt }],
+            });
+            return resp.content
+                .filter((b: any) => b.type === 'text')
+                .map((b: any) => b.text)
+                .join('')
+                .trim();
+        }
+        const client = this.openai as OpenAI;
+        const resp: any = await client.chat.completions.create({
+            model: this.model,
+            max_tokens: 64,
+            messages: [{ role: 'user', content: prompt }],
+        });
+        return String(resp.choices[0].message.content || '').trim();
     }
 
     /** Lightweight validation of the provider credentials (used by the settings Test button). */
@@ -87,7 +142,8 @@ export class LlmAgent {
         const client = this.openai as OpenAI;
         const res = (await client.models.list()) as unknown as { data?: { id: string }[] };
         // OpenAI lists many non-chat models (embeddings, tts, whisper, …) — filter to chat-capable-ish.
-        const EXCLUDE = /embedding|whisper|tts|audio|dall-e|moderation|image|realtime|transcribe|search|davinci|babbage|codex/i;
+        const EXCLUDE =
+            /embedding|whisper|tts|audio|dall-e|moderation|image|realtime|transcribe|search|davinci|babbage|codex/i;
         return (res.data || [])
             .map(m => String(m.id))
             .filter(id => !EXCLUDE.test(id))
@@ -110,7 +166,7 @@ export class LlmAgent {
     }
 
     // ── OpenAI (Chat Completions + function tools) ──────────────────────────
-    private async askOpenAI(question: string): Promise<string> {
+    private async askOpenAI(question: string, systemPrompt: string): Promise<string> {
         const client = this.openai as OpenAI;
         const tools = this.tools.map(t => ({
             type: 'function' as const,
@@ -118,19 +174,22 @@ export class LlmAgent {
         }));
 
         const messages: any[] = [];
-        if (this.systemPrompt) {
-            messages.push({ role: 'system', content: this.systemPrompt });
+        if (systemPrompt) {
+            messages.push({ role: 'system', content: systemPrompt });
         }
         messages.push({ role: 'user', content: question });
 
         for (let round = 0; round < this.maxRounds; round++) {
-            const resp: any = await client.chat.completions.create({
+            const request = {
                 model: this.model,
                 messages,
                 tools: tools.length ? tools : undefined,
                 max_tokens: this.maxTokens,
-            });
+            };
+            this.dump(`llm → openai round ${round}`, request);
+            const resp: any = await client.chat.completions.create(request);
             const msg = resp.choices[0].message;
+            this.dump(`llm ← openai round ${round}`, { message: msg, usage: resp.usage });
             messages.push(msg);
 
             if (!msg.tool_calls || !msg.tool_calls.length) {
@@ -151,25 +210,67 @@ export class LlmAgent {
         return 'Ich konnte die Anfrage nicht abschließen (zu viele Tool-Schritte).';
     }
 
+    /**
+     * Keep a single cache breakpoint on the last content block of the last message (Anthropic allows
+     * ≤4 total; we also mark system + last tool). Strips prior message breakpoints so we never exceed it.
+     */
+    private markLastMessageForCache(messages: any[]): void {
+        for (const m of messages) {
+            if (Array.isArray(m.content)) {
+                for (const b of m.content) {
+                    if (b && typeof b === 'object') {
+                        delete b.cache_control;
+                    }
+                }
+            }
+        }
+        const last = messages[messages.length - 1];
+        if (!last) {
+            return;
+        }
+        if (typeof last.content === 'string') {
+            last.content = [{ type: 'text', text: last.content, cache_control: { type: 'ephemeral' } }];
+        } else if (Array.isArray(last.content) && last.content.length) {
+            const b = last.content[last.content.length - 1];
+            if (b && typeof b === 'object') {
+                b.cache_control = { type: 'ephemeral' };
+            }
+        }
+    }
+
     // ── Anthropic (Messages API + tool_use) ─────────────────────────────────
-    private async askAnthropic(question: string): Promise<string> {
+    private async askAnthropic(question: string, systemPrompt: string): Promise<string> {
         const client = this.anthropic as Anthropic;
-        const tools = this.tools.map(t => ({
+        const tools: any[] = this.tools.map(t => ({
             name: t.name,
             description: t.description,
             input_schema: t.parameters as Anthropic.Tool.InputSchema,
         }));
+        // Prompt caching: mark the last tool → the static prefix (system + all tools) is cached and
+        // read back on every later round/request (5-min TTL), cutting latency & cost on the big context.
+        if (tools.length) {
+            tools[tools.length - 1] = { ...tools[tools.length - 1], cache_control: { type: 'ephemeral' } };
+        }
+        const system: any = systemPrompt
+            ? [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }]
+            : undefined;
 
         const messages: any[] = [{ role: 'user', content: question }];
 
         for (let round = 0; round < this.maxRounds; round++) {
-            const resp: any = await client.messages.create({
+            // Cache the growing conversation prefix too (e.g. the large list_devices result): move a
+            // single cache breakpoint to the last content block of the last message each round.
+            this.markLastMessageForCache(messages);
+            const request = {
                 model: this.model,
                 max_tokens: this.maxTokens,
-                system: this.systemPrompt || undefined,
+                system,
                 tools: tools.length ? tools : undefined,
                 messages,
-            });
+            };
+            this.dump(`llm → anthropic round ${round}`, request);
+            const resp: any = await client.messages.create(request);
+            this.dump(`llm ← anthropic round ${round}`, { content: resp.content, usage: resp.usage });
 
             const toolUses = resp.content.filter((b: any) => b.type === 'tool_use');
             if (!toolUses.length) {

@@ -82,10 +82,34 @@
         "allowFiles": false,
         "allowSystemInfo": true,
         "deviceAcl": {},
-        "systemPrompt": "Du bist ein Sprach-Assistent für ioBroker. Deine Antworten werden vorgelesen: schreibe reinen Fließtext, KEIN Markdown, keine Sternchen, keine Aufzählungen, keine Emojis, und fasse dich kurz. Beantworte Fragen über Geräte, Räume und Sensoren ausschließlich mit den verfügbaren Tools. Rufe immer zuerst ein Tool auf, bevor du etwas über ioBroker sagst, und behaupte nie, dass etwas nicht existiert, ohne es per Tool geprüft zu haben. Erfinde keine Werte."
+        "systemPrompt": "Du bist ein Sprach-Assistent für ioBroker. Deine Antworten werden vorgelesen: schreibe reinen Fließtext, KEIN Markdown, keine Sternchen, keine Aufzählungen, keine Emojis, und fasse dich kurz. Beantworte Fragen über Geräte, Räume und Sensoren ausschließlich mit den verfügbaren Tools. Rufe immer zuerst ein Tool auf, bevor du etwas über ioBroker sagst, und behaupte nie, dass etwas nicht existiert, ohne es per Tool geprüft zu haben. Erfinde keine Werte.",
+        "useLocalNlu": true,
+        "useLocalLlm": false,
+        "localLlmModelUrl": "",
+        "voiceEnabled": false,
+        "port": 7775,
+        "bind": "0.0.0.0",
+        "voiceLanguage": "",
+        "voiceApiKey": "",
+        "ttsVoice": "alloy",
+        "sttProvider": "openai",
+        "ttsProvider": "openai",
+        "azureSpeechKey": "",
+        "azureSpeechRegion": "",
+        "azureVoice": "",
+        "awsAccessKeyId": "",
+        "awsSecretAccessKey": "",
+        "awsRegion": "",
+        "awsVoice": "",
+        "voskModel": "",
+        "piperVoice": "",
+        "voiceCredentialType": "manual",
+        "voiceCredentialId": "",
+        "azureCredentialId": "",
+        "awsCredentialId": ""
     },
-    "encryptedNative": ["apiKey"],
-    "protectedNative": ["apiKey"],
+    "encryptedNative": ["apiKey", "voiceApiKey", "azureSpeechKey", "awsSecretAccessKey"],
+    "protectedNative": ["apiKey", "voiceApiKey", "azureSpeechKey", "awsSecretAccessKey"],
     "objects": [],
     "instanceObjects": [
         {
@@ -135,6 +159,38 @@
                 "role": "text",
                 "read": true,
                 "write": false,
+                "def": ""
+            },
+            "native": {}
+        },
+        {
+            "_id": "text.querySource",
+            "type": "state",
+            "common": {
+                "name": "Source of the current request/response ('' = state, 'chat' = message, else satellite name)",
+                "type": "string",
+                "role": "text",
+                "read": true,
+                "write": false,
+                "def": ""
+            },
+            "native": {}
+        },
+        {
+            "_id": "tts",
+            "type": "channel",
+            "common": { "name": "Text-to-speech / announcements" },
+            "native": {}
+        },
+        {
+            "_id": "tts.text",
+            "type": "state",
+            "common": {
+                "name": "Speak on all satellites (plain text, or a URL/path to an mp3/wav)",
+                "type": "string",
+                "role": "text",
+                "read": true,
+                "write": true,
                 "def": ""
             },
             "native": {}

@@ -77,7 +77,7 @@
                     "type": "sendTo",
                     "label": "Test connection",
                     "command": "testApiConnection",
-                    "jsonData": "{\"provider\":\"${data.provider}\",\"apiKey\":\"${data.apiKey}\",\"credentialType\":\"${data.credentialType}\",\"credentialId\":\"${data.credentialIdApiKey}\"}",
+                    "jsonData": "{\"provider\":\"${data.provider}\",\"apiKey\":\"${data.apiKey}\",\"credentialType\":\"${data.credentialType}\",\"model\":\"${data.model}\",\"baseUrl\":\"${data.baseUrl}\",\"credentialId\":\"${data.credentialIdApiKey}\"}",
                     "variant": "outlined",
                     "disabled": "data.credentialType === 'manager' ? !data.credentialIdApiKey : !data.apiKey",
                     "sm": 12,
@@ -92,6 +92,44 @@
                     "max": 8192,
                     "sm": 6,
                     "md": 2
+                },
+                "useLocalNlu": {
+                    "type": "checkbox",
+                    "label": "Answer simple commands locally (fast, offline)",
+                    "help": "Try the built-in rule-based intent matching for turn on/off, dimming and status before calling the LLM.",
+                    "default": true,
+                    "sm": 6,
+                    "md": 4
+                },
+                "useLocalLlm": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Use a local LLM before the cloud (installed on demand)",
+                    "help": "Runs a small local model (node-llama-cpp) for general questions; escalates to the cloud LLM when it needs live device data. Install it with the button below.",
+                    "default": false,
+                    "sm": 12,
+                    "md": 6
+                },
+                "localLlmModelUrl": {
+                    "type": "text",
+                    "label": "Local model URL (GGUF, optional)",
+                    "help": "Direct URL of a GGUF model. Leave empty for the default (Qwen2.5-1.5B-Instruct). Small models recommended on Raspberry Pi / arm64.",
+                    "hidden": "!data.useLocalLlm",
+                    "sm": 12,
+                    "md": 6
+                },
+                "_installLocalLlm": {
+                    "newLine": true,
+                    "type": "sendTo",
+                    "label": "Install local model",
+                    "command": "installLocalLlm",
+                    "variant": "outlined",
+                    "hidden": "!data.useLocalLlm",
+                    "showProcess": true,
+                    "timeout": 600000,
+                    "help": "Downloads the engine and model (several hundred MB). Watch the instance log for progress.",
+                    "sm": 12,
+                    "md": 4
                 },
                 "_accessHeader": {
                     "newLine": true,
@@ -183,6 +221,300 @@
                     "i18n": true,
                     "url": "custom/customComponents.js",
                     "name": "ConfigCustomAssistant/Components/DeviceAclComponent",
+                    "bundlerType": "module",
+                    "sm": 12
+                }
+            }
+        },
+        "_voice": {
+            "type": "panel",
+            "label": "Voice",
+            "items": {
+                "_voiceHeader": {
+                    "type": "header",
+                    "size": 2,
+                    "text": "Voice satellites"
+                },
+                "voiceEnabled": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Enable voice server (satellites)",
+                    "help": "Starts a UDP server for microphone satellites (Hannah-compatible protocol).",
+                    "default": false,
+                    "sm": 12,
+                    "md": 6
+                },
+                "port": {
+                    "newLine": true,
+                    "type": "number",
+                    "label": "UDP port",
+                    "default": 7775,
+                    "min": 1,
+                    "max": 65535,
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 6,
+                    "md": 3
+                },
+                "bind": {
+                    "type": "autocompleteSendTo",
+                    "command": "getBindAddresses",
+                    "freeSolo": true,
+                    "label": "Bind address",
+                    "help": "Interface the voice server listens on. 0.0.0.0 = all interfaces; pick a specific host IP so satellites on the LAN can reach it.",
+                    "default": "0.0.0.0",
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 6,
+                    "md": 3
+                },
+                "voiceLanguage": {
+                    "type": "select",
+                    "label": "Voice language",
+                    "help": "Language for speech recognition and the spoken reply.",
+                    "options": [
+                        { "label": "System language", "value": "" },
+                        { "label": "Deutsch", "value": "de" },
+                        { "label": "English", "value": "en" },
+                        { "label": "Русский", "value": "ru" },
+                        { "label": "Français", "value": "fr" },
+                        { "label": "Italiano", "value": "it" },
+                        { "label": "Español", "value": "es" },
+                        { "label": "Nederlands", "value": "nl" },
+                        { "label": "Polski", "value": "pl" },
+                        { "label": "Português", "value": "pt" },
+                        { "label": "Українська", "value": "uk" },
+                        { "label": "中文", "value": "zh-cn" }
+                    ],
+                    "default": "",
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 6,
+                    "md": 3
+                },
+                "sttProvider": {
+                    "newLine": true,
+                    "type": "select",
+                    "label": "Speech-to-text provider",
+                    "options": [
+                        { "label": "OpenAI (Whisper)", "value": "openai" },
+                        { "label": "Azure Speech", "value": "azure" },
+                        { "label": "AWS Transcribe", "value": "aws" },
+                        { "label": "Vosk (local)", "value": "vosk" }
+                    ],
+                    "default": "openai",
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 6,
+                    "md": 3
+                },
+                "ttsProvider": {
+                    "type": "select",
+                    "label": "Text-to-speech provider",
+                    "options": [
+                        { "label": "OpenAI", "value": "openai" },
+                        { "label": "Azure Speech", "value": "azure" },
+                        { "label": "AWS Polly", "value": "aws" },
+                        { "label": "Piper (local)", "value": "piper" }
+                    ],
+                    "default": "openai",
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 6,
+                    "md": 3
+                },
+                "voiceCredentialType": {
+                    "newLine": true,
+                    "type": "select",
+                    "label": "Speech credential mode",
+                    "options": [
+                        { "label": "Store keys in adapter", "value": "manual" },
+                        { "label": "Central credential store", "value": "manager" }
+                    ],
+                    "default": "manual",
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 12,
+                    "md": 4
+                },
+                "_openaiSpeechHeader": {
+                    "newLine": true,
+                    "type": "header",
+                    "size": 3,
+                    "text": "OpenAI speech",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'openai' && data.ttsProvider !== 'openai')"
+                },
+                "voiceApiKey": {
+                    "newLine": true,
+                    "type": "password",
+                    "label": "OpenAI key for speech (optional)",
+                    "help": "Leave empty to reuse the main API key when the LLM provider is OpenAI; required otherwise.",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'openai' && data.ttsProvider !== 'openai') || data.voiceCredentialType === 'manager'",
+                    "sm": 12,
+                    "md": 8
+                },
+                "voiceCredentialId": {
+                    "newLine": true,
+                    "type": "credential",
+                    "credentialType": "ai",
+                    "label": "OpenAI credential",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'openai' && data.ttsProvider !== 'openai') || data.voiceCredentialType !== 'manager'",
+                    "sm": 12,
+                    "md": 6
+                },
+                "ttsVoice": {
+                    "newLine": true,
+                    "type": "autocompleteSendTo",
+                    "command": "getVoices",
+                    "jsonData": "{\"ttsProvider\":\"${data.ttsProvider}\",\"language\":\"${data.voiceLanguage}\",\"voiceCredentialType\":\"${data.voiceCredentialType}\",\"voiceApiKey\":\"${data.voiceApiKey}\",\"voiceCredentialId\":\"${data.voiceCredentialId}\"}",
+                    "alsoDependsOn": ["ttsProvider", "voiceLanguage", "voiceCredentialType"],
+                    "freeSolo": true,
+                    "label": "TTS voice",
+                    "help": "Loaded from the provider (instance must run); you can also type a voice id.",
+                    "default": "alloy",
+                    "hidden": "!data.voiceEnabled || data.ttsProvider !== 'openai'",
+                    "sm": 6,
+                    "md": 4
+                },
+                "_azureSpeechHeader": {
+                    "newLine": true,
+                    "type": "header",
+                    "size": 3,
+                    "text": "Azure Speech",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'azure' && data.ttsProvider !== 'azure')"
+                },
+                "azureSpeechKey": {
+                    "newLine": true,
+                    "type": "password",
+                    "label": "Azure subscription key",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'azure' && data.ttsProvider !== 'azure') || data.voiceCredentialType === 'manager'",
+                    "sm": 12,
+                    "md": 5
+                },
+                "azureSpeechRegion": {
+                    "type": "text",
+                    "label": "Azure region",
+                    "help": "e.g. westeurope",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'azure' && data.ttsProvider !== 'azure') || data.voiceCredentialType === 'manager'",
+                    "sm": 6,
+                    "md": 3
+                },
+                "azureCredentialId": {
+                    "newLine": true,
+                    "type": "credential",
+                    "credentialType": "azure",
+                    "label": "Azure credential",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'azure' && data.ttsProvider !== 'azure') || data.voiceCredentialType !== 'manager'",
+                    "sm": 12,
+                    "md": 6
+                },
+                "azureVoice": {
+                    "newLine": true,
+                    "type": "autocompleteSendTo",
+                    "command": "getVoices",
+                    "jsonData": "{\"ttsProvider\":\"${data.ttsProvider}\",\"language\":\"${data.voiceLanguage}\",\"voiceCredentialType\":\"${data.voiceCredentialType}\",\"azureSpeechKey\":\"${data.azureSpeechKey}\",\"azureSpeechRegion\":\"${data.azureSpeechRegion}\",\"azureCredentialId\":\"${data.azureCredentialId}\"}",
+                    "alsoDependsOn": ["ttsProvider", "voiceLanguage", "voiceCredentialType", "azureSpeechKey", "azureSpeechRegion", "azureCredentialId"],
+                    "freeSolo": true,
+                    "label": "Azure voice (optional)",
+                    "help": "Loaded from Azure (instance must run); empty = pick by language. e.g. de-DE-KatjaNeural.",
+                    "hidden": "!data.voiceEnabled || data.ttsProvider !== 'azure'",
+                    "sm": 6,
+                    "md": 5
+                },
+                "_awsSpeechHeader": {
+                    "newLine": true,
+                    "type": "header",
+                    "size": 3,
+                    "text": "AWS speech",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'aws' && data.ttsProvider !== 'aws')"
+                },
+                "awsAccessKeyId": {
+                    "newLine": true,
+                    "type": "text",
+                    "label": "AWS access key id",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'aws' && data.ttsProvider !== 'aws') || data.voiceCredentialType === 'manager'",
+                    "sm": 12,
+                    "md": 4
+                },
+                "awsSecretAccessKey": {
+                    "type": "password",
+                    "label": "AWS secret access key",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'aws' && data.ttsProvider !== 'aws') || data.voiceCredentialType === 'manager'",
+                    "sm": 12,
+                    "md": 4
+                },
+                "awsRegion": {
+                    "type": "text",
+                    "label": "AWS region",
+                    "help": "e.g. eu-central-1",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'aws' && data.ttsProvider !== 'aws') || data.voiceCredentialType === 'manager'",
+                    "sm": 6,
+                    "md": 3
+                },
+                "awsCredentialId": {
+                    "newLine": true,
+                    "type": "credential",
+                    "credentialType": "aws",
+                    "label": "AWS credential",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'aws' && data.ttsProvider !== 'aws') || data.voiceCredentialType !== 'manager'",
+                    "sm": 12,
+                    "md": 6
+                },
+                "awsVoice": {
+                    "newLine": true,
+                    "type": "autocompleteSendTo",
+                    "command": "getVoices",
+                    "jsonData": "{\"ttsProvider\":\"${data.ttsProvider}\",\"language\":\"${data.voiceLanguage}\",\"voiceCredentialType\":\"${data.voiceCredentialType}\",\"awsAccessKeyId\":\"${data.awsAccessKeyId}\",\"awsSecretAccessKey\":\"${data.awsSecretAccessKey}\",\"awsRegion\":\"${data.awsRegion}\",\"awsCredentialId\":\"${data.awsCredentialId}\"}",
+                    "alsoDependsOn": ["ttsProvider", "voiceLanguage", "voiceCredentialType", "awsAccessKeyId", "awsSecretAccessKey", "awsRegion", "awsCredentialId"],
+                    "freeSolo": true,
+                    "label": "AWS Polly voice (optional)",
+                    "help": "Loaded from Polly (instance must run); empty = default per language. e.g. Vicki, Tatyana.",
+                    "hidden": "!data.voiceEnabled || data.ttsProvider !== 'aws'",
+                    "sm": 6,
+                    "md": 5
+                },
+                "_localSpeechHeader": {
+                    "newLine": true,
+                    "type": "header",
+                    "size": 3,
+                    "text": "Local speech (no cloud)",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'vosk' && data.ttsProvider !== 'piper')"
+                },
+                "_localSpeechHint": {
+                    "newLine": true,
+                    "type": "staticText",
+                    "text": "Vosk (STT) and Piper (TTS) run on this host. Models and the Piper binary are downloaded automatically on first use (needs internet, plus 'unzip'/'tar'). No API key required.",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'vosk' && data.ttsProvider !== 'piper')",
+                    "sm": 12,
+                    "md": 12
+                },
+                "voskModel": {
+                    "newLine": true,
+                    "type": "text",
+                    "label": "Vosk model (optional)",
+                    "help": "Model name from alphacephei.com/vosk/models, e.g. vosk-model-small-de-0.15. Empty = small default per language.",
+                    "hidden": "!data.voiceEnabled || data.sttProvider !== 'vosk'",
+                    "sm": 12,
+                    "md": 6
+                },
+                "piperVoice": {
+                    "newLine": true,
+                    "type": "autocompleteSendTo",
+                    "command": "getVoices",
+                    "jsonData": "{\"ttsProvider\":\"${data.ttsProvider}\",\"language\":\"${data.voiceLanguage}\"}",
+                    "alsoDependsOn": ["ttsProvider", "voiceLanguage"],
+                    "freeSolo": true,
+                    "label": "Piper voice (optional)",
+                    "help": "e.g. de_DE-thorsten-medium, ru_RU-irina-medium. Empty = default per language.",
+                    "hidden": "!data.voiceEnabled || data.ttsProvider !== 'piper'",
+                    "sm": 6,
+                    "md": 5
+                }
+            }
+        },
+        "_chat": {
+            "type": "panel",
+            "label": "Chat",
+            "items": {
+                "_chatComponent": {
+                    "type": "custom",
+                    "i18n": true,
+                    "url": "custom/customComponents.js",
+                    "name": "ConfigCustomAssistant/Components/ChatComponent",
                     "bundlerType": "module",
                     "sm": 12
                 }

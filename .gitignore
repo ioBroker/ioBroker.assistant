@@ -7,3 +7,4 @@ build/
 Thumbs.db
 tmp/
 .iobroker/
+*.tgz
