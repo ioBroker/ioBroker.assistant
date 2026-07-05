@@ -36,11 +36,11 @@
         "typescript": "^6.0.3"
     },
     "scripts": {
-        "test:integration": "echo \"no tests yet\" && exit 0",
+        "test:integration": "tsc -p tsconfig.build.json && node --test \"test/integration/*.test.js\"",
         "test:package": "mocha test/testPackageFiles.ts --exit",
-        "test": "echo \"no tests yet\" && exit 0",
+        "test": "npm run test:integration",
         "build": "npm run build:backend && npm run build:gui",
-        "build:backend": "tsc -p tsconfig.json",
+        "build:backend": "tsc -p tsconfig.build.json",
         "build:gui": "cd src-admin && npm install && npm run build",
         "lint": "eslint -c eslint.config.mjs",
         "prepublishOnly": "npm run build",

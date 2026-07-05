@@ -1,5 +1,5 @@
 export interface AdapterConfig {
-    provider: 'openai' | 'anthropic' | 'custom';
+    provider: 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'custom';
     /**
      * Where the API key comes from:
      *  - 'manual':  stored directly in `apiKey` (encryptedNative/protectedNative)
@@ -43,12 +43,20 @@ export interface AdapterConfig {
      * `bind` for the same admin convention.
      */
     bind: string;
+    /** Also expose a Wyoming TCP endpoint (HA Voice PE / wyoming-satellite / ESPHome voice). */
+    wyomingEnabled: boolean;
+    /** TCP port for the Wyoming endpoint (default 10700). */
+    wyomingPort: number;
     /** Global voice language (ISO-639-1, '' = adapter/system language). Drives STT hint + TTS. */
     voiceLanguage: string;
     /** Dedicated OpenAI key for STT/TTS; empty → reuse the main key when provider === 'openai'. */
     voiceApiKey: string;
     /** OpenAI TTS voice id (alloy/echo/fable/onyx/nova/shimmer). */
     ttsVoice: string;
+    /** OpenAI STT model ('' → 'whisper-1'; e.g. 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'). */
+    sttModel: string;
+    /** OpenAI TTS model ('' → 'tts-1'; e.g. 'gpt-4o-mini-tts', 'tts-1-hd'). */
+    ttsModel: string;
 
     /** Speech provider for recognition / synthesis (independently selectable). Vosk/Piper run locally. */
     sttProvider: 'openai' | 'azure' | 'aws' | 'vosk';

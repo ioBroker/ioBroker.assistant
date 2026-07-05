@@ -1,1 +1,1 @@
-import"./assets/preload-helper-BDBacUwf.js";import{g as r,i as a}from"./assets/virtual_mf-REMOTE_ENTRY_ID___mfe_internal__ConfigCustomAssistant__customComponents_js-DwPRWlsZ.js";export{r as get,a as init};
+import"./assets/preload-helper-BDBacUwf.js";import{g as r,i as a}from"./assets/virtual_mf-REMOTE_ENTRY_ID___mfe_internal__ConfigCustomAssistant__customComponents_js-pX2PW1g3.js";export{r as get,a as init};

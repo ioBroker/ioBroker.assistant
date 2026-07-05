@@ -3,6 +3,8 @@
   "Provider": "Anbieter",
   "OpenAI": "OpenAI",
   "Anthropic (Claude)": "Anthropic (Claude)",
+  "Google Gemini": "Google Gemini",
+  "DeepSeek": "DeepSeek",
   "OpenAI-compatible (custom)": "OpenAI-kompatibel (benutzerdefiniert)",
   "Model": "Modell",
   "e.g. gpt-4o-mini, gpt-4o, claude-sonnet-4-6": "z. B. gpt-4o-mini, gpt-4o, claude-sonnet-4-6",
@@ -88,5 +90,12 @@
   "Vosk model (optional)": "Vosk-Modell (optional)",
   "Model name from alphacephei.com/vosk/models, e.g. vosk-model-small-de-0.15. Empty = small default per language.": "Modellname von alphacephei.com/vosk/models, z. B. vosk-model-small-de-0.15. Leer = kleines Standardmodell je Sprache.",
   "Piper voice (optional)": "Piper-Stimme (optional)",
-  "e.g. de_DE-thorsten-medium, ru_RU-irina-medium. Empty = default per language.": "z. B. de_DE-thorsten-medium, ru_RU-irina-medium. Leer = Standard je Sprache."
+  "e.g. de_DE-thorsten-medium, ru_RU-irina-medium. Empty = default per language.": "z. B. de_DE-thorsten-medium, ru_RU-irina-medium. Leer = Standard je Sprache.",
+  "OpenAI STT model (optional)": "OpenAI-STT-Modell (optional)",
+  "Empty = whisper-1. Also: gpt-4o-transcribe, gpt-4o-mini-transcribe.": "Leer = whisper-1. Auch: gpt-4o-transcribe, gpt-4o-mini-transcribe.",
+  "OpenAI TTS model (optional)": "OpenAI-TTS-Modell (optional)",
+  "Empty = tts-1. Also: tts-1-hd, gpt-4o-mini-tts.": "Leer = tts-1. Auch: tts-1-hd, gpt-4o-mini-tts.",
+  "Also accept Wyoming clients (TCP)": "Auch Wyoming-Clients akzeptieren (TCP)",
+  "Home Assistant Voice PE / wyoming-satellite / ESPHome voice devices can stream to this adapter over the Wyoming protocol.": "Home Assistant Voice PE / wyoming-satellite / ESPHome-Voice-Geräte können per Wyoming-Protokoll an diesen Adapter streamen.",
+  "Wyoming TCP port": "Wyoming-TCP-Port"
 }

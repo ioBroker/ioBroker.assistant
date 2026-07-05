@@ -44,6 +44,7 @@
         "type": "general",
         "compact": true,
         "tier": 3,
+        "nogit": true,
         "licenseInformation": {
             "license": "MIT",
             "type": "free"
@@ -64,9 +65,7 @@
             }
         ],
         "osDependencies": {
-            "linux": ["unzip", "tar"],
-            "darwin": [],
-            "win32": []
+            "linux": ["unzip", "tar"]
         },
         "messagebox": true
     },
@@ -94,9 +93,13 @@
         "voiceEnabled": false,
         "port": 7775,
         "bind": "0.0.0.0",
+        "wyomingEnabled": false,
+        "wyomingPort": 10700,
         "voiceLanguage": "",
         "voiceApiKey": "",
         "ttsVoice": "alloy",
+        "sttModel": "",
+        "ttsModel": "",
         "sttProvider": "openai",
         "ttsProvider": "openai",
         "azureSpeechKey": "",

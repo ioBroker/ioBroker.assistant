@@ -54,7 +54,11 @@ the origin in `assistant.0.text.querySource` (satellite name, `chat`, or empty f
 
 **Announcements / TTS:** write to `assistant.0.tts.text` to speak on **all** satellites, or to
 `assistant.0.satellites.<id>.tts` for **one**. The value is spoken as text (via the configured TTS engine),
-or — if it is a URL/path to an audio file (`.mp3`/`.wav`/…) — played back (decoded with `ffmpeg`).
+or — if it is a URL/path to an audio file (`.mp3`/`.wav`/…) — played back.
+
+> **Playing audio files needs [ffmpeg](https://ffmpeg.org/) on the host** (Windows and Linux):
+> Linux → `sudo apt install ffmpeg`; Windows → install ffmpeg and add it to the `PATH`.
+> Plain-text TTS does not need it — only audio-file playback (mp3/wav/…) does.
 
 ### Start a Hannah satellite pointed at this adapter
 
@@ -116,18 +120,19 @@ It runs the wake word (OpenWakeWord) on the device and streams to this adapter's
 [`@iobroker/assistant-satellite`](https://github.com/ioBroker/assistant-satellite) for setup, the
 `check` diagnostics and `install` (systemd service).
 
-### Wyoming satellites (planned — not yet supported)
+### Wyoming endpoint (experimental)
 
 [Wyoming](https://github.com/rhasspy/wyoming) is the open voice protocol from the Home Assistant /
 Rhasspy project (JSONL events over **TCP**), used by `wyoming-satellite`, the **Home Assistant Voice PE**
-puck and **ESPHome** voice devices. It is a different protocol and transport from the Hannah UDP link
-this adapter speaks today, so **Wyoming satellites cannot connect yet.**
+puck and **ESPHome** voice devices.
 
-Support is planned: the adapter will expose a **Wyoming server endpoint** (TCP) that bridges Wyoming
-events to the existing pipeline — `audio-chunk` → STT, the reply → `synthesize`/`audio-*`, plus
-`detection`/`transcript` events — so a stock `wyoming-satellite` or HA Voice PE can stream to it
-without Home Assistant in between. Until then, use a Hannah satellite (above) or the native
-Node.js satellite.
+Enable **Also accept Wyoming clients (TCP)** in the Voice tab (default port `10700`). The adapter then
+exposes a Wyoming server that bridges to the same pipeline: `audio-start`/`audio-chunk`/`audio-stop` →
+STT → answer → TTS streamed back as `audio-*` (plus a `transcript` event); `describe` → `info`;
+`synthesize` → TTS.
+
+> The protocol framing is unit-tested, but interop with real HA Voice PE / `wyoming-satellite` is still
+> **experimental** — please report what works. Uses the same STT/TTS providers as the UDP voice server.
 
 ## Roadmap
 

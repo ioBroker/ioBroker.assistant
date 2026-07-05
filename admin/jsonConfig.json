@@ -18,6 +18,8 @@
                     "options": [
                         { "label": "OpenAI", "value": "openai" },
                         { "label": "Anthropic (Claude)", "value": "anthropic" },
+                        { "label": "Google Gemini", "value": "gemini" },
+                        { "label": "DeepSeek", "value": "deepseek" },
                         { "label": "OpenAI-compatible (custom)", "value": "custom" }
                     ],
                     "default": "openai",
@@ -266,6 +268,26 @@
                     "sm": 6,
                     "md": 3
                 },
+                "wyomingEnabled": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Also accept Wyoming clients (TCP)",
+                    "help": "Home Assistant Voice PE / wyoming-satellite / ESPHome voice devices can stream to this adapter over the Wyoming protocol.",
+                    "default": false,
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 8,
+                    "md": 5
+                },
+                "wyomingPort": {
+                    "type": "number",
+                    "label": "Wyoming TCP port",
+                    "default": 10700,
+                    "min": 1,
+                    "max": 65535,
+                    "hidden": "!data.voiceEnabled || !data.wyomingEnabled",
+                    "sm": 4,
+                    "md": 3
+                },
                 "voiceLanguage": {
                     "type": "select",
                     "label": "Voice language",
@@ -366,6 +388,23 @@
                     "label": "TTS voice",
                     "help": "Loaded from the provider (instance must run); you can also type a voice id.",
                     "default": "alloy",
+                    "hidden": "!data.voiceEnabled || data.ttsProvider !== 'openai'",
+                    "sm": 6,
+                    "md": 4
+                },
+                "sttModel": {
+                    "newLine": true,
+                    "type": "text",
+                    "label": "OpenAI STT model (optional)",
+                    "help": "Empty = whisper-1. Also: gpt-4o-transcribe, gpt-4o-mini-transcribe.",
+                    "hidden": "!data.voiceEnabled || data.sttProvider !== 'openai'",
+                    "sm": 6,
+                    "md": 4
+                },
+                "ttsModel": {
+                    "type": "text",
+                    "label": "OpenAI TTS model (optional)",
+                    "help": "Empty = tts-1. Also: tts-1-hd, gpt-4o-mini-tts.",
                     "hidden": "!data.voiceEnabled || data.ttsProvider !== 'openai'",
                     "sm": 6,
                     "md": 4

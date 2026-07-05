@@ -1,14 +1,22 @@
-import { Adapter, type AdapterOptions } from '@iobroker/adapter-core';
-import { createInProcessMcp, type InProcessMcp } from '@iobroker/mcp-server';
 import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 
-import { LlmAgent } from './lib/llm';
+import {
+    Adapter,
+    getAbsoluteInstanceDataDir,
+    getAbsoluteDefaultDataDir,
+    type AdapterOptions,
+} from '@iobroker/adapter-core';
+import * as path from 'node:path';
+import { createInProcessMcp, type InProcessMcp } from '@iobroker/mcp-server';
+
+import { LlmAgent, resolveProvider } from './lib/llm';
 import { buildMcpTools, deviceKey, ListCache } from './lib/tools';
 import { Nlu, type NluDevice, type NluIntent } from './lib/nlu';
 import { LocalLlm, installLocalLlm, isLocalLlmInstalled, isHandoff, DEFAULT_LOCAL_MODEL_URL } from './lib/localLlm';
 import { resolveApiKey, resolveVoiceCredentials } from './lib/credentials';
 import { VoiceServer } from './lib/voice/voiceServer';
+import { WyomingServer } from './lib/voice/wyoming';
 import {
     createSttEngine,
     createTtsEngine,
@@ -72,6 +80,8 @@ class Assistant extends Adapter {
     private localLlmLoading: Promise<void> | null = null;
     /** UDP voice server for satellites (only when voiceEnabled); null otherwise. */
     private voice: VoiceServer | null = null;
+    /** Wyoming TCP endpoint (only when wyomingEnabled); null otherwise. */
+    private wyoming: WyomingServer | null = null;
     /** Satellite ids whose state objects have already been created (avoid re-creating on every update). */
     private readonly satStatesEnsured = new Set<string>();
     /** Sanitised satellite state-id → real device name (for the per-satellite `tts` announce state). */
@@ -119,11 +129,12 @@ class Assistant extends Adapter {
             this.subscribeForeignObjects('enum.rooms.*');
             this.subscribeForeignObjects('enum.functions.*');
 
+            const prov = resolveProvider(cfg.provider, cfg.baseUrl);
             this.agent = new LlmAgent({
                 provider: cfg.provider || 'openai',
                 apiKey,
-                model: cfg.model || (cfg.provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o-mini'),
-                baseUrl: cfg.baseUrl || '',
+                model: cfg.model || prov.defaultModel,
+                baseUrl: prov.baseUrl,
                 systemPrompt: cfg.systemPrompt || '',
                 maxTokens: cfg.maxTokens || 1024,
                 tools,
@@ -148,6 +159,42 @@ class Assistant extends Adapter {
             // Announcements: broadcast to all satellites; per-satellite states are subscribed on first sight.
             this.subscribeStates('tts.text');
         }
+
+        if (cfg.wyomingEnabled) {
+            await this.startWyoming(apiKey);
+        }
+    }
+
+    /** Start the Wyoming TCP endpoint, bridging to the same STT/answer/TTS pipeline as the UDP server. */
+    private async startWyoming(mainApiKey: string): Promise<void> {
+        const cfg = this.config;
+        const creds = await resolveVoiceCredentials(this, cfg, mainApiKey);
+        const ctx = this.voiceContext(cfg, creds);
+        const language = cfg.voiceLanguage || this.language || '';
+        let stt: SttEngine;
+        let tts: TtsEngine;
+        try {
+            stt = createSttEngine(cfg.sttProvider || 'openai', ctx);
+            tts = createTtsEngine(cfg.ttsProvider || 'openai', ctx);
+        } catch (e) {
+            this.log.warn(`Wyoming not started — ${(e as Error).message}. Check the Voice tab settings.`);
+            return;
+        }
+        try {
+            this.wyoming = new WyomingServer({
+                port: cfg.wyomingPort || 10700,
+                bindAddress: cfg.bind || '0.0.0.0',
+                language,
+                stt,
+                tts,
+                answer: question => this.answer(question),
+                log: this.log,
+            });
+            await this.wyoming.start();
+        } catch (e) {
+            this.log.error(`Could not start Wyoming server: ${(e as Error).message}`);
+            this.wyoming = null;
+        }
     }
 
     /** Build the engine context (creds + local-model settings + data dir) for the STT/TTS factory. */
@@ -163,6 +210,8 @@ class Assistant extends Adapter {
             dataDir: this.instanceDataDir(),
             log: this.log,
             voskModel: (cfg.voskModel || '').trim(),
+            sttModel: (cfg.sttModel || '').trim(),
+            ttsModel: (cfg.ttsModel || '').trim(),
         };
     }
 
@@ -457,7 +506,7 @@ class Assistant extends Adapter {
         if (obj.command === 'testApiConnection') {
             const result = await this.testApiConnection(
                 (obj.message || {}) as {
-                    provider?: 'openai' | 'anthropic' | 'custom';
+                    provider?: AdapterConfig['provider'];
                     apiKey?: string;
                     credentialType?: 'manual' | 'manager';
                     credentialId?: string;
@@ -475,7 +524,7 @@ class Assistant extends Adapter {
         if (obj.command === 'getModels') {
             const models = await this.getModels(
                 (obj.message || {}) as {
-                    provider?: 'openai' | 'anthropic' | 'custom';
+                    provider?: AdapterConfig['provider'];
                     apiKey?: string;
                     credentialType?: 'manual' | 'manager';
                     credentialId?: string;
@@ -729,9 +778,13 @@ class Assistant extends Adapter {
         return `${header}\n${lines.join('\n')}`;
     }
 
-    /** Writable per-instance data dir (adapter-core method; typed loosely as the bundled types omit it). */
+    /** Writable per-instance data dir via the adapter-core function (with a fallback for old runtimes). */
     private instanceDataDir(): string {
-        return (this as unknown as { getAbsoluteInstanceDataDir(): string }).getAbsoluteInstanceDataDir();
+        try {
+            return getAbsoluteInstanceDataDir(this);
+        } catch {
+            return path.join(getAbsoluteDefaultDataDir(), this.namespace);
+        }
     }
 
     /**
@@ -1234,7 +1287,7 @@ class Assistant extends Adapter {
 
     /** Load the available models for a provider (used by the settings model dropdown / selectSendTo). */
     private async getModels(msg: {
-        provider?: 'openai' | 'anthropic' | 'custom';
+        provider?: AdapterConfig['provider'];
         apiKey?: string;
         credentialType?: 'manual' | 'manager';
         credentialId?: string;
@@ -1255,7 +1308,7 @@ class Assistant extends Adapter {
                 provider,
                 apiKey,
                 model: '',
-                baseUrl: msg.baseUrl ?? cfg.baseUrl ?? '',
+                baseUrl: resolveProvider(provider, msg.baseUrl ?? cfg.baseUrl).baseUrl,
                 maxTokens: 16,
                 tools: [],
                 log: this.log,
@@ -1269,7 +1322,7 @@ class Assistant extends Adapter {
 
     /** Validate a provider + key from the settings dialog without persisting anything. */
     private async testApiConnection(msg: {
-        provider?: 'openai' | 'anthropic' | 'custom';
+        provider?: AdapterConfig['provider'];
         apiKey?: string;
         credentialType?: 'manual' | 'manager';
         credentialId?: string;
@@ -1286,11 +1339,12 @@ class Assistant extends Adapter {
         if (!apiKey) {
             return { error: 'No API key / credential available.' };
         }
+        const prov = resolveProvider(provider, msg.baseUrl || cfg.baseUrl);
         const agent = new LlmAgent({
             provider,
             apiKey,
-            model: msg.model || cfg.model || (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o-mini'),
-            baseUrl: msg.baseUrl || cfg.baseUrl || '',
+            model: msg.model || cfg.model || prov.defaultModel,
+            baseUrl: prov.baseUrl,
             maxTokens: 16,
             tools: [],
             log: this.log,
@@ -1302,6 +1356,11 @@ class Assistant extends Adapter {
     private async onUnload(callback: () => void): Promise<void> {
         try {
             await this.voice?.stop();
+        } catch {
+            // ignore
+        }
+        try {
+            await this.wyoming?.stop();
         } catch {
             // ignore
         }

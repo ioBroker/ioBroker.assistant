@@ -152,7 +152,7 @@ npm run lint       # eslint (eslint.config.mjs, @iobroker/eslint-config)
      (Typ-Bytes `0x01/0x02/0x03`, `register`/`heartbeat`/`audio_end` ↔ `registered`/`heartbeat_ack`/`status`/
      `tts_end`) sammelt 16 kHz-mono-PCM bis `audio_end` → OpenAI-STT (`whisper-1`) → `main.ts.answer()` (Tier-Pipeline)
      → OpenAI-TTS (`tts-1`, `pcm` 24 kHz) → `0x03`-Chunks + `tts_end`. States `assistant.0.satellites.<id>.{status,
-     room,alive,lastSeen}`. Config-Tab „Voice" (`voiceEnabled/voicePort/voiceLanguage/ttsVoice/voiceApiKey`;
+     room,alive,lastSeen}`. Config-Tab „Voice" (`voiceEnabled/port/bind/voiceLanguage/ttsVoice/voiceApiKey`;
      Key = `voiceApiKey` sonst Haupt-Key bei Provider openai). In `onReady` gestartet, `onUnload` gestoppt.
      Protokoll-Smoke-Test grün; **echter OpenAI-Call + Python-Sat-Interop noch ungetestet.**
    - **V1b — Cloud-Provider Azure + AWS ✅ fertig.** STT/TTS **unabhängig** wählbar (`sttProvider`/`ttsProvider` =
@@ -250,8 +250,9 @@ unsere Provider (openai/anthropic, evtl. später gemini/deepseek/custom) reduzie
 
 ## Offene Entscheidungen
 
-- Provider-Umfang: aktuell openai + anthropic. Erweitern auf gemini/deepseek/custom wie `javascript`?
-- Single-Provider-Auswahl (jetzt) vs. mehrere Provider gleichzeitig konfigurierbar (wie `javascript`)?
+- Provider: ✅ openai, anthropic, **gemini**, **deepseek**, custom. gemini/deepseek laufen über die
+  OpenAI-kompatible SDK-Schiene mit fester baseUrl (`PROVIDER_PRESETS`/`resolveProvider` in `llm.ts`).
+  **Single-Provider** (ein aktiver Provider) — bewusst so; „mehrere gleichzeitig" (wie `javascript`) nicht umgesetzt.
 - Offline-Betrieb nötig? (sonst rein Cloud → einfacher).
 - Icon: SVG vorhanden; für offizielle ioBroker-Repo evtl. zusätzlich PNG 128×128.
 - Audio (Phase 4/5): Streaming-STT in Node (`dgram` + AWS/Azure/OpenAI-SDK) ist der fummeligste Teil.

@@ -2,8 +2,46 @@ import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import type { Tool } from './tools';
 
+/** All selectable LLM providers. gemini/deepseek/custom all use the OpenAI-compatible SDK path. */
+export type Provider = 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'custom';
+
+interface ProviderPreset {
+    /** Which vendor SDK to use. */
+    sdk: 'openai' | 'anthropic';
+    /** Fixed API base URL ('' = SDK default; for 'custom' the user's baseUrl is used instead). */
+    baseUrl: string;
+    /** Default model when none is configured. */
+    defaultModel: string;
+}
+
+/** Per-provider SDK, endpoint and default model. Gemini/DeepSeek expose OpenAI-compatible endpoints. */
+export const PROVIDER_PRESETS: Record<Provider, ProviderPreset> = {
+    openai: { sdk: 'openai', baseUrl: '', defaultModel: 'gpt-4o-mini' },
+    anthropic: { sdk: 'anthropic', baseUrl: '', defaultModel: 'claude-sonnet-4-6' },
+    gemini: {
+        sdk: 'openai',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+        defaultModel: 'gemini-2.0-flash',
+    },
+    deepseek: { sdk: 'openai', baseUrl: 'https://api.deepseek.com', defaultModel: 'deepseek-chat' },
+    custom: { sdk: 'openai', baseUrl: '', defaultModel: '' },
+};
+
+/** Resolve the effective SDK, base URL and default model for a provider (custom uses `configBaseUrl`). */
+export function resolveProvider(
+    provider: string | undefined,
+    configBaseUrl?: string,
+): { sdk: 'openai' | 'anthropic'; baseUrl: string; defaultModel: string } {
+    const preset = PROVIDER_PRESETS[(provider as Provider) || 'openai'] || PROVIDER_PRESETS.openai;
+    return {
+        sdk: preset.sdk,
+        baseUrl: provider === 'custom' ? configBaseUrl || '' : preset.baseUrl,
+        defaultModel: preset.defaultModel,
+    };
+}
+
 export interface LlmAgentOptions {
-    provider: 'openai' | 'anthropic' | 'custom';
+    provider: Provider;
     apiKey: string;
     model: string;
     baseUrl?: string;

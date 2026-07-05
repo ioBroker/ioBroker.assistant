@@ -39,6 +39,10 @@ export interface EngineContext {
     log: VoiceLogger;
     /** Local model overrides ('' → default per language). */
     voskModel: string;
+    /** OpenAI STT model ('' → 'whisper-1'; e.g. 'gpt-4o-transcribe'). */
+    sttModel: string;
+    /** OpenAI TTS model ('' → 'tts-1'; e.g. 'gpt-4o-mini-tts'). */
+    ttsModel: string;
 }
 
 function requireAzure(creds: VoiceCredentials): void {
@@ -73,7 +77,7 @@ export function createSttEngine(provider: SpeechProvider, ctx: EngineContext): S
             throw new Error('Piper is a text-to-speech engine, not speech-to-text');
         default:
             requireOpenAi(ctx.creds);
-            return new OpenAiStt(ctx.creds.openaiKey);
+            return new OpenAiStt(ctx.creds.openaiKey, ctx.sttModel || undefined);
     }
 }
 
@@ -91,7 +95,11 @@ export function createTtsEngine(provider: SpeechProvider, ctx: EngineContext): T
             throw new Error('Vosk is a speech-to-text engine, not text-to-speech');
         default:
             requireOpenAi(ctx.creds);
-            return new OpenAiTts(ctx.creds.openaiKey, (ctx.voices.openai || 'alloy') as OpenAiVoice);
+            return new OpenAiTts(
+                ctx.creds.openaiKey,
+                (ctx.voices.openai || 'alloy') as OpenAiVoice,
+                ctx.ttsModel || undefined,
+            );
     }
 }
 
