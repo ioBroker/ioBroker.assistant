@@ -63,6 +63,11 @@
                 "admin": ">=7.9.11"
             }
         ],
+        "osDependencies": {
+            "linux": ["unzip", "tar"],
+            "darwin": [],
+            "win32": []
+        },
         "messagebox": true
     },
     "native": {
