@@ -25,6 +25,18 @@ export interface AdapterConfig {
     systemPrompt: string;
     /** Tier-0: try the built-in rule-based NLU before the LLM (fast, offline, free) for simple commands. */
     useLocalNlu: boolean;
+    /** Short-term conversation context: remember recent turns per source so follow-ups resolve. */
+    useConversationContext: boolean;
+    /** Long-term memory: persist durable facts across sessions and inject them into the LLM prompt. */
+    useLongTermMemory: boolean;
+    /** Speak an announcement on the origin satellite when a countdown timer expires. */
+    timerAnnounce: boolean;
+    /** Speak an announcement on the origin satellite when an alarm (fixed clock time) fires. */
+    alarmAnnounce: boolean;
+    /** Uploaded sound (file in the instance's `sounds/` storage) played before the timer announcement. '' = none. */
+    timerSound: string;
+    /** Uploaded sound played before the alarm announcement. '' = none. */
+    alarmSound: string;
     /** Tier-1a: use an on-demand-installed local LLM (node-llama-cpp) between NLU and the cloud LLM. */
     useLocalLlm: boolean;
     /** Direct URL of the GGUF model for the local LLM ('' → built-in default, Qwen2.5-1.5B). */
@@ -33,6 +45,8 @@ export interface AdapterConfig {
     // ── Voice / satellites (V1: cloud STT/TTS via OpenAI) ───────────────────────
     /** Start the UDP voice server for satellites (Hannah-compatible protocol). */
     voiceEnabled: boolean;
+    /** Run the UDP voice server (for ESP/Hannah satellites). ioBroker-native satellites don't need it. */
+    udpServerEnabled: boolean;
     /**
      * UDP port the voice server binds to (satellites send audio/control here). Named `port` so the
      * admin's "port in use" check picks it up.

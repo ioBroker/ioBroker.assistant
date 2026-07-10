@@ -109,6 +109,30 @@ test('synthesize → audio-* (text to speech only)', async () => {
     });
 });
 
+test('VAD voice-started/voice-stopped drives the pipeline', async () => {
+    await withServer({}, async (sock, events, seen) => {
+        sock.write(encode('voice-started', { rate: 16000 }));
+        sock.write(encode('audio-chunk', { rate: 16000, width: 2, channels: 1 }, Buffer.alloc(3200, 4)));
+        sock.write(encode('voice-stopped'));
+        await delay(300);
+        assert.equal(seen.sttBytes, 3200, 'buffered audio transcribed on voice-stopped');
+        assert.ok(events.some(e => e.type === 'transcript'), 'transcript emitted');
+        assert.ok(events.some(e => e.type === 'audio-stop'), 'reply spoken');
+    });
+});
+
+test('pipeline failure emits an error event', async () => {
+    await withServer({ stt: { transcribe: async () => { throw new Error('boom'); } } }, async (sock, events) => {
+        sock.write(encode('audio-start', { rate: 16000 }));
+        sock.write(encode('audio-chunk', { rate: 16000, width: 2, channels: 1 }, Buffer.alloc(3200, 1)));
+        sock.write(encode('audio-stop'));
+        await delay(200);
+        const err = events.find(e => e.type === 'error');
+        assert.ok(err, 'error event sent');
+        assert.match(err.data.text, /boom/);
+    });
+});
+
 test('frame split across TCP writes is reassembled', async () => {
     await withServer({}, async (sock, events, seen) => {
         const frame = encode('audio-chunk', { rate: 16000, width: 2, channels: 1 }, Buffer.alloc(3200, 9));

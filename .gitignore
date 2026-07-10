@@ -8,3 +8,5 @@ Thumbs.db
 tmp/
 .iobroker/
 *.tgz
+/src-admin/.__mf__temp/
+/docs/TODO.md

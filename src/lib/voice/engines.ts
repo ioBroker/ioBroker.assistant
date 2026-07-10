@@ -7,7 +7,7 @@ import { OpenAiStt, type SttEngine } from './stt';
 import { OpenAiTts, type OpenAiVoice, type TtsEngine } from './tts';
 import { AzureStt, AzureTts, listAzureVoices } from './azure';
 import { AwsStt, AwsTts, listPollyVoices, type AwsCreds } from './aws';
-import { VoskStt } from './vosk';
+import { VoskStt, listVoskModels } from './vosk';
 import { PiperTts, listPiperVoices } from './piper';
 import { isoToLocale } from './lang';
 import type { VoiceLogger } from './download';
@@ -120,4 +120,9 @@ export async function listVoices(provider: SpeechProvider, ctx: EngineContext, l
         default:
             return OPENAI_VOICES;
     }
+}
+
+/** Suggested STT model names for the settings dropdown. Only Vosk has a local model catalogue. */
+export function listSttModels(provider: SpeechProvider, language: string): string[] {
+    return provider === 'vosk' ? listVoskModels(language) : [];
 }

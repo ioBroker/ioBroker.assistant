@@ -12,6 +12,8 @@ export interface TtsResult {
 
 export interface TtsEngine {
     synthesize(text: string, lang: string): Promise<TtsResult>;
+    /** Optional warm-up (install/download engine + voice for `lang`) so the first request isn't slow. */
+    prepare?(lang: string): Promise<void>;
 }
 
 /** OpenAI TTS voice ids. */

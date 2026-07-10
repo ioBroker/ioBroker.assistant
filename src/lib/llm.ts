@@ -91,15 +91,22 @@ export class LlmAgent {
         }
     }
 
-    /** `systemPrompt` overrides the configured one for this call (e.g. to inject a device list). */
-    public async ask(question: string, systemPrompt?: string): Promise<string> {
-        this.log.debug(`llm ask [${this.provider}/${this.model}]: ${question}`);
+    /**
+     * `systemPrompt` overrides the configured one for this call (e.g. to inject a device list).
+     * `history` are prior turns (user/assistant) prepended so the model can resolve follow-ups.
+     */
+    public async ask(
+        question: string,
+        systemPrompt?: string,
+        history: { role: 'user' | 'assistant'; content: string }[] = [],
+    ): Promise<string> {
+        this.log.debug(`llm ask [${this.provider}/${this.model}] (${history.length} history): ${question}`);
         const started = Date.now();
         const sys = systemPrompt ?? this.systemPrompt;
         const answer =
             this.provider === 'anthropic'
-                ? await this.askAnthropic(question, sys)
-                : await this.askOpenAI(question, sys);
+                ? await this.askAnthropic(question, sys, history)
+                : await this.askOpenAI(question, sys, history);
         this.log.debug(`llm answer (${Date.now() - started} ms): ${answer}`);
         return answer;
     }
@@ -204,7 +211,11 @@ export class LlmAgent {
     }
 
     // ── OpenAI (Chat Completions + function tools) ──────────────────────────
-    private async askOpenAI(question: string, systemPrompt: string): Promise<string> {
+    private async askOpenAI(
+        question: string,
+        systemPrompt: string,
+        history: { role: 'user' | 'assistant'; content: string }[] = [],
+    ): Promise<string> {
         const client = this.openai as OpenAI;
         const tools = this.tools.map(t => ({
             type: 'function' as const,
@@ -214,6 +225,9 @@ export class LlmAgent {
         const messages: any[] = [];
         if (systemPrompt) {
             messages.push({ role: 'system', content: systemPrompt });
+        }
+        for (const t of history) {
+            messages.push({ role: t.role, content: t.content });
         }
         messages.push({ role: 'user', content: question });
 
@@ -277,7 +291,11 @@ export class LlmAgent {
     }
 
     // ── Anthropic (Messages API + tool_use) ─────────────────────────────────
-    private async askAnthropic(question: string, systemPrompt: string): Promise<string> {
+    private async askAnthropic(
+        question: string,
+        systemPrompt: string,
+        history: { role: 'user' | 'assistant'; content: string }[] = [],
+    ): Promise<string> {
         const client = this.anthropic as Anthropic;
         const tools: any[] = this.tools.map(t => ({
             name: t.name,
@@ -293,7 +311,10 @@ export class LlmAgent {
             ? [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }]
             : undefined;
 
-        const messages: any[] = [{ role: 'user', content: question }];
+        const messages: any[] = [
+            ...history.map(t => ({ role: t.role, content: t.content })),
+            { role: 'user', content: question },
+        ];
 
         for (let round = 0; round < this.maxRounds; round++) {
             // Cache the growing conversation prefix too (e.g. the large list_devices result): move a

@@ -100,13 +100,18 @@ export class LocalLlm {
 
     constructor(private readonly opts: LocalLlmOptions) {}
 
-    /** Full system prompt = caller prompt + the HANDOFF rule. */
+    /** Full system prompt = the strict HANDOFF rule (device work must escalate to the tool-enabled cloud LLM). */
     private systemPrompt(): string {
-        const base = this.opts.systemPrompt?.trim();
-        const handoff =
-            `If a request needs the current value/state of an ioBroker device, room or sensor, or you are ` +
-            `not sure, reply with exactly "${HANDOFF}" and nothing else. Otherwise answer briefly in plain text.`;
-        return base ? `${base}\n\n${handoff}` : handoff;
+        // The local model has NO tools and cannot touch the smart home. Anything device-related MUST hand off,
+        // including control commands — otherwise a small model tends to "helpfully" refuse instead of escalating.
+        return (
+            `You are a smart-home assistant, but you have NO ability to read or control anything in the home. ` +
+            `If the user wants to control or query ANYTHING in the home — e.g. turn on/off, switch, dim, ` +
+            `open/close, start/stop, set, activate, or ask for the value/state/status of a light, socket, ` +
+            `sensor, device, room, or the home — OR if you are unsure — you MUST reply with EXACTLY "${HANDOFF}" ` +
+            `and nothing else. Do NOT apologise, do NOT explain, do NOT say you are an AI. ` +
+            `Reply directly ONLY for general knowledge, small talk, or questions unrelated to the home.`
+        );
     }
 
     async load(onProgress?: (line: string) => void): Promise<void> {
@@ -173,8 +178,29 @@ export class LocalLlm {
     }
 }
 
-/** True if the model's answer signals a hand-off to the cloud LLM. */
+/**
+ * Refusal patterns (de/en/ru) a small tool-free model emits when it *should* have handed off — e.g.
+ * "I'm an AI and can't control real devices". Treated as a hand-off so the tool-enabled cloud LLM runs.
+ */
+const REFUSAL = [
+    /\bhandoff\b/i,
+    // en
+    /\bi('?m| am)\s+an?\s+ai\b/i,
+    /\bi\s+(can('?t|not)|am\s+unable\s+to)\b.*\b(turn|switch|control|access|interact|device|light)\b/i,
+    // de
+    /\bich\s+bin\s+eine?\s+(ki|künstliche)\b/i,
+    /\bkann\s+.*\bnicht\b.*\b(schalten|steuern|einschalten|zugreifen|geräte?|licht)\b/i,
+    // ru (\w/\b are ASCII-only → use Cyrillic classes / plain substrings)
+    /искусственн[а-яё]*\s+интеллект/i,
+    /не\s+(могу|имею)/i,
+];
+
+/** True if the model's answer signals (or implies) a hand-off to the cloud LLM. */
 export function isHandoff(answer: string): boolean {
-    const a = answer.trim().toUpperCase();
-    return a === HANDOFF || a.startsWith(`${HANDOFF} `) || a === `"${HANDOFF}"`;
+    const trimmed = answer.trim();
+    const up = trimmed.toUpperCase();
+    if (up === HANDOFF || up.startsWith(`${HANDOFF} `) || up === `"${HANDOFF}"`) {
+        return true;
+    }
+    return REFUSAL.some(re => re.test(trimmed));
 }

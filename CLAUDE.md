@@ -19,6 +19,35 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Timer + Wecker (Roadmap #2)** — `src/lib/timers.ts` (`TimerManager`, Countdown) und `src/lib/alarms.ts`
+  (`AlarmManager`, feste Uhrzeit HH:MM + optional Wochentage, One-Shot/wiederkehrend, `enabled`). **Beide
+  feuern per eigenem `setTimeout` — KEIN Poll-Loop und KEINE periodischen State-Writes**; States tragen nur
+  absolute Zeitstempel (`fireAt`/`nextFireAt`), Vis/JS rechnen die Rest-Zeit selbst aus. NLU (`nlu.ts`): eine
+  `parseSchedule` + `parseDurationSeconds`/`parseClockTime`/`parseWeekdays` (de/en/ru), Intents
+  `timerSet/Query/Cancel` + `alarmSet/Query/Cancel`; entzerrt Uhrzeit vs. Dauer (ru „7 часов"=7 Uhr; „Wecker
+  in 5 Minuten"=Timer; „Timer um 5 Minuten"≠5 Uhr). `TIMER_RE` matcht nie das bloße „time". `main.ts`:
+  `setupTimers`/`setupAlarms`/`render*`/`execute*Intent`. States `timers.{count,list,nextExpiry,nextLabel,
+  lastFired,cancelAll}` + `timers.items.<id>.{label,room,duration,fireAt,cancel}`; `alarms.{count,list,
+  nextAlarm,nextLabel,lastFired,cancelAll}` + `alarms.items.<id>.{label,room,time,weekdays,nextFireAt,enabled,
+  delete}` (schreibbar: cancel/enabled/delete/cancelAll). Persistenz via `timers.list`/`alarms.list` → `restore()`.
+  Ansage beim Auslösen an den Ursprungs-Satelliten (`timerAnnounce`/`alarmAnnounce`). LLM-Tools
+  `set_timer/list_timers/cancel_timer` + `set_alarm/list_alarms/cancel_alarm`; sendTo
+  `setTimer/cancelTimer/listTimers` + `setAlarm/cancelAlarm/listAlarms`. **Hannah legte KEINE Timer/Wecker-States
+  an** (nur SQLite + gRPC/MQTT) — hier bewusst ioBroker-first.
+- **Jingles/Sound-Assets (Roadmap #5)** — Upload eigener mp3/wav über jsonConfig `fileSelector`
+  (`objectID:"assistant.%INSTANCE%"`, `upload:"sounds"`) → `assistant.0/sounds/`; `onReady` legt das
+  `meta`-Objekt an. Config `timerSound`/`alarmSound`. `main.ts`: `playStoredSound` (readFile → ffmpeg-stdin-
+  Decode `decodeAudioBufferToPcm`/`runFfmpegDecode` → `deliverPcm`), `playAndAnnounce` (Jingle → warten →
+  TTS-Ansage); fehlt ffmpeg/Datei → nur Ansage. Test-Button/Skript-API `playSound`. Delivery aus
+  `announceToSatellites` in `deliverPcm` extrahiert. ⚠️ ffmpeg-Pfad noch nicht end-to-end getestet.
+- **Langzeit-Gedächtnis (Roadmap #6)** — `src/lib/memory.ts` (`MemoryStore`: CRUD, Dedup per `key`/Text,
+  Cap 100/500, JSON-Persistenz; `buildMemoryPrompt` de/en/ru). **Speicher = ioBroker-States**, **Retrieval =
+  alles in den Prompt** (beides Nutzer-Entscheidung). `main.ts`: `setupMemory`/`renderMemory`/`buildMemoryContext`
+  (vor jedem Cloud-Call an System-Prompt vorangestellt, neben `buildDeviceContext`). States `memory.{count,list,
+  add,forget,clearAll}` + `memory.items.<id>.{text(editierbar),key,source,createdAt,delete}`; Persistenz via
+  `memory.list` → `restoreMemory()`. LLM-Tools `remember`/`list_memories`/`forget`; sendTo `saveMemory`/
+  `forgetMemory`/`listMemories`. Config `useLongTermMemory` (Default an, gated Tools + Injection). Later:
+  Embeddings-Top-K möglich (Format bleibt kompatibel).
 - LLM-Agent mit Tool-Calling-Schleife für **OpenAI + Anthropic** — `src/lib/llm.ts` (`LlmAgent`).
 - Tools über native ioBroker-API — `src/lib/tools.ts`: `list_rooms`, `list_functions`,
   `find_states({room?,func?,query?})`, `get_state({id})`, `set_state({id,value})`.
@@ -119,12 +148,19 @@ npm run lint       # eslint (eslint.config.mjs, @iobroker/eslint-config)
    - **Backend-TTS (echte Engine-Stimme, pro Antwort):** ▶️-Button an Assistant-Nachrichten → `tts`-sendTo →
      `synthesizeToWav()` nutzt `createTtsEngine` (OpenAI/Azure/AWS, wie die Satelliten), PCM→WAV
      (`pcmToWav`, 44-Byte-Header) → base64 → Chat spielt via `<audio>`. Gut zum Testen der echten TTS.
+   - **Satelliten-Tab (Custom Component)** — ✅ fertig. `src-admin/src/SatellitesComponent.tsx` (registriert in
+     `Components.tsx`, jsonConfig-Tab `_satellites` → `ConfigCustomAssistant/Components/SatellitesComponent`).
+     Live-Ansicht aller `assistant.0.satellites.*`: liest per `getForeignStates` + Pattern-`subscribeState`
+     (`satellites.*`) und zeigt je Satellit Online-Punkt/Status-Chip/Raum/„zuletzt gesehen". Composer pro Zeile
+     schreibt `satellites.<id>.tts`, Broadcast-Composer schreibt `tts.text` (Test-Ansagen).
 7. **Hybrid lokal→Cloud** — Tier-Pipeline in `main.ts.answer(question)`:
    - **Tier 0 — Regel-NLU** ✅ fertig, **mehrsprachig (de/en/ru)**. `src/lib/nlu.ts` (`Nlu`, Port von Hannahs
      `nlu.py`: Raum+Gerät+Aktion, längster Match gewinnt). Kyrillisch-fähig: `wordInText()` matcht per
      Unicode-Wortgrenze (`\p{L}`) mit **Stemming** (Suffix-tolerant → russische Flexion „подсветку"↔„подсветка").
      Wortlisten de/en/ru. Namen werden in `voiceLanguage||language` aufgelöst (`getNluDevices`), Antworten
-     (`executeIntent`/`describeValue`) ebenfalls de/en/ru. Deckt an/aus, Level (%), Farbe (hex), Status-Query.
+     (`executeIntent`/`describeValue`) ebenfalls de/en/ru. Deckt an/aus, Level (%), Farbe (hex), Status-Query
+     und **Aggregat-Query „welche Fenster sind offen"** (`parseWindowsOpen` → `action:'listByState'` über alle
+     `window`/`windowTilt`-Geräte, optional raumgefiltert → `executeListByState` liest alle States, nennt die offenen).
      `main.ts`: `getNluDevices()` baut `NluDevice[]` (controls = controlType→stateId) aus gecachtem
      `list_devices`; `tryLocalNlu()`→`executeIntent()` ruft direkt `set_state`/`get_states`, respektiert
      `allowWriteStates` + `deviceAcl`. Config-Schalter `useLocalNlu` (default true). Kein Modell, 0 Install.
@@ -146,8 +182,11 @@ npm run lint       # eslint (eslint.config.mjs, @iobroker/eslint-config)
      `markLastMessageForCache`) → große Kontexte (list_devices-Ergebnis) werden gecacht statt jede Runde neu
      bezahlt. `list_devices`-Ausgabe für den LLM **getrimmt** (`postProcessListDevices`: nur
      controlType→{stateId,writable}, kein role/unit/min/max/…) → weniger Tokens & Latenz.
-8. **Voice / Satelliten** — Architektur + Phasen in `docs/VOICE_PLAN.md`. Satelliten-Protokoll = Hannah-UDP
-   (ESP-kompatibel), STT/TTS als austauschbares Interface (Cloud + lokal), globale `voiceLanguage`.
+8. **Voice / Satelliten** — umgesetzt (V1–V3 fertig, auf dem Pi bestätigt; Reste in `docs/TODO.md`).
+   `VOICE_PLAN.md` wurde entfernt (umgesetzt/überholt). Zwei Transporte: **ioBroker-nativ** (Audio über den
+   Nachrichtenbus via `voice`-sendTo, kein Port, Default) und **UDP** (Hannah-Protokoll, ESP-kompatibel,
+   `udpServerEnabled`). Zusätzlich **Wyoming-TCP-Endpoint**. STT/TTS austauschbar (Cloud + lokal Vosk/Piper),
+   globale `voiceLanguage`. Nutzer-Doku: `docs/{en,de}.md`.
    - **V1 — Server-Seite Cloud ✅ fertig.** `src/lib/voice/{protocol,stt,tts,voiceServer}.ts`: `dgram`-UDP-Server
      (Typ-Bytes `0x01/0x02/0x03`, `register`/`heartbeat`/`audio_end` ↔ `registered`/`heartbeat_ack`/`status`/
      `tts_end`) sammelt 16 kHz-mono-PCM bis `audio_end` → OpenAI-STT (`whisper-1`) → `main.ts.answer()` (Tier-Pipeline)
@@ -169,8 +208,13 @@ npm run lint       # eslint (eslint.config.mjs, @iobroker/eslint-config)
      region}`) — Store-Typen `aws`/`azure` in der Admin-Credential-Komponente definiert. Voices dynamisch: `getVoices`-
      sendTo → `listVoices` (`engines.ts`; Azure `getVoicesAsync`, Polly `DescribeVoices`, OpenAI fixe 6) → jsonConfig
      `autocompleteSendTo` (freeSolo) für `ttsVoice`/`azureVoice`/`awsVoice`. Smoke-Tests grün.
-   - **V2** lokale Engines (Vosk-STT, Piper-TTS auto-download), **V3** Node-Satellit (2 Repos: Core-Lib
-     `@iobroker/assistant-satellite` + Adapter `iobroker.assistant-satellite`), **V4** Wyoming/Politur. Siehe Plan.
+   - **V2** lokale Engines (Vosk-STT, Piper-TTS auto-download). ⚠️ **Vosk NICHT über das `vosk`-npm-Paket**
+     (hängt an `ffi-napi`, das auf Node ≥20/22 NICHT baut — `node_api_basic_finalize`-Signatur). Stattdessen
+     bindet `src/lib/voice/vosk.ts` die **prebuilt `libvosk`** (GitHub-Release, plattform-Asset via
+     `libvoskAsset()`) direkt über **`koffi`** (moderner FFI, prebuilt, Node 22/arm64 OK) — on-demand
+     `npm install koffi` + libvosk-Download ins Instanz-Datenverzeichnis, C-API via `lib.func(...)`.
+   - **V3** Node-Satellit (2 Repos: Core-Lib `@iobroker/assistant-satellite` + Adapter
+     `iobroker.assistant-satellite`), **V4** Wyoming/Politur. Siehe Plan.
 
 **GUI-Build:** `cd src-admin && npm i && npm run build` (oder `npm run build:gui` vom Repo-Root) →
 `admin/custom/customComponents.js` + `admin/custom/i18n/*.json` (via `copyI18n`-Plugin aus `src/i18n/`).

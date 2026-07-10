@@ -6,8 +6,10 @@ import {
     Checkbox,
     Chip,
     CircularProgress,
+    FormControlLabel,
     IconButton,
     LinearProgress,
+    Switch,
     Paper,
     Table,
     TableBody,
@@ -54,6 +56,8 @@ interface DeviceAclState extends ConfigGenericState {
     translatingKeys: Record<string, boolean>;
     /** Per-row save status → row background: 'dirty' (grey), 'saving' (light red), 'saved' (green, 2 s). */
     rowStatus: Record<string, 'dirty' | 'saving' | 'saved'>;
+    /** Hide devices with read disabled (the dimmed rows). */
+    hideDisabled: boolean;
 }
 
 /** type-detector types that are read-only sensors — they cannot be controlled, so "write" is disabled. */
@@ -120,6 +124,7 @@ export default class DeviceAclComponent extends ConfigGeneric<ConfigGenericProps
             savingKey: '',
             translatingKeys: {},
             rowStatus: {},
+            hideDisabled: false,
         };
     }
 
@@ -428,9 +433,12 @@ export default class DeviceAclComponent extends ConfigGeneric<ConfigGenericProps
         }
 
         const filter = this.state.filter.trim().toLowerCase();
-        const devices = filter
+        let devices = filter
             ? this.state.devices.filter(d => `${d.name} ${d.type} ${d.room}`.toLowerCase().includes(filter))
             : this.state.devices;
+        if (this.state.hideDisabled) {
+            devices = devices.filter(d => this.getAcl(d).read); // hide read-disabled (dimmed) rows
+        }
         const dark = this.props.oContext.themeType === 'dark';
 
         return (
@@ -480,6 +488,16 @@ export default class DeviceAclComponent extends ConfigGeneric<ConfigGenericProps
                         );
                     })()}
                     <Box sx={{ flex: 1 }} />
+                    <FormControlLabel
+                        control={
+                            <Switch
+                                size="small"
+                                checked={this.state.hideDisabled}
+                                onChange={e => this.setState({ hideDisabled: e.target.checked })}
+                            />
+                        }
+                        label={I18n.t('custom_assistant_Hide disabled')}
+                    />
                     <TextField
                         variant="standard"
                         size="small"

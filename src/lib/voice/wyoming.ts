@@ -81,11 +81,14 @@ class WyomingConnection {
     private draining = false;
     private audioChunks: Buffer[] = [];
     private audioRate = 16000;
+    /** Per-utterance language (overridable via `transcribe`/`synthesize` data.language). */
+    private lang: string;
 
     constructor(
         private readonly sock: net.Socket,
         private readonly opts: WyomingServerOptions,
     ) {
+        this.lang = opts.language;
         sock.on('data', d => {
             this.buf = Buffer.concat([this.buf, d]);
             void this.drain();
@@ -146,9 +149,20 @@ class WyomingConnection {
             case 'describe':
                 this.write('info', this.info());
                 break;
+            // ASR request / start-of-speech (VAD) — reset the buffer, optional language hint.
+            case 'transcribe':
+            case 'voice-started':
             case 'audio-start':
+                if (ev.data?.language) {
+                    this.lang =
+                        typeof ev.data.language === 'object'
+                            ? JSON.stringify(ev.data.language)
+                            : (ev.data.language as string).toString();
+                }
+                if (ev.data?.rate) {
+                    this.audioRate = Number(ev.data.rate) || this.audioRate;
+                }
                 this.audioChunks = [];
-                this.audioRate = Number(ev.data?.rate) || 16000;
                 break;
             case 'audio-chunk':
                 if (ev.payload) {
@@ -158,13 +172,26 @@ class WyomingConnection {
                     this.audioChunks.push(ev.payload);
                 }
                 break;
+            // End-of-speech — either the explicit audio-stop or a VAD voice-stopped.
             case 'audio-stop':
+            case 'voice-stopped':
                 await this.onUtterance();
                 break;
             case 'synthesize':
-                await this.speak(String(ev.data?.text || ''));
+                if (ev.data?.language) {
+                    this.lang =
+                        typeof ev.data.language === 'object'
+                            ? JSON.stringify(ev.data.language)
+                            : (ev.data.language as string).toString();
+                }
+                await this.speak(
+                    ev.data?.text
+                        ? typeof ev.data?.text === 'object'
+                            ? JSON.stringify(ev.data.text)
+                            : (ev.data.text as string).toString()
+                        : '',
+                );
                 break;
-            // 'ping' → 'pong' keep-alive
             case 'ping':
                 this.write('pong', ev.data);
                 break;
@@ -178,7 +205,7 @@ class WyomingConnection {
             return;
         }
         try {
-            const text = await this.opts.stt.transcribe(pcm, this.audioRate, this.opts.language);
+            const text = await this.opts.stt.transcribe(pcm, this.audioRate, this.lang);
             this.opts.log.info(`Wyoming Q: ${text || '(empty)'}`);
             this.write('transcript', { text });
             if (!text) {
@@ -191,6 +218,7 @@ class WyomingConnection {
             }
         } catch (e) {
             this.opts.log.error(`Wyoming pipeline failed: ${(e as Error).message}`);
+            this.write('error', { text: (e as Error).message });
         }
     }
 
@@ -198,13 +226,18 @@ class WyomingConnection {
         if (!text) {
             return;
         }
-        const { pcm, sampleRate } = await this.opts.tts.synthesize(text, this.opts.language);
-        const meta = { rate: sampleRate, width: 2, channels: 1 };
-        this.write('audio-start', meta);
-        for (let off = 0; off < pcm.length; off += AUDIO_CHUNK) {
-            this.write('audio-chunk', meta, pcm.subarray(off, off + AUDIO_CHUNK));
+        try {
+            const { pcm, sampleRate } = await this.opts.tts.synthesize(text, this.lang);
+            const meta = { rate: sampleRate, width: 2, channels: 1 };
+            this.write('audio-start', meta);
+            for (let off = 0; off < pcm.length; off += AUDIO_CHUNK) {
+                this.write('audio-chunk', meta, pcm.subarray(off, off + AUDIO_CHUNK));
+            }
+            this.write('audio-stop', {});
+        } catch (e) {
+            this.opts.log.error(`Wyoming TTS failed: ${(e as Error).message}`);
+            this.write('error', { text: (e as Error).message });
         }
-        this.write('audio-stop', {});
     }
 
     /** Capabilities advertised in response to `describe`. */

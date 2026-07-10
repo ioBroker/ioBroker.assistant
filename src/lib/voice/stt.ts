@@ -7,6 +7,8 @@ import OpenAI, { toFile } from 'openai';
 export interface SttEngine {
     /** Transcribe raw mono 16-bit PCM. `lang` is an ISO-639-1 hint ('' = auto-detect). */
     transcribe(pcm: Buffer, sampleRate: number, lang: string): Promise<string>;
+    /** Optional warm-up (install/download engine + model for `lang`) so the first request isn't slow. */
+    prepare?(lang: string): Promise<void>;
 }
 
 /** Wrap raw mono 16-bit-signed-LE PCM into a minimal 44-byte WAV container. */

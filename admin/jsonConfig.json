@@ -103,6 +103,93 @@
                     "sm": 6,
                     "md": 4
                 },
+                "useConversationContext": {
+                    "type": "checkbox",
+                    "label": "Remember the conversation (follow-up questions)",
+                    "help": "Keep the last few turns per source (chat, telegram, satellite) for a few minutes so follow-ups like 'and the kitchen too' work. In-memory only.",
+                    "default": true,
+                    "sm": 6,
+                    "md": 4
+                },
+                "useLongTermMemory": {
+                    "type": "checkbox",
+                    "label": "Long-term memory (remember facts across sessions)",
+                    "help": "Lets the assistant durably remember facts you tell it (names, preferences, where things are) and use them in later conversations. Stored in the memory.* states; the LLM gets remember/forget tools.",
+                    "default": true,
+                    "sm": 6,
+                    "md": 4
+                },
+                "timerAnnounce": {
+                    "type": "checkbox",
+                    "label": "Announce when a timer expires",
+                    "help": "Speak an announcement on the satellite a countdown timer was set from (or on all satellites) when it runs out. Timers are always mirrored into the timers.* states for scripts and visualization.",
+                    "default": true,
+                    "sm": 6,
+                    "md": 4
+                },
+                "alarmAnnounce": {
+                    "type": "checkbox",
+                    "label": "Announce when an alarm goes off",
+                    "help": "Speak an announcement when an alarm at a fixed clock time fires. Alarms are always mirrored into the alarms.* states for scripts and visualization.",
+                    "default": true,
+                    "sm": 6,
+                    "md": 4
+                },
+                "_soundsHint": {
+                    "newLine": true,
+                    "type": "staticText",
+                    "text": "Upload mp3/wav jingles below; the selected sound plays before the spoken announcement. Needs ffmpeg installed on the host and at least one satellite.",
+                    "sm": 12,
+                    "md": 12
+                },
+                "timerSound": {
+                    "newLine": true,
+                    "type": "fileSelector",
+                    "objectID": "assistant.%INSTANCE%",
+                    "upload": "sounds",
+                    "pattern": "sounds/*",
+                    "fileTypes": "audio",
+                    "delete": true,
+                    "refresh": true,
+                    "maxSize": 5242880,
+                    "label": "Timer sound (mp3/wav, optional)",
+                    "sm": 12,
+                    "md": 5
+                },
+                "_playTimerSound": {
+                    "type": "sendTo",
+                    "command": "playSound",
+                    "label": "Play",
+                    "variant": "outlined",
+                    "jsonData": "{\"name\":\"${data.timerSound}\"}",
+                    "disabled": "!data.timerSound",
+                    "sm": 6,
+                    "md": 2
+                },
+                "alarmSound": {
+                    "newLine": true,
+                    "type": "fileSelector",
+                    "objectID": "assistant.%INSTANCE%",
+                    "upload": "sounds",
+                    "pattern": "sounds/*",
+                    "fileTypes": "audio",
+                    "delete": true,
+                    "refresh": true,
+                    "maxSize": 5242880,
+                    "label": "Alarm sound (mp3/wav, optional)",
+                    "sm": 12,
+                    "md": 5
+                },
+                "_playAlarmSound": {
+                    "type": "sendTo",
+                    "command": "playSound",
+                    "label": "Play",
+                    "variant": "outlined",
+                    "jsonData": "{\"name\":\"${data.alarmSound}\"}",
+                    "disabled": "!data.alarmSound",
+                    "sm": 6,
+                    "md": 2
+                },
                 "useLocalLlm": {
                     "newLine": true,
                     "type": "checkbox",
@@ -129,9 +216,20 @@
                     "hidden": "!data.useLocalLlm",
                     "showProcess": true,
                     "timeout": 600000,
-                    "help": "Downloads the engine and model (several hundred MB). Watch the instance log for progress.",
+                    "help": "Downloads the engine and model (several hundred MB). Progress is shown below.",
                     "sm": 12,
                     "md": 4
+                },
+                "_localLlmProgress": {
+                    "newLine": true,
+                    "type": "custom",
+                    "i18n": true,
+                    "url": "custom/customComponents.js",
+                    "name": "ConfigCustomAssistant/Components/LocalLlmProgress",
+                    "bundlerType": "module",
+                    "hidden": "!data.useLocalLlm",
+                    "sm": 12,
+                    "md": 8
                 },
                 "_accessHeader": {
                     "newLine": true,
@@ -240,31 +338,41 @@
                 "voiceEnabled": {
                     "newLine": true,
                     "type": "checkbox",
-                    "label": "Enable voice server (satellites)",
-                    "help": "Starts a UDP server for microphone satellites (Hannah-compatible protocol).",
+                    "label": "Enable voice (STT/TTS for satellites)",
+                    "help": "Enables speech recognition/synthesis. ioBroker-native satellites reach it over the message bus — no port needed. Turn on the UDP server below only for ESP / Hannah satellites.",
                     "default": false,
                     "sm": 12,
                     "md": 6
                 },
-                "port": {
+                "udpServerEnabled": {
                     "newLine": true,
+                    "type": "checkbox",
+                    "label": "Run the UDP voice server (ESP / Hannah satellites)",
+                    "help": "Opens a UDP port for streaming microphone satellites (Hannah-compatible / ESP). Not needed for ioBroker-native satellites.",
+                    "default": false,
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 12,
+                    "md": 6
+                },
+                "bind": {
+                    "newLine": true,
+                    "type": "ip",
+                    "freeSolo": true,
+                    "label": "Bind address",
+                    "help": "Interface the UDP voice server listens on. 0.0.0.0 = all interfaces; pick a specific host IP so satellites on the LAN can reach it.",
+                    "default": "0.0.0.0",
+                    "listenOnAllPorts": true,
+                    "hidden": "!data.voiceEnabled || !data.udpServerEnabled",
+                    "sm": 6,
+                    "md": 3
+                },
+                "port": {
                     "type": "number",
                     "label": "UDP port",
                     "default": 7775,
                     "min": 1,
                     "max": 65535,
-                    "hidden": "!data.voiceEnabled",
-                    "sm": 6,
-                    "md": 3
-                },
-                "bind": {
-                    "type": "autocompleteSendTo",
-                    "command": "getBindAddresses",
-                    "freeSolo": true,
-                    "label": "Bind address",
-                    "help": "Interface the voice server listens on. 0.0.0.0 = all interfaces; pick a specific host IP so satellites on the LAN can reach it.",
-                    "default": "0.0.0.0",
-                    "hidden": "!data.voiceEnabled",
+                    "hidden": "!data.voiceEnabled || !data.udpServerEnabled",
                     "sm": 6,
                     "md": 3
                 },
@@ -289,6 +397,7 @@
                     "md": 3
                 },
                 "voiceLanguage": {
+                    "newLine": true,
                     "type": "select",
                     "label": "Voice language",
                     "help": "Language for speech recognition and the spoken reply.",
@@ -349,7 +458,7 @@
                         { "label": "Central credential store", "value": "manager" }
                     ],
                     "default": "manual",
-                    "hidden": "!data.voiceEnabled",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider === 'vosk' && data.ttsProvider === 'piper')",
                     "sm": 12,
                     "md": 4
                 },
@@ -446,7 +555,14 @@
                     "type": "autocompleteSendTo",
                     "command": "getVoices",
                     "jsonData": "{\"ttsProvider\":\"${data.ttsProvider}\",\"language\":\"${data.voiceLanguage}\",\"voiceCredentialType\":\"${data.voiceCredentialType}\",\"azureSpeechKey\":\"${data.azureSpeechKey}\",\"azureSpeechRegion\":\"${data.azureSpeechRegion}\",\"azureCredentialId\":\"${data.azureCredentialId}\"}",
-                    "alsoDependsOn": ["ttsProvider", "voiceLanguage", "voiceCredentialType", "azureSpeechKey", "azureSpeechRegion", "azureCredentialId"],
+                    "alsoDependsOn": [
+                        "ttsProvider",
+                        "voiceLanguage",
+                        "voiceCredentialType",
+                        "azureSpeechKey",
+                        "azureSpeechRegion",
+                        "azureCredentialId"
+                    ],
                     "freeSolo": true,
                     "label": "Azure voice (optional)",
                     "help": "Loaded from Azure (instance must run); empty = pick by language. e.g. de-DE-KatjaNeural.",
@@ -498,7 +614,15 @@
                     "type": "autocompleteSendTo",
                     "command": "getVoices",
                     "jsonData": "{\"ttsProvider\":\"${data.ttsProvider}\",\"language\":\"${data.voiceLanguage}\",\"voiceCredentialType\":\"${data.voiceCredentialType}\",\"awsAccessKeyId\":\"${data.awsAccessKeyId}\",\"awsSecretAccessKey\":\"${data.awsSecretAccessKey}\",\"awsRegion\":\"${data.awsRegion}\",\"awsCredentialId\":\"${data.awsCredentialId}\"}",
-                    "alsoDependsOn": ["ttsProvider", "voiceLanguage", "voiceCredentialType", "awsAccessKeyId", "awsSecretAccessKey", "awsRegion", "awsCredentialId"],
+                    "alsoDependsOn": [
+                        "ttsProvider",
+                        "voiceLanguage",
+                        "voiceCredentialType",
+                        "awsAccessKeyId",
+                        "awsSecretAccessKey",
+                        "awsRegion",
+                        "awsCredentialId"
+                    ],
                     "freeSolo": true,
                     "label": "AWS Polly voice (optional)",
                     "help": "Loaded from Polly (instance must run); empty = default per language. e.g. Vicki, Tatyana.",
@@ -523,7 +647,11 @@
                 },
                 "voskModel": {
                     "newLine": true,
-                    "type": "text",
+                    "type": "autocompleteSendTo",
+                    "command": "getSttModels",
+                    "jsonData": "{\"sttProvider\":\"${data.sttProvider}\",\"language\":\"${data.voiceLanguage}\"}",
+                    "alsoDependsOn": ["sttProvider", "voiceLanguage"],
+                    "freeSolo": true,
                     "label": "Vosk model (optional)",
                     "help": "Model name from alphacephei.com/vosk/models, e.g. vosk-model-small-de-0.15. Empty = small default per language.",
                     "hidden": "!data.voiceEnabled || data.sttProvider !== 'vosk'",
@@ -554,6 +682,20 @@
                     "i18n": true,
                     "url": "custom/customComponents.js",
                     "name": "ConfigCustomAssistant/Components/ChatComponent",
+                    "bundlerType": "module",
+                    "sm": 12
+                }
+            }
+        },
+        "_satellites": {
+            "type": "panel",
+            "label": "Satellites",
+            "items": {
+                "_satellitesComponent": {
+                    "type": "custom",
+                    "i18n": true,
+                    "url": "custom/customComponents.js",
+                    "name": "ConfigCustomAssistant/Components/SatellitesComponent",
                     "bundlerType": "module",
                     "sm": 12
                 }

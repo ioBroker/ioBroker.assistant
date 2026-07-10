@@ -123,6 +123,12 @@ export class PiperTts implements TtsEngine {
         return { onnx, sampleRate };
     }
 
+    /** Warm-up: download the Piper binary + the voice for `lang` so the first command isn't slow. */
+    async prepare(lang: string): Promise<void> {
+        await this.ensure();
+        await this.ensureVoice(this.voiceFor(lang));
+    }
+
     async synthesize(text: string, lang: string): Promise<TtsResult> {
         await this.ensure();
         const voice = this.voiceFor(lang);

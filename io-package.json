@@ -3,7 +3,21 @@
         "name": "assistant",
         "version": "0.0.1",
         "title": "Assistant",
-        "news": [],
+        "news": {
+            "0.0.1": {
+                "en": "Initial release",
+                "de": "Erstveröffentlichung",
+                "ru": "Начальная версия",
+                "pt": "Lançamento inicial",
+                "nl": "Eerste release",
+                "fr": "Version initiale",
+                "it": "Rilascio iniziale",
+                "es": "Lanzamiento inicial",
+                "pl": "Wersja początkowa",
+                "uk": "Початковий випуск",
+                "zh-cn": "首次发布"
+            }
+        },
         "titleLang": {
             "en": "Voice Assistant",
             "de": "Sprach-Assistent",
@@ -32,7 +46,6 @@
         },
         "authors": ["ioBroker"],
         "keywords": ["assistant", "llm", "voice", "openai", "anthropic"],
-        "license": "MIT",
         "platform": "Javascript/Node.js",
         "main": "build/main.js",
         "icon": "assistant.svg",
@@ -88,9 +101,16 @@
         "deviceAcl": {},
         "systemPrompt": "Du bist ein Sprach-Assistent für ioBroker. Deine Antworten werden vorgelesen: schreibe reinen Fließtext, KEIN Markdown, keine Sternchen, keine Aufzählungen, keine Emojis, und fasse dich kurz. Beantworte Fragen über Geräte, Räume und Sensoren ausschließlich mit den verfügbaren Tools. Rufe immer zuerst ein Tool auf, bevor du etwas über ioBroker sagst, und behaupte nie, dass etwas nicht existiert, ohne es per Tool geprüft zu haben. Erfinde keine Werte.",
         "useLocalNlu": true,
+        "useConversationContext": true,
+        "useLongTermMemory": true,
+        "timerAnnounce": true,
+        "alarmAnnounce": true,
+        "timerSound": "",
+        "alarmSound": "",
         "useLocalLlm": false,
         "localLlmModelUrl": "",
         "voiceEnabled": false,
+        "udpServerEnabled": false,
         "port": 7775,
         "bind": "0.0.0.0",
         "wyomingEnabled": false,
@@ -181,6 +201,245 @@
                 "read": true,
                 "write": false,
                 "def": ""
+            },
+            "native": {}
+        },
+        {
+            "_id": "timers",
+            "type": "channel",
+            "common": { "name": "Countdown timers" },
+            "native": {}
+        },
+        {
+            "_id": "timers.count",
+            "type": "state",
+            "common": {
+                "name": "Number of active timers",
+                "type": "number",
+                "role": "value",
+                "read": true,
+                "write": false,
+                "def": 0
+            },
+            "native": {}
+        },
+        {
+            "_id": "timers.list",
+            "type": "state",
+            "common": {
+                "name": "Active timers (JSON)",
+                "type": "string",
+                "role": "json",
+                "read": true,
+                "write": false,
+                "def": "[]"
+            },
+            "native": {}
+        },
+        {
+            "_id": "timers.nextExpiry",
+            "type": "state",
+            "common": {
+                "name": "When the next timer fires (0 = none)",
+                "type": "number",
+                "role": "value.time",
+                "read": true,
+                "write": false,
+                "def": 0
+            },
+            "native": {}
+        },
+        {
+            "_id": "timers.nextLabel",
+            "type": "state",
+            "common": {
+                "name": "Label of the next timer",
+                "type": "string",
+                "role": "text",
+                "read": true,
+                "write": false,
+                "def": ""
+            },
+            "native": {}
+        },
+        {
+            "_id": "timers.lastFired",
+            "type": "state",
+            "common": {
+                "name": "Label of the last expired timer",
+                "type": "string",
+                "role": "text",
+                "read": true,
+                "write": false,
+                "def": ""
+            },
+            "native": {}
+        },
+        {
+            "_id": "timers.cancelAll",
+            "type": "state",
+            "common": {
+                "name": "Cancel all timers (write true)",
+                "type": "boolean",
+                "role": "button",
+                "read": false,
+                "write": true,
+                "def": false
+            },
+            "native": {}
+        },
+        {
+            "_id": "alarms",
+            "type": "channel",
+            "common": { "name": "Alarms (fixed clock time)" },
+            "native": {}
+        },
+        {
+            "_id": "alarms.count",
+            "type": "state",
+            "common": {
+                "name": "Number of configured alarms",
+                "type": "number",
+                "role": "value",
+                "read": true,
+                "write": false,
+                "def": 0
+            },
+            "native": {}
+        },
+        {
+            "_id": "alarms.list",
+            "type": "state",
+            "common": {
+                "name": "Alarms (JSON)",
+                "type": "string",
+                "role": "json",
+                "read": true,
+                "write": false,
+                "def": "[]"
+            },
+            "native": {}
+        },
+        {
+            "_id": "alarms.nextAlarm",
+            "type": "state",
+            "common": {
+                "name": "When the next alarm fires (0 = none)",
+                "type": "number",
+                "role": "value.time",
+                "read": true,
+                "write": false,
+                "def": 0
+            },
+            "native": {}
+        },
+        {
+            "_id": "alarms.nextLabel",
+            "type": "state",
+            "common": {
+                "name": "Label/time of the next alarm",
+                "type": "string",
+                "role": "text",
+                "read": true,
+                "write": false,
+                "def": ""
+            },
+            "native": {}
+        },
+        {
+            "_id": "alarms.lastFired",
+            "type": "state",
+            "common": {
+                "name": "Label/time of the last fired alarm",
+                "type": "string",
+                "role": "text",
+                "read": true,
+                "write": false,
+                "def": ""
+            },
+            "native": {}
+        },
+        {
+            "_id": "alarms.cancelAll",
+            "type": "state",
+            "common": {
+                "name": "Delete all alarms (write true)",
+                "type": "boolean",
+                "role": "button",
+                "read": false,
+                "write": true,
+                "def": false
+            },
+            "native": {}
+        },
+        {
+            "_id": "memory",
+            "type": "channel",
+            "common": { "name": "Long-term memory (remembered facts)" },
+            "native": {}
+        },
+        {
+            "_id": "memory.count",
+            "type": "state",
+            "common": {
+                "name": "Number of remembered facts",
+                "type": "number",
+                "role": "value",
+                "read": true,
+                "write": false,
+                "def": 0
+            },
+            "native": {}
+        },
+        {
+            "_id": "memory.list",
+            "type": "state",
+            "common": {
+                "name": "Remembered facts (JSON)",
+                "type": "string",
+                "role": "json",
+                "read": true,
+                "write": false,
+                "def": "[]"
+            },
+            "native": {}
+        },
+        {
+            "_id": "memory.add",
+            "type": "state",
+            "common": {
+                "name": "Remember a fact (write the text)",
+                "type": "string",
+                "role": "text",
+                "read": false,
+                "write": true,
+                "def": ""
+            },
+            "native": {}
+        },
+        {
+            "_id": "memory.forget",
+            "type": "state",
+            "common": {
+                "name": "Forget a fact (write its id or key)",
+                "type": "string",
+                "role": "text",
+                "read": false,
+                "write": true,
+                "def": ""
+            },
+            "native": {}
+        },
+        {
+            "_id": "memory.clearAll",
+            "type": "state",
+            "common": {
+                "name": "Forget all facts (write true)",
+                "type": "boolean",
+                "role": "button",
+                "read": false,
+                "write": true,
+                "def": false
             },
             "native": {}
         },
