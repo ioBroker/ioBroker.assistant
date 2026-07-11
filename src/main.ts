@@ -2807,12 +2807,12 @@ class Assistant extends Adapter {
                     additionalProperties: false,
                 },
                 run: (args): Promise<string> => {
-                    if (!this.memory || typeof args.text !== 'string' || typeof args.key !== 'string') {
+                    if (!this.memory || typeof args.text !== 'string') {
                         return Promise.resolve(JSON.stringify({ ok: false, error: 'memory is disabled' }));
                     }
                     const entry = this.memory.add({
-                        text: String(args.text || ''),
-                        key: String(args.key || ''),
+                        text: args.text,
+                        key: String((args.key as string) || ''),
                         source: 'llm',
                     });
                     return Promise.resolve(
