@@ -13,14 +13,7 @@
 
 /** How to read a given weather adapter's state tree. */
 export type WeatherKind =
-    | 'openmeteo'
-    | 'wunderground'
-    | 'openweathermap'
-    | 'brightsky'
-    | 'pirate'
-    | 'accuweather'
-    | 'daswetter'
-    | 'yr';
+    'openmeteo' | 'wunderground' | 'openweathermap' | 'brightsky' | 'pirate' | 'accuweather' | 'daswetter' | 'yr';
 
 /**
  * Registry of weather adapters offered in the settings dropdown. `kind` present = fully normalized.
@@ -29,13 +22,21 @@ export type WeatherKind =
  * used to split the location out of the state id).
  */
 export const WEATHER_ADAPTERS: Record<string, { label: string; kind?: WeatherKind; perLocationProbe?: string }> = {
-    'open-meteo-weather': { label: 'Open-Meteo', kind: 'openmeteo', perLocationProbe: 'weather.current.temperature_2m' },
+    'open-meteo-weather': {
+        label: 'Open-Meteo',
+        kind: 'openmeteo',
+        perLocationProbe: 'weather.current.temperature_2m',
+    },
     weatherunderground: { label: 'Weather Underground', kind: 'wunderground' },
     openweathermap: { label: 'OpenWeatherMap', kind: 'openweathermap' },
     brightsky: { label: 'Bright Sky (DWD, free)', kind: 'brightsky' },
     'pirate-weather': { label: 'Pirate Weather', kind: 'pirate' },
     accuweather: { label: 'AccuWeather', kind: 'accuweather' },
-    daswetter: { label: 'DasWetter (Meteored)', kind: 'daswetter', perLocationProbe: 'ForecastDaily.Day_1.Temperature_Max' },
+    daswetter: {
+        label: 'DasWetter (Meteored)',
+        kind: 'daswetter',
+        perLocationProbe: 'ForecastDaily.Day_1.Temperature_Max',
+    },
     yr: { label: 'Yr / met.no', kind: 'yr' },
     dwd: { label: 'DWD (warnings only)' },
 };
@@ -124,16 +125,16 @@ function num(states: StateValues, id: string): number | undefined {
     if (v === undefined || v === null || v === '') {
         return undefined;
     }
-    const n = typeof v === 'number' ? v : parseFloat(String(v));
+    const n = typeof v === 'number' ? v : parseFloat(v == null ? '0' : (v as string).toString());
     return Number.isFinite(n) ? n : undefined;
 }
 
 function str(states: StateValues, id: string): string | undefined {
     const v = states[id];
-    if (v === undefined || v === null || v === '') {
+    if (v == null || v === '') {
         return undefined;
     }
-    return String(v);
+    return (v as string).toString();
 }
 
 /** First defined number among several candidate ids (for adapters with windowed/variant fields). */
@@ -283,7 +284,9 @@ function mapBrightsky(root: string, states: StateValues): WeatherReport {
         humidity: num(states, `${c}.relative_humidity`),
         condition: firstStr(states, [`${c}.conditionUI`, `${c}.condition`]),
         windSpeed: firstNum(states, [`${c}.wind_speed_60`, `${c}.wind_speed_10`, `${c}.wind_speed_30`]),
-        windDir: firstStr(states, [`${c}.wind_bearing_text`]) ?? firstNum(states, [`${c}.wind_direction_60`, `${c}.wind_direction_10`]),
+        windDir:
+            firstStr(states, [`${c}.wind_bearing_text`]) ??
+            firstNum(states, [`${c}.wind_direction_60`, `${c}.wind_direction_10`]),
         pressure: num(states, `${c}.pressure_msl`),
         precipitation: firstNum(states, [`${c}.precipitation_60`, `${c}.precipitation_10`]),
         cloudCover: num(states, `${c}.cloud_cover`),
@@ -455,7 +458,7 @@ export function buildWeatherReport(adapter: string, root: string, states: StateV
     if (report.current) {
         report.current = Object.fromEntries(
             Object.entries(report.current).filter(([, v]) => v !== undefined && v !== ''),
-        ) as WeatherCurrent;
+        );
         if (!Object.keys(report.current).length) {
             report.current = undefined;
         }

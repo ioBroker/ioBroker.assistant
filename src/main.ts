@@ -25,13 +25,7 @@ import {
 import { TimerManager, formatDuration, type TimerInfo } from './lib/timers';
 import { AlarmManager, formatClock, formatWeekdays, type AlarmInfo } from './lib/alarms';
 import { MemoryStore, buildMemoryPrompt, type MemoryEntry } from './lib/memory';
-import {
-    WEATHER_ADAPTERS,
-    buildWeatherReport,
-    trimReport,
-    type WeatherReport,
-    type StateValues,
-} from './lib/weather';
+import { WEATHER_ADAPTERS, buildWeatherReport, trimReport, type WeatherReport, type StateValues } from './lib/weather';
 import { LocalLlm, installLocalLlm, isLocalLlmInstalled, isHandoff, DEFAULT_LOCAL_MODEL_URL } from './lib/localLlm';
 import { resolveApiKey, resolveVoiceCredentials } from './lib/credentials';
 import { ConversationStore, type ConversationTurn } from './lib/context';
@@ -128,7 +122,11 @@ class Assistant extends Adapter {
     /** Per-memory `memory.items.<id>` channels currently rendered. */
     private readonly memoryObjIds = new Set<string>();
     /** Active "ringing" sessions (a timer/alarm looping its sound until stopped or timed out). */
-    private readonly rings: { target: string | null; stopped: boolean; timeout: ReturnType<typeof setTimeout> | null }[] = [];
+    private readonly rings: {
+        target: string | null;
+        stopped: boolean;
+        timeout: ReturnType<typeof setTimeout> | null;
+    }[] = [];
 
     public constructor(options: Partial<AdapterOptions> = {}) {
         super({ ...options, name: 'assistant' });
@@ -413,7 +411,14 @@ class Assistant extends Adapter {
         source?: string;
         room?: string;
         language?: string;
-    }): Promise<{ text?: string; answer?: string; audio?: string; sampleRate?: number; listen?: boolean; error?: string }> {
+    }): Promise<{
+        text?: string;
+        answer?: string;
+        audio?: string;
+        sampleRate?: number;
+        listen?: boolean;
+        error?: string;
+    }> {
         const source = msg.source || 'satellite';
         const room = msg.room || '';
         // Make the native satellite visible under assistant.0.satellites (+ lastSeen/room), like UDP ones.
@@ -565,7 +570,14 @@ class Assistant extends Adapter {
             });
             await this.setObjectNotExistsAsync(`${base}.host`, {
                 type: 'state',
-                common: { name: 'Host the satellite runs on', type: 'string', role: 'text', read: true, write: false, def: '' },
+                common: {
+                    name: 'Host the satellite runs on',
+                    type: 'string',
+                    role: 'text',
+                    read: true,
+                    write: false,
+                    def: '',
+                },
                 native: {},
             });
             await this.setObjectNotExistsAsync(`${base}.tts`, {
@@ -647,7 +659,9 @@ class Assistant extends Adapter {
         }
 
         const delivered = await this.deliverPcm(pcm, sampleRate, targetId, priority);
-        this.log.info(`Announce → ${targetId || 'all satellites'} (${delivered} channel(s)): ${isAudio ? v : `"${v}"`}`);
+        this.log.info(
+            `Announce → ${targetId || 'all satellites'} (${delivered} channel(s)): ${isAudio ? v : `"${v}"`}`,
+        );
         if (!delivered) {
             this.log.warn('Announcement not delivered — no satellites registered (native or UDP).');
         }
@@ -726,10 +740,11 @@ class Assistant extends Adapter {
         let data: Buffer | null = null;
         for (const p of candidates) {
             try {
-                const res = (await this.readFileAsync(this.namespace, p)) as { file?: Buffer | string } | Buffer | string;
+                const res = (await this.readFileAsync(this.namespace, p)) as
+                    { file?: Buffer | string } | Buffer | string;
                 const f = Buffer.isBuffer(res) || typeof res === 'string' ? res : res.file;
                 if (f != null) {
-                    data = Buffer.isBuffer(f) ? f : Buffer.from(f as string, 'binary');
+                    data = Buffer.isBuffer(f) ? f : Buffer.from(f, 'binary');
                     break;
                 }
             } catch {
@@ -1238,16 +1253,22 @@ class Assistant extends Adapter {
                     minute = clock.minute;
                 }
             }
-            const weekdays = Array.isArray(m.weekdays)
-                ? m.weekdays
-                : m.time
-                  ? parseWeekdays(m.time)
-                  : [];
+            const weekdays = Array.isArray(m.weekdays) ? m.weekdays : m.time ? parseWeekdays(m.time) : [];
             let result: { ok: boolean; id?: string; nextFireAt?: number; error?: string };
             if (!this.alarms || Number.isNaN(hour)) {
-                result = { ok: false, error: this.alarms ? 'hour/minute or a parseable time is required' : 'alarms not ready' };
+                result = {
+                    ok: false,
+                    error: this.alarms ? 'hour/minute or a parseable time is required' : 'alarms not ready',
+                };
             } else {
-                const info = this.alarms.add({ label: m.label || '', room: m.room || '', source: '', hour, minute, weekdays });
+                const info = this.alarms.add({
+                    label: m.label || '',
+                    room: m.room || '',
+                    source: '',
+                    hour,
+                    minute,
+                    weekdays,
+                });
                 result = { ok: true, id: info.id, nextFireAt: info.nextFireAt };
             }
             if (obj.callback) {
@@ -1282,7 +1303,9 @@ class Assistant extends Adapter {
                 this.sendTo(
                     obj.from,
                     obj.command,
-                    entry ? { ok: true, id: entry.id } : { ok: false, error: this.memory ? 'empty text' : 'memory disabled' },
+                    entry
+                        ? { ok: true, id: entry.id }
+                        : { ok: false, error: this.memory ? 'empty text' : 'memory disabled' },
                     obj.callback,
                 );
             }
@@ -1940,7 +1963,9 @@ class Assistant extends Adapter {
         // Secondary write: also flip the device's on/off switch when setting a level (e.g. dimmer that needs
         // an explicit power-on besides the level). Same device → covered by the write-ACL check above.
         if (intent.also) {
-            this.log.debug(`NLU control ${device.name} (also): set_state ${intent.also.stateId} = ${intent.also.value}`);
+            this.log.debug(
+                `NLU control ${device.name} (also): set_state ${intent.also.stateId} = ${intent.also.value}`,
+            );
             await mcp.callTool('set_state', { id: intent.also.stateId, value: intent.also.value });
         }
 
@@ -2136,9 +2161,23 @@ class Assistant extends Adapter {
                 this.setObjectNotExistsAsync(`${base}.${sub}`, { type: 'state', common, native: {} });
             await mk('label', { name: 'Label', type: 'string', role: 'text', read: true, write: false });
             await mk('room', { name: 'Room', type: 'string', role: 'text', read: true, write: false });
-            await mk('duration', { name: 'Duration', type: 'number', role: 'value.interval', unit: 's', read: true, write: false });
+            await mk('duration', {
+                name: 'Duration',
+                type: 'number',
+                role: 'value.interval',
+                unit: 's',
+                read: true,
+                write: false,
+            });
             await mk('fireAt', { name: 'Fires at', type: 'number', role: 'value.time', read: true, write: false });
-            await mk('cancel', { name: 'Cancel this timer', type: 'boolean', role: 'button', read: false, write: true, def: false });
+            await mk('cancel', {
+                name: 'Cancel this timer',
+                type: 'boolean',
+                role: 'button',
+                read: false,
+                write: true,
+                def: false,
+            });
             this.timerObjIds.add(t.id);
         }
         await this.setStateAsync(`${base}.label`, { val: t.label, ack: true });
@@ -2190,7 +2229,7 @@ class Assistant extends Adapter {
     }
 
     /** Execute a timer intent (set/query/cancel) from the NLU and return a spoken-style reply. */
-    private async executeTimerIntent(intent: NluIntent, source: string): Promise<string> {
+    private executeTimerIntent(intent: NluIntent, source: string): string {
         const mgr = this.timers;
         if (!mgr) {
             return '';
@@ -2209,7 +2248,11 @@ class Assistant extends Adapter {
             });
             const dur = formatDuration(info.duration, lang);
             const tail = info.label ? ` (${info.label})` : '';
-            return pick(`Таймер на ${dur} установлен${tail}.`, `Timer auf ${dur} gestellt${tail}.`, `Timer set for ${dur}${tail}.`);
+            return pick(
+                `Таймер на ${dur} установлен${tail}.`,
+                `Timer auf ${dur} gestellt${tail}.`,
+                `Timer set for ${dur}${tail}.`,
+            );
         }
 
         if (intent.action === 'timerCancel') {
@@ -2233,7 +2276,11 @@ class Assistant extends Adapter {
             if (victims.length === 1) {
                 return pick('Таймер отменён.', 'Timer abgebrochen.', 'Timer cancelled.');
             }
-            return pick(`Отменено таймеров: ${victims.length}.`, `${victims.length} Timer abgebrochen.`, `Cancelled ${victims.length} timers.`);
+            return pick(
+                `Отменено таймеров: ${victims.length}.`,
+                `${victims.length} Timer abgebrochen.`,
+                `Cancelled ${victims.length} timers.`,
+            );
         }
 
         // timerQuery
@@ -2288,8 +2335,8 @@ class Assistant extends Adapter {
                         return Promise.resolve(JSON.stringify({ ok: false, error: 'duration must be > 0 seconds' }));
                     }
                     const info = this.timers.add({
-                        label: String(args.label || ''),
-                        room: String(args.room || ''),
+                        label: String((args.label as string) || ''),
+                        room: String((args.room as string) || ''),
                         source: '',
                         duration,
                     });
@@ -2308,15 +2355,17 @@ class Assistant extends Adapter {
                 description: 'Cancel a running timer by its id, or all timers when no id is given.',
                 parameters: {
                     type: 'object',
-                    properties: { id: { type: 'string', description: 'Timer id from list_timers; omit to cancel all' } },
+                    properties: {
+                        id: { type: 'string', description: 'Timer id from list_timers; omit to cancel all' },
+                    },
                     additionalProperties: false,
                 },
                 run: (args): Promise<string> => {
                     if (!this.timers) {
                         return Promise.resolve(JSON.stringify({ ok: false, error: 'timers unavailable' }));
                     }
-                    if (args.id) {
-                        const ok = this.timers.cancel(String(args.id));
+                    if (args.id && typeof args.id === 'string') {
+                        const ok = this.timers.cancel(args.id);
                         return Promise.resolve(JSON.stringify({ ok, data: { cancelled: ok ? 1 : 0 } }));
                     }
                     const n = this.timers.cancelAll();
@@ -2419,10 +2468,30 @@ class Assistant extends Adapter {
             await mk('label', { name: 'Label', type: 'string', role: 'text', read: true, write: false });
             await mk('room', { name: 'Room', type: 'string', role: 'text', read: true, write: false });
             await mk('time', { name: 'Time (HH:MM)', type: 'string', role: 'text', read: true, write: false });
-            await mk('weekdays', { name: 'Weekdays (0=Sun..6=Sat, empty=once)', type: 'string', role: 'text', read: true, write: false });
+            await mk('weekdays', {
+                name: 'Weekdays (0=Sun..6=Sat, empty=once)',
+                type: 'string',
+                role: 'text',
+                read: true,
+                write: false,
+            });
             await mk('nextFireAt', { name: 'Next fire', type: 'number', role: 'value.time', read: true, write: false });
-            await mk('enabled', { name: 'Enabled', type: 'boolean', role: 'switch.enable', read: true, write: true, def: true });
-            await mk('delete', { name: 'Delete this alarm', type: 'boolean', role: 'button', read: false, write: true, def: false });
+            await mk('enabled', {
+                name: 'Enabled',
+                type: 'boolean',
+                role: 'switch.enable',
+                read: true,
+                write: true,
+                def: true,
+            });
+            await mk('delete', {
+                name: 'Delete this alarm',
+                type: 'boolean',
+                role: 'button',
+                read: false,
+                write: true,
+                def: false,
+            });
             this.alarmObjIds.add(a.id);
         }
         await this.setStateAsync(`${base}.label`, { val: a.label, ack: true });
@@ -2436,7 +2505,9 @@ class Assistant extends Adapter {
     /** An alarm fired: record it, play the jingle (if any) and speak the announcement on the origin satellite. */
     private onAlarmFired(a: AlarmInfo): void {
         this.log.info(`Alarm fired: "${a.label || formatClock(a.hour, a.minute)}"${a.room ? ` (${a.room})` : ''}`);
-        this.setStateAsync('alarms.lastFired', { val: a.label || formatClock(a.hour, a.minute), ack: true }).catch(() => {});
+        this.setStateAsync('alarms.lastFired', { val: a.label || formatClock(a.hour, a.minute), ack: true }).catch(
+            () => {},
+        );
         const announce = this.config.alarmAnnounce !== false;
         const lang = String(this.config.voiceLanguage || this.language || 'en');
         const ru = lang === 'ru';
@@ -2451,7 +2522,7 @@ class Assistant extends Adapter {
     }
 
     /** Execute an alarm intent (set/query/cancel) from the NLU and return a spoken-style reply. */
-    private async executeAlarmIntent(intent: NluIntent, source: string): Promise<string> {
+    private executeAlarmIntent(intent: NluIntent, source: string): string {
         const mgr = this.alarms;
         if (!mgr) {
             return '';
@@ -2501,7 +2572,11 @@ class Assistant extends Adapter {
             if (victims.length === 1) {
                 return pick('Будильник удалён.', 'Wecker gelöscht.', 'Alarm deleted.');
             }
-            return pick(`Удалено будильников: ${victims.length}.`, `${victims.length} Wecker gelöscht.`, `Deleted ${victims.length} alarms.`);
+            return pick(
+                `Удалено будильников: ${victims.length}.`,
+                `${victims.length} Wecker gelöscht.`,
+                `Deleted ${victims.length} alarms.`,
+            );
         }
 
         // alarmQuery
@@ -2565,8 +2640,8 @@ class Assistant extends Adapter {
                     }
                     const weekdays = Array.isArray(args.weekdays) ? (args.weekdays as unknown[]).map(Number) : [];
                     const info = this.alarms.add({
-                        label: String(args.label || ''),
-                        room: String(args.room || ''),
+                        label: String((args.label as string) || ''),
+                        room: String((args.room as string) || ''),
                         source: '',
                         hour,
                         minute,
@@ -2587,15 +2662,17 @@ class Assistant extends Adapter {
                 description: 'Delete an alarm by its id, or all alarms when no id is given.',
                 parameters: {
                     type: 'object',
-                    properties: { id: { type: 'string', description: 'Alarm id from list_alarms; omit to delete all' } },
+                    properties: {
+                        id: { type: 'string', description: 'Alarm id from list_alarms; omit to delete all' },
+                    },
                     additionalProperties: false,
                 },
                 run: (args): Promise<string> => {
                     if (!this.alarms) {
                         return Promise.resolve(JSON.stringify({ ok: false, error: 'alarms unavailable' }));
                     }
-                    if (args.id) {
-                        const ok = this.alarms.cancel(String(args.id));
+                    if (args.id && typeof args.id === 'string') {
+                        const ok = this.alarms.cancel(args.id);
                         return Promise.resolve(JSON.stringify({ ok, data: { deleted: ok ? 1 : 0 } }));
                     }
                     const n = this.alarms.cancelAll();
@@ -2683,7 +2760,14 @@ class Assistant extends Adapter {
             await mk('key', { name: 'Key/topic', type: 'string', role: 'text', read: true, write: false });
             await mk('source', { name: 'Source', type: 'string', role: 'text', read: true, write: false });
             await mk('createdAt', { name: 'Created', type: 'number', role: 'value.time', read: true, write: false });
-            await mk('delete', { name: 'Forget this fact', type: 'boolean', role: 'button', read: false, write: true, def: false });
+            await mk('delete', {
+                name: 'Forget this fact',
+                type: 'boolean',
+                role: 'button',
+                read: false,
+                write: true,
+                def: false,
+            });
             this.memoryObjIds.add(e.id);
         }
         await this.setStateAsync(`${base}.text`, { val: e.text, ack: true });
@@ -2723,7 +2807,7 @@ class Assistant extends Adapter {
                     additionalProperties: false,
                 },
                 run: (args): Promise<string> => {
-                    if (!this.memory) {
+                    if (!this.memory || typeof args.text !== 'string' || typeof args.key !== 'string') {
                         return Promise.resolve(JSON.stringify({ ok: false, error: 'memory is disabled' }));
                     }
                     const entry = this.memory.add({
@@ -2747,7 +2831,8 @@ class Assistant extends Adapter {
             },
             {
                 name: 'forget',
-                description: 'Forget a remembered fact by its id or its key. Use this when the user asks to forget something.',
+                description:
+                    'Forget a remembered fact by its id or its key. Use this when the user asks to forget something.',
                 parameters: {
                     type: 'object',
                     properties: { idOrKey: { type: 'string', description: 'The fact id or key to forget' } },
@@ -2758,7 +2843,7 @@ class Assistant extends Adapter {
                     if (!this.memory) {
                         return Promise.resolve(JSON.stringify({ ok: false, error: 'memory is disabled' }));
                     }
-                    const n = this.memory.forget(String(args.idOrKey || ''));
+                    const n = this.memory.forget(String((args.idOrKey as string) || ''));
                     return Promise.resolve(JSON.stringify({ ok: n > 0, data: { forgotten: n } }));
                 },
             },
@@ -2781,7 +2866,7 @@ class Assistant extends Adapter {
             return { error: 'no weather source configured' };
         }
         const adapter = root.split('.')[0];
-        let states: StateValues = {};
+        const states: StateValues = {};
         try {
             const raw = await this.getForeignStatesAsync(`${root}.*`);
             for (const [id, st] of Object.entries(raw || {})) {
@@ -2798,7 +2883,8 @@ class Assistant extends Adapter {
             return { error: `weather adapter "${adapter}" selected but it has no data yet — start it once` };
         }
         // Unknown adapter: return a filtered raw dump so the LLM can still try.
-        const weatherish = /(temp|wind|humid|rain|precip|cloud|pressure|forecast|current|state|condition|weather|snow|uv)/i;
+        const weatherish =
+            /(temp|wind|humid|rain|precip|cloud|pressure|forecast|current|state|condition|weather|snow|uv)/i;
         const dump: StateValues = {};
         let n = 0;
         for (const [id, v] of Object.entries(states)) {
@@ -2822,18 +2908,25 @@ class Assistant extends Adapter {
             parameters: {
                 type: 'object',
                 properties: {
-                    when: { type: 'string', enum: ['current', 'today', 'tomorrow', 'week'], description: 'Which period' },
+                    when: {
+                        type: 'string',
+                        enum: ['current', 'today', 'tomorrow', 'week'],
+                        description: 'Which period',
+                    },
                 },
                 additionalProperties: false,
             },
             run: async (args): Promise<string> => {
                 const value = (this.config.weatherInstance || '').trim();
                 if (!value) {
-                    return JSON.stringify({ ok: false, error: 'No weather source configured in the assistant settings.' });
+                    return JSON.stringify({
+                        ok: false,
+                        error: 'No weather source configured in the assistant settings.',
+                    });
                 }
                 const res = await this.readWeather(value);
                 if (res.report) {
-                    return JSON.stringify({ ok: true, data: trimReport(res.report, String(args.when || '')) });
+                    return JSON.stringify({ ok: true, data: trimReport(res.report, (args.when as string) || '') });
                 }
                 if (res.raw) {
                     return JSON.stringify({ ok: true, data: { source: res.source, states: res.raw } });
@@ -2849,7 +2942,7 @@ class Assistant extends Adapter {
      */
     private async getWeatherInstances(): Promise<{ label: string; value: string }[]> {
         const options: { label: string; value: string }[] = [{ label: '—', value: '' }];
-        let instances: Record<string, ioBroker.Object> = {};
+        const instances: Record<string, ioBroker.Object> = {};
         try {
             const view = await this.getObjectViewAsync('system', 'instance', {
                 startkey: 'system.adapter.',
@@ -2880,7 +2973,10 @@ class Assistant extends Adapter {
                     for (const id of Object.keys(rows || {})) {
                         const loc = id.slice(instanceId.length + 1, id.indexOf(marker));
                         if (loc) {
-                            options.push({ label: `${meta.label}: ${loc.replace(/_/g, ' ')}`, value: `${instanceId}.${loc}` });
+                            options.push({
+                                label: `${meta.label}: ${loc.replace(/_/g, ' ')}`,
+                                value: `${instanceId}.${loc}`,
+                            });
                             found = true;
                         }
                     }

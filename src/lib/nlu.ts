@@ -247,13 +247,53 @@ const TIMER_CANCEL_RE =
     /(?<![\p{L}])(abbrech\p{L}*|beend\p{L}*|stopp?\p{L}*|loesch\p{L}*|cancel|delete|remove|clear|отмен\p{L}*|удал\p{L}*|сброс\p{L}*|стоп)(?![\p{L}])/iu;
 /** Number words → digits (normalized: umlauts expanded), de/en/ru, plus common fractions. */
 const NUMBER_WORDS: Record<string, string> = {
-    ein: '1', eine: '1', einen: '1', eins: '1', zwei: '2', drei: '3', vier: '4', fuenf: '5', sechs: '6',
-    sieben: '7', acht: '8', neun: '9', zehn: '10', elf: '11', zwoelf: '12',
-    anderthalb: '1.5', eineinhalb: '1.5', halbe: '0.5', halb: '0.5', viertel: '0.25', dreiviertel: '0.75',
-    one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9',
-    ten: '10', eleven: '11', twelve: '12', half: '0.5', quarter: '0.25',
-    один: '1', одну: '1', два: '2', две: '2', три: '3', четыре: '4', пять: '5', шесть: '6', семь: '7',
-    восемь: '8', девять: '9', десять: '10',
+    ein: '1',
+    eine: '1',
+    einen: '1',
+    eins: '1',
+    zwei: '2',
+    drei: '3',
+    vier: '4',
+    fuenf: '5',
+    sechs: '6',
+    sieben: '7',
+    acht: '8',
+    neun: '9',
+    zehn: '10',
+    elf: '11',
+    zwoelf: '12',
+    anderthalb: '1.5',
+    eineinhalb: '1.5',
+    halbe: '0.5',
+    halb: '0.5',
+    viertel: '0.25',
+    dreiviertel: '0.75',
+    one: '1',
+    two: '2',
+    three: '3',
+    four: '4',
+    five: '5',
+    six: '6',
+    seven: '7',
+    eight: '8',
+    nine: '9',
+    ten: '10',
+    eleven: '11',
+    twelve: '12',
+    half: '0.5',
+    quarter: '0.25',
+    один: '1',
+    одну: '1',
+    два: '2',
+    две: '2',
+    три: '3',
+    четыре: '4',
+    пять: '5',
+    шесть: '6',
+    семь: '7',
+    восемь: '8',
+    девять: '9',
+    десять: '10',
 };
 /** Fixed phrases replaced up front so their fractions don't collide with the general number-word pass. */
 const DURATION_PHRASES: [RegExp, string][] = [
@@ -273,11 +313,56 @@ const MIN_RE = /(\d+(?:[.,]\d+)?)\s*(?:minuten?|mins?|minutes?|минут[уы]?
 const SEC_RE = /(\d+(?:[.,]\d+)?)\s*(?:sekunden?|secs?|seconds?|секунд[уы]?)(?![\p{L}])/giu;
 /** Duration/number tokens stripped from a timer label ("timer für 5 minuten für die Nudeln" → "die Nudeln"). */
 const LABEL_STOP_WORDS = new Set([
-    'in', 'im', 'mich', 'me', 'my', 'den', 'die', 'das', 'der', 'the', 'a', 'an', 'auf', 'noch', 'ein',
-    'eine', 'einen', 'timer', 'reminder', 'remind', 'таймер', 'на', 'через', 'про', 'about', 'to', 'for',
-    'fuer', 'stunde', 'stunden', 'minute', 'minuten', 'min', 'sekunde', 'sekunden', 'sec', 'hour', 'hours',
-    'minutes', 'seconds', 'second', 'час', 'часа', 'часов', 'минут', 'минуту', 'минуты', 'секунд',
-    'секунду', 'секунды',
+    'in',
+    'im',
+    'mich',
+    'me',
+    'my',
+    'den',
+    'die',
+    'das',
+    'der',
+    'the',
+    'a',
+    'an',
+    'auf',
+    'noch',
+    'ein',
+    'eine',
+    'einen',
+    'timer',
+    'reminder',
+    'remind',
+    'таймер',
+    'на',
+    'через',
+    'про',
+    'about',
+    'to',
+    'for',
+    'fuer',
+    'stunde',
+    'stunden',
+    'minute',
+    'minuten',
+    'min',
+    'sekunde',
+    'sekunden',
+    'sec',
+    'hour',
+    'hours',
+    'minutes',
+    'seconds',
+    'second',
+    'час',
+    'часа',
+    'часов',
+    'минут',
+    'минуту',
+    'минуты',
+    'секунд',
+    'секунду',
+    'секунды',
 ]);
 /** Marker words after which a timer label follows ("… an die Nudeln", "remind me to call mom"). */
 const LABEL_MARKERS = new Set(['an', 'fuer', 'for', 'to', 'about', 'про']);
@@ -291,12 +376,45 @@ const LABEL_MARKERS = new Set(['an', 'fuer', 'for', 'to', 'about', 'про']);
 const ALARM_RE = /(?:(?<![\p{L}])(weck\p{L}*|wake|буд\p{L}*|разбуд\p{L}*)|alarms?|wecker)(?![\p{L}])/iu;
 /** Hour number words → digits (no fractions — those are handled by the clock regexes). de/en/ru, 1–12. */
 const HOUR_WORDS: Record<string, string> = {
-    ein: '1', eine: '1', einen: '1', eins: '1', zwei: '2', drei: '3', vier: '4', fuenf: '5', sechs: '6',
-    sieben: '7', acht: '8', neun: '9', zehn: '10', elf: '11', zwoelf: '12',
-    one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9',
-    ten: '10', eleven: '11', twelve: '12',
-    один: '1', два: '2', три: '3', четыре: '4', пять: '5', шесть: '6', семь: '7', восемь: '8', девять: '9',
-    десять: '10', одиннадцать: '11', двенадцать: '12',
+    ein: '1',
+    eine: '1',
+    einen: '1',
+    eins: '1',
+    zwei: '2',
+    drei: '3',
+    vier: '4',
+    fuenf: '5',
+    sechs: '6',
+    sieben: '7',
+    acht: '8',
+    neun: '9',
+    zehn: '10',
+    elf: '11',
+    zwoelf: '12',
+    one: '1',
+    two: '2',
+    three: '3',
+    four: '4',
+    five: '5',
+    six: '6',
+    seven: '7',
+    eight: '8',
+    nine: '9',
+    ten: '10',
+    eleven: '11',
+    twelve: '12',
+    один: '1',
+    два: '2',
+    три: '3',
+    четыре: '4',
+    пять: '5',
+    шесть: '6',
+    семь: '7',
+    восемь: '8',
+    девять: '9',
+    десять: '10',
+    одиннадцать: '11',
+    двенадцать: '12',
 };
 /** Weekday word (normalized, prefix-matched for inflection) → 0 (Sun) … 6 (Sat). */
 const WEEKDAYS: [RegExp, number][] = [
@@ -370,7 +488,11 @@ export function parseClockTime(text: string): { hour: number; minute: number } |
     }
     // "um/at/в H" (bare hour after an explicit time preposition) — but not when a duration unit follows,
     // so "Timer um 5 Minuten" is not misread as 5 o'clock.
-    if ((m = t.match(/(?<![\p{L}])(?:um|at|в|во)\s+(\d{1,2})(?![\d:])(?!\s*(?:minut|stund|sekund|min|sek|hour|second))/u))) {
+    if (
+        (m = t.match(
+            /(?<![\p{L}])(?:um|at|в|во)\s+(\d{1,2})(?![\d:])(?!\s*(?:minut|stund|sekund|min|sek|hour|second))/u,
+        ))
+    ) {
         return ok(applyMeridiem(+m[1]), 0);
     }
     // Bare hour qualified only by am/pm ("7 pm", "8 am").
@@ -534,7 +656,14 @@ export class Nlu {
         if (level !== null && !isQuery) {
             const stateId = this.pickControl(device, ['level', 'brightness', 'dimmer'], true, 'number');
             if (stateId) {
-                const intent: NluIntent = { action: 'level', device, stateId, value: level, room: roomName, confidence: 0.9 };
+                const intent: NluIntent = {
+                    action: 'level',
+                    device,
+                    stateId,
+                    value: level,
+                    room: roomName,
+                    confidence: 0.9,
+                };
                 // Many dimmers have a separate on/off switch that setting the level does not flip — so also
                 // turn it on (level > 0) / off (0%) if the device has one. Devices without a switch are
                 // unaffected. The switch is found by role/type, not by name (not every device names it ON_SET).
@@ -663,9 +792,7 @@ export class Nlu {
         if (start < 0 || start >= tokens.length) {
             return '';
         }
-        const words = tokens
-            .slice(start)
-            .filter(w => !LABEL_STOP_WORDS.has(w) && !/^\d+([.,]\d+)?$/.test(w));
+        const words = tokens.slice(start).filter(w => !LABEL_STOP_WORDS.has(w) && !/^\d+([.,]\d+)?$/.test(w));
         return words.join(' ').trim();
     }
 

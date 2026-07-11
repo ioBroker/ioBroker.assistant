@@ -106,10 +106,20 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
 
 ```bash
 npm install
-npm run build      # tsc -> build/  (Entry: build/main.js)
-npm run watch      # tsc --watch
-npm run lint       # eslint (eslint.config.mjs, @iobroker/eslint-config)
+npm run build          # build:backend + build:gui (Backend nach build/, GUI nach admin/custom/)
+npm run build:backend  # nur Backend: tsc -p tsconfig.build.json -> build/ (Entry: build/main.js)
+npm run build:gui      # nur GUI: cd src-admin && npm install && npm run build  (langsam: npm i im GUI-Ordner)
+npm run lint           # eslint -c eslint.config.mjs (@iobroker/eslint-config)
+
+# Tests (node:test). Laufen gegen das KOMPILAT (build/lib/*.js) — Backend muss vorher gebaut sein.
+npm test               # = test:integration: baut Backend (tsc -p tsconfig.build.json) + node --test test/integration/*.test.js
+npm run test:package   # mocha test/testPackageFiles.ts (validiert package.json + io-package.json via @iobroker/testing)
+
+# Einzelner Test (Backend muss aktuell gebaut sein, z.B. per `npm run build:backend`):
+node --test test/integration/nlu.test.js
 ```
+- **`npm run watch` gibt es NICHT** (kein watch-Script) — für schnelles Iterieren `npm run build:backend` (überspringt den langsamen GUI-`npm install`).
+- **Tests** liegen in `test/integration/*.test.js` (plain JS, `node:test`), importieren aus `build/lib/…` und mocken den Adapter — reine Unit-/Logik-Tests der `lib/`-Module (nlu, timers, alarms, weather, tools, llm, memory, credentials, voice-engines, wyoming, voiceServer, context, localLlm). **Kein laufender ioBroker/js-controller nötig.** Nach jeder `lib/`-Änderung: `npm run build:backend` **vor** `node --test …`, sonst testet man alten Code.
 - **TypeScript strict**, `module: node16`. Kompilat in `build/` (gitignored).
 - Org/Repo: `ioBroker/ioBroker.assistant`. Prettier + ESLint sind eingerichtet.
 - Nach Änderungen an `admin/jsonConfig.json`-Labels: passende Keys in `admin/i18n/*.json` pflegen.
