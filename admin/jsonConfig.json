@@ -119,7 +119,17 @@
                     "sm": 6,
                     "md": 4
                 },
+                "weatherInstance": {
+                    "newLine": true,
+                    "type": "selectSendTo",
+                    "command": "getWeatherInstances",
+                    "label": "Weather source",
+                    "help": "Pick an installed weather adapter to answer weather questions from (Open-Meteo, Weather Underground, OpenWeatherMap are fully understood; others are read best-effort). Start that adapter once so its data/locations appear here.",
+                    "sm": 12,
+                    "md": 6
+                },
                 "timerAnnounce": {
+                    "newLine": true,
                     "type": "checkbox",
                     "label": "Announce when a timer expires",
                     "help": "Speak an announcement on the satellite a countdown timer was set from (or on all satellites) when it runs out. Timers are always mirrored into the timers.* states for scripts and visualization.",
@@ -138,9 +148,20 @@
                 "_soundsHint": {
                     "newLine": true,
                     "type": "staticText",
-                    "text": "Upload mp3/wav jingles below; the selected sound plays before the spoken announcement. Needs ffmpeg installed on the host and at least one satellite.",
+                    "text": "Two default sounds (timer.wav, alarm.wav) are preinstalled — pick one below or upload your own mp3/wav. The selected sound plays before the spoken announcement. Needs ffmpeg on the host and at least one satellite.",
                     "sm": 12,
                     "md": 12
+                },
+                "ringSeconds": {
+                    "newLine": true,
+                    "type": "number",
+                    "label": "Ring duration (seconds)",
+                    "help": "A fired timer/alarm keeps ringing (looping the sound) for up to this long, or until you say 'stop'/'halt'/'aufhören'/'cancel' (or write the stopRinging state). 0 = play the sound once.",
+                    "default": 60,
+                    "min": 0,
+                    "max": 600,
+                    "sm": 6,
+                    "md": 3
                 },
                 "timerSound": {
                     "newLine": true,

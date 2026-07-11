@@ -21,6 +21,8 @@ export interface NluDevice {
     writable: Record<string, boolean>;
     /** controlType → ioBroker value type ('boolean'|'number'|'string'|…), to pick the right control. */
     types: Record<string, string>;
+    /** controlType → ioBroker role (e.g. 'switch.light', 'level.dimmer'), to find the on/off switch. */
+    roles?: Record<string, string>;
 }
 
 export type NluActionType =
@@ -45,6 +47,11 @@ export interface NluIntent {
     stateId?: string;
     /** Value to write (bool for on/off, number for level, hex/temp string for color). */
     value?: boolean | number | string;
+    /**
+     * Secondary write applied after the primary one — used to also flip a dimmer's on/off switch when
+     * setting its level ("30%" → level 30 **and** switch on), when the device has a separate switch control.
+     */
+    also?: { stateId: string; value: boolean };
     /** Matched room display name, if any. */
     room?: string;
     confidence: number;
@@ -437,6 +444,18 @@ export function parseDurationSeconds(text: string, assumeMinutes = false): numbe
     return matched && total > 0 ? Math.round(total) : null;
 }
 
+/**
+ * "Make it stop" words (de/en/ru), used to silence a ringing timer/alarm. Kept separate from the device
+ * TURN_OFF set (no "aus") so it only reacts to an explicit stop/quiet phrase, not "turn the light off".
+ */
+const STOP_RE =
+    /(?<![\p{L}])(stopp?\p{L}*|halt|aufhoer\p{L}*|ruhe|ruhig|genug|schluss|abbrech\p{L}*|beend\p{L}*|ende|still|cancel|enough|quiet|dismiss|silence|стоп|хватит|тихо|довольно|прекрат\p{L}*|отмен\p{L}*|замолч\p{L}*|тишин\p{L}*)(?![\p{L}])/iu;
+
+/** True if the text is a "stop / be quiet" command (used to silence a ringing timer/alarm). */
+export function isStopCommand(text: string): boolean {
+    return STOP_RE.test(normalize(text));
+}
+
 /** Normalize for matching: lowercase, German umlauts → ascii, ß → ss, Russian ё → е. */
 export function normalize(s: string): string {
     return s
@@ -515,7 +534,15 @@ export class Nlu {
         if (level !== null && !isQuery) {
             const stateId = this.pickControl(device, ['level', 'brightness', 'dimmer'], true, 'number');
             if (stateId) {
-                return { action: 'level', device, stateId, value: level, room: roomName, confidence: 0.9 };
+                const intent: NluIntent = { action: 'level', device, stateId, value: level, room: roomName, confidence: 0.9 };
+                // Many dimmers have a separate on/off switch that setting the level does not flip — so also
+                // turn it on (level > 0) / off (0%) if the device has one. Devices without a switch are
+                // unaffected. The switch is found by role/type, not by name (not every device names it ON_SET).
+                const sw = this.findSwitch(device, stateId);
+                if (sw) {
+                    intent.also = { stateId: sw, value: level > 0 };
+                }
+                return intent;
             }
         }
 
@@ -527,15 +554,18 @@ export class Nlu {
             }
         }
 
-        // 3. Turn on / off — needs a writable boolean switch (never a metering state like CONSUMPTION).
+        // 3. Turn on / off — prefer a writable boolean switch (never a metering state like CONSUMPTION).
         if (action && !isQuery) {
             const stateId = this.pickControl(device, ['power', 'switch', 'on', 'level'], true, 'boolean');
             if (stateId) {
+                // If only a numeric (dimmer/level) control is available, on/off means full/zero level, not a
+                // boolean 1/0 (writing `true` to a 0–100 state would land on ~1%).
+                const numeric = this.valueTypeOf(device, stateId) === 'number';
                 return {
                     action,
                     device,
                     stateId,
-                    value: action === 'on',
+                    value: numeric ? (action === 'on' ? 100 : 0) : action === 'on',
                     room: roomName,
                     confidence: 0.9,
                 };
@@ -750,26 +780,67 @@ export class Nlu {
     private pickControl(device: NluDevice, order: string[], mustWrite: boolean, preferType?: string): string {
         const types = device.types || {};
         const usable = (key: string): boolean => !!device.controls[key] && (!mustWrite || !!device.writable[key]);
-        // 1. an ordered key of the preferred value type (e.g. a boolean switch for on/off).
-        for (const key of order) {
-            if (usable(key) && (!preferType || types[key] === preferType)) {
-                return device.controls[key];
+        if (preferType) {
+            // 1. an ordered key of the preferred value type (e.g. a boolean switch for on/off).
+            for (const key of order) {
+                if (usable(key) && types[key] === preferType) {
+                    return device.controls[key];
+                }
+            }
+            // 2. ANY control of the preferred type (non-metering). Catches a boolean switch stored under a
+            //    non-standard control key (e.g. `ON_SET`), so on/off never lands on a numeric level/dimmer
+            //    control when a real boolean switch exists on the device.
+            for (const [key, id] of Object.entries(device.controls)) {
+                if (usable(key) && types[key] === preferType && !METER_SUFFIX.test(id)) {
+                    return id;
+                }
             }
         }
-        // 2. an ordered key of any type.
+        // 3. an ordered key of any type.
         for (const key of order) {
             if (usable(key)) {
                 return device.controls[key];
             }
         }
-        // 3. fallback: any usable non-metering control, preferring the value type.
-        for (const pass of [true, false]) {
-            for (const [key, id] of Object.entries(device.controls)) {
-                if (usable(key) && !METER_SUFFIX.test(id) && (!pass || !preferType || types[key] === preferType)) {
-                    return id;
-                }
+        // 4. fallback: any usable non-metering control.
+        for (const [key, id] of Object.entries(device.controls)) {
+            if (usable(key) && !METER_SUFFIX.test(id)) {
+                return id;
             }
         }
         return '';
+    }
+
+    /** The ioBroker value type ('boolean'|'number'|…) of a device control by its state id, '' if unknown. */
+    private valueTypeOf(device: NluDevice, stateId: string): string {
+        for (const [key, id] of Object.entries(device.controls)) {
+            if (id === stateId) {
+                return device.types[key] || '';
+            }
+        }
+        return '';
+    }
+
+    /**
+     * The device's on/off switch control (state id) other than `excludeStateId`, so a level command can also
+     * power the device on. Role-based: a writable control with a `switch…` role wins; otherwise any writable
+     * boolean, non-metering control; '' if the device has no separate switch.
+     */
+    private findSwitch(device: NluDevice, excludeStateId: string): string {
+        const roles = device.roles || {};
+        let fallback = '';
+        for (const [key, id] of Object.entries(device.controls)) {
+            if (id === excludeStateId || !device.writable[key] || METER_SUFFIX.test(id)) {
+                continue;
+            }
+            const role = roles[key] || '';
+            if (/^switch(\.|$)/i.test(role)) {
+                return id; // a role-confirmed switch is the best match
+            }
+            if (!fallback && device.types[key] === 'boolean') {
+                fallback = id; // any writable boolean control as a fallback
+            }
+        }
+        return fallback;
     }
 }

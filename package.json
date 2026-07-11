@@ -21,7 +21,7 @@
         "@aws-sdk/client-polly": "^3.1079.0",
         "@aws-sdk/client-transcribe-streaming": "^3.1079.0",
         "@iobroker/adapter-core": "^3.4.1",
-        "@iobroker/mcp-server": "^0.1.5",
+        "@iobroker/mcp-server": "^0.1.6",
         "microsoft-cognitiveservices-speech-sdk": "^1.50.0",
         "openai": "^6.45.0"
     },

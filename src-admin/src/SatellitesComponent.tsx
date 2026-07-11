@@ -32,6 +32,7 @@ I18n.extendTranslations(translations);
 interface SatRow {
     status: string;
     room: string;
+    host: string;
     alive: boolean;
     lastSeen: number;
 }
@@ -114,11 +115,13 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
         if (!p) {
             return;
         }
-        const row = map[p.satId] || { status: 'idle', room: '', alive: false, lastSeen: 0 };
+        const row = map[p.satId] || { status: 'idle', room: '', host: '', alive: false, lastSeen: 0 };
         if (p.prop === 'status') {
             row.status = String(st?.val ?? 'idle');
         } else if (p.prop === 'room') {
             row.room = String(st?.val ?? '');
+        } else if (p.prop === 'host') {
+            row.host = String(st?.val ?? '');
         } else if (p.prop === 'alive') {
             row.alive = !!st?.val;
         } else if (p.prop === 'lastSeen') {
@@ -231,6 +234,7 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                                 <TableCell />
                                 <TableCell>{I18n.t('custom_assistant_Satellite')}</TableCell>
                                 <TableCell>{I18n.t('custom_assistant_room')}</TableCell>
+                                <TableCell>{I18n.t('custom_assistant_Host')}</TableCell>
                                 <TableCell>{I18n.t('custom_assistant_Status')}</TableCell>
                                 <TableCell>{I18n.t('custom_assistant_Last seen')}</TableCell>
                                 <TableCell>{I18n.t('custom_assistant_Announcement')}</TableCell>
@@ -259,6 +263,7 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                                         </TableCell>
                                         <TableCell>{id}</TableCell>
                                         <TableCell>{s.room || '—'}</TableCell>
+                                        <TableCell>{s.host || '—'}</TableCell>
                                         <TableCell>
                                             <Chip
                                                 size="small"

@@ -134,6 +134,79 @@ test('metering-only device: fallback still skips CONSUMPTION', () => {
     assert.equal(trap.parse('lampe in kueche an').stateId, 'z.SET');
 });
 
+// ── Dimmer with a separate on/off switch (role-based) ───────────────────────
+test('on/off picks the boolean switch even under a non-standard control key (ON_SET)', () => {
+    // SET is the level (0–100), ON_SET is the boolean switch — the reported real-world case.
+    const dimmer = {
+        name: 'Küchenlicht',
+        room: 'Küche',
+        type: 'dimmer',
+        controls: { level: 'k.SET', on: 'k.ON_SET' },
+        writable: { level: true, on: true },
+        types: { level: 'number', on: 'boolean' },
+        roles: { level: 'level.dimmer', on: 'switch.light' },
+    };
+    const nlu = new Nlu(['Küche'], [dimmer]);
+    const on = nlu.parse('Küchenlicht anschalten');
+    assert.equal(on.action, 'on');
+    assert.equal(on.stateId, 'k.ON_SET'); // the boolean, NOT the 0–100 level
+    assert.equal(on.value, true);
+    assert.equal(nlu.parse('Küchenlicht ausschalten').stateId, 'k.ON_SET');
+    assert.equal(nlu.parse('Küchenlicht ausschalten').value, false);
+});
+
+test('level command also flips the on/off switch (30% → level 30 + switch on)', () => {
+    const dimmer = {
+        name: 'Küchenlicht',
+        room: 'Küche',
+        type: 'dimmer',
+        controls: { level: 'k.SET', on: 'k.ON_SET' },
+        writable: { level: true, on: true },
+        types: { level: 'number', on: 'boolean' },
+        roles: { level: 'level.dimmer', on: 'switch.light' },
+    };
+    const nlu = new Nlu(['Küche'], [dimmer]);
+    const r = nlu.parse('Küchenlicht auf 30 Prozent');
+    assert.equal(r.action, 'level');
+    assert.equal(r.stateId, 'k.SET');
+    assert.equal(r.value, 30);
+    assert.deepEqual(r.also, { stateId: 'k.ON_SET', value: true }); // switch on
+    const zero = nlu.parse('Küchenlicht auf 0 Prozent');
+    assert.deepEqual(zero.also, { stateId: 'k.ON_SET', value: false }); // 0% → switch off
+});
+
+test('level on a dimmer WITHOUT a switch → no secondary write', () => {
+    const dimmer = {
+        name: 'Lager Licht',
+        room: 'Lager',
+        type: 'dimmer',
+        controls: { level: 'l.SET' },
+        writable: { level: true },
+        types: { level: 'number' },
+        roles: { level: 'level.dimmer' },
+    };
+    const r = new Nlu(['Lager'], [dimmer]).parse('Lager Licht auf 40 Prozent');
+    assert.equal(r.value, 40);
+    assert.equal(r.also, undefined);
+});
+
+test('on/off on a dimmer without a boolean switch → full/zero level, not true/false', () => {
+    const dimmer = {
+        name: 'Lampe',
+        room: 'Salon',
+        type: 'dimmer',
+        controls: { level: 's.SET' },
+        writable: { level: true },
+        types: { level: 'number' },
+        roles: { level: 'level.dimmer' },
+    };
+    const nlu = new Nlu(['Salon'], [dimmer]);
+    const on = nlu.parse('Lampe in Salon an');
+    assert.equal(on.stateId, 's.SET');
+    assert.equal(on.value, 100); // NOT boolean true (→ would be ~1% on a 0–100 state)
+    assert.equal(nlu.parse('Lampe in Salon aus').value, 0);
+});
+
 // ── Color ───────────────────────────────────────────────────────────────────
 test('set color on a color-capable device', () => {
     const rgb = new Nlu(

@@ -103,10 +103,12 @@
         "useLocalNlu": true,
         "useConversationContext": true,
         "useLongTermMemory": true,
+        "weatherInstance": "",
         "timerAnnounce": true,
         "alarmAnnounce": true,
-        "timerSound": "",
-        "alarmSound": "",
+        "timerSound": "sounds/timer.wav",
+        "alarmSound": "sounds/alarm.wav",
+        "ringSeconds": 60,
         "useLocalLlm": false,
         "localLlmModelUrl": "",
         "voiceEnabled": false,
@@ -435,6 +437,32 @@
             "type": "state",
             "common": {
                 "name": "Forget all facts (write true)",
+                "type": "boolean",
+                "role": "button",
+                "read": false,
+                "write": true,
+                "def": false
+            },
+            "native": {}
+        },
+        {
+            "_id": "ringing",
+            "type": "state",
+            "common": {
+                "name": "A timer/alarm is currently ringing",
+                "type": "boolean",
+                "role": "indicator",
+                "read": true,
+                "write": false,
+                "def": false
+            },
+            "native": {}
+        },
+        {
+            "_id": "stopRinging",
+            "type": "state",
+            "common": {
+                "name": "Silence the ringing timer/alarm (write true)",
                 "type": "boolean",
                 "role": "button",
                 "read": false,

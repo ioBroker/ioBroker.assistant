@@ -1,4 +1,5 @@
 import * as os from 'node:os';
+import * as fs from 'node:fs';
 import { spawn } from 'node:child_process';
 
 import {
@@ -12,10 +13,25 @@ import { createInProcessMcp, type InProcessMcp } from '@iobroker/mcp-server';
 
 import { LlmAgent, resolveProvider } from './lib/llm';
 import { buildMcpTools, deviceKey, ListCache, type Tool } from './lib/tools';
-import { Nlu, parseDurationSeconds, parseClockTime, parseWeekdays, type NluDevice, type NluIntent } from './lib/nlu';
+import {
+    Nlu,
+    parseDurationSeconds,
+    parseClockTime,
+    parseWeekdays,
+    isStopCommand,
+    type NluDevice,
+    type NluIntent,
+} from './lib/nlu';
 import { TimerManager, formatDuration, type TimerInfo } from './lib/timers';
 import { AlarmManager, formatClock, formatWeekdays, type AlarmInfo } from './lib/alarms';
 import { MemoryStore, buildMemoryPrompt, type MemoryEntry } from './lib/memory';
+import {
+    WEATHER_ADAPTERS,
+    buildWeatherReport,
+    trimReport,
+    type WeatherReport,
+    type StateValues,
+} from './lib/weather';
 import { LocalLlm, installLocalLlm, isLocalLlmInstalled, isHandoff, DEFAULT_LOCAL_MODEL_URL } from './lib/localLlm';
 import { resolveApiKey, resolveVoiceCredentials } from './lib/credentials';
 import { ConversationStore, type ConversationTurn } from './lib/context';
@@ -79,6 +95,8 @@ class Assistant extends Adapter {
     private mcp: InProcessMcp | null = null;
     /** Short-TTL cache for the expensive device/room/function listings; invalidated on enum changes. */
     private listCache: ListCache | null = null;
+    /** Cache of a `<base>.SET` level state id → its writable boolean sibling switch (`<base>.ON_SET`/`.ON`), or ''. */
+    private readonly siblingSwitch = new Map<string, string>();
     /** Tier-1a local LLM (node-llama-cpp), lazily loaded when enabled + installed; null otherwise. */
     private localLlm: LocalLlm | null = null;
     /** Guards against concurrent local-LLM loads. */
@@ -109,6 +127,8 @@ class Assistant extends Adapter {
     private memory: MemoryStore | null = null;
     /** Per-memory `memory.items.<id>` channels currently rendered. */
     private readonly memoryObjIds = new Set<string>();
+    /** Active "ringing" sessions (a timer/alarm looping its sound until stopped or timed out). */
+    private readonly rings: { target: string | null; stopped: boolean; timeout: ReturnType<typeof setTimeout> | null }[] = [];
 
     public constructor(options: Partial<AdapterOptions> = {}) {
         super({ ...options, name: 'assistant' });
@@ -149,6 +169,9 @@ class Assistant extends Adapter {
             if (cfg.useLongTermMemory !== false) {
                 tools.push(...this.buildMemoryTools());
             }
+            if ((cfg.weatherInstance || '').trim()) {
+                tools.push(this.buildWeatherTool());
+            }
             this.log.info(`ioBroker tools enabled (${tools.length}): ${tools.map(t => t.name).join(', ')}`);
             if (denied.length) {
                 this.log.debug(`Tools denied by access settings: ${denied.join(', ')}`);
@@ -183,6 +206,8 @@ class Assistant extends Adapter {
             common: { name: 'assistant data', type: 'meta.user' },
             native: {},
         });
+        await this.ensureBuiltinSounds();
+        this.subscribeStates('stopRinging');
         await this.setupTimers();
         await this.setupAlarms();
         if (cfg.useLongTermMemory !== false) {
@@ -337,6 +362,15 @@ class Assistant extends Adapter {
         return answer;
     }
 
+    /**
+     * True when the assistant's reply asks the user something, so a satellite should re-open its mic to
+     * capture the answer without a wake word (→ the `listen` flag of the voice response). Detects a question
+     * mark anywhere, not just at the end, because a clarifying reply often reads "Welches Gerät …? Sag mir …".
+     */
+    private expectsFollowUp(answer: string): boolean {
+        return /[?？]/.test(answer || '');
+    }
+
     /** Record the origin of the current text.request/response ('' = state write, 'chat' = message, else satellite). */
     private setQuerySource(source: string): void {
         this.setStateAsync('text.querySource', { val: source, ack: true }).catch(() => {});
@@ -379,7 +413,7 @@ class Assistant extends Adapter {
         source?: string;
         room?: string;
         language?: string;
-    }): Promise<{ text?: string; answer?: string; audio?: string; sampleRate?: number; error?: string }> {
+    }): Promise<{ text?: string; answer?: string; audio?: string; sampleRate?: number; listen?: boolean; error?: string }> {
         const source = msg.source || 'satellite';
         const room = msg.room || '';
         // Make the native satellite visible under assistant.0.satellites (+ lastSeen/room), like UDP ones.
@@ -411,7 +445,15 @@ class Assistant extends Adapter {
                 return { text, answer: '' };
             }
             const reply = await engines.tts.synthesize(answer, language);
-            return { text, answer, audio: reply.pcm.toString('base64'), sampleRate: reply.sampleRate };
+            // Follow-up: primarily the LLM's own signal ([[LISTEN]] → lastFollowUp); "?" heuristic as fallback.
+            const llmSignalled = this.lastFollowUp;
+            const listen = llmSignalled || this.expectsFollowUp(answer);
+            if (listen) {
+                this.log.info(
+                    `→ mic-on to satellite '${source}' (${llmSignalled ? 'LLM signalled a follow-up' : 'reply is a question (fallback)'}).`,
+                );
+            }
+            return { text, answer, audio: reply.pcm.toString('base64'), sampleRate: reply.sampleRate, listen };
         } catch (e) {
             this.log.warn(`Voice query failed: ${(e as Error).message}`);
             return { error: (e as Error).message };
@@ -521,6 +563,11 @@ class Assistant extends Adapter {
                 common: { name: 'Last seen', type: 'number', role: 'value.time', read: true, write: false },
                 native: {},
             });
+            await this.setObjectNotExistsAsync(`${base}.host`, {
+                type: 'state',
+                common: { name: 'Host the satellite runs on', type: 'string', role: 'text', read: true, write: false, def: '' },
+                native: {},
+            });
             await this.setObjectNotExistsAsync(`${base}.tts`, {
                 type: 'state',
                 common: {
@@ -543,6 +590,24 @@ class Assistant extends Adapter {
         await this.setStateAsync(`${base}.lastSeen`, { val: Date.now(), ack: true });
         if (room) {
             await this.setStateAsync(`${base}.room`, { val: room, ack: true });
+        }
+    }
+
+    /**
+     * Record which ioBroker host a satellite runs on, resolved from the sender instance object
+     * (`system.adapter.<from>.common.host`). Only meaningful for ioBroker-native satellites; UDP/ESP ones
+     * have no instance, so their host stays empty.
+     */
+    private async setSatelliteHost(satId: string, from: string): Promise<void> {
+        try {
+            const instId = from.startsWith('system.adapter.') ? from : `system.adapter.${from}`;
+            const obj = await this.getForeignObjectAsync(instId);
+            const host = (obj?.common as { host?: string } | undefined)?.host;
+            if (host && this.satStatesEnsured.has(satId)) {
+                await this.setStateAsync(`satellites.${satId}.host`, { val: host, ack: true });
+            }
+        } catch {
+            /* sender isn't an adapter instance (UDP satellite) — leave host empty */
         }
     }
 
@@ -623,6 +688,30 @@ class Assistant extends Adapter {
     }
 
     /**
+     * Install the bundled default jingles (`admin/sounds/{timer,alarm}.wav`) into this instance's file
+     * storage the first time, so they appear in the settings sound dropdown and can be played out of the
+     * box. Never overwrites an existing file (a user upload/replacement or a previous copy wins).
+     */
+    private async ensureBuiltinSounds(): Promise<void> {
+        for (const name of ['timer.wav', 'alarm.wav']) {
+            const target = `sounds/${name}`;
+            try {
+                await this.readFileAsync(this.namespace, target);
+                continue; // already present — leave the user's version alone
+            } catch {
+                /* not present → install the bundled default */
+            }
+            try {
+                const src = path.join(__dirname, '..', 'admin', 'sounds', name);
+                await this.writeFileAsync(this.namespace, target, await fs.promises.readFile(src));
+                this.log.debug(`installed default sound ${target}`);
+            } catch (e) {
+                this.log.debug(`could not install default sound ${name}: ${(e as Error).message}`);
+            }
+        }
+    }
+
+    /**
      * Play an uploaded sound asset (a `sounds/*.mp3|wav|…` file in this instance's file storage) on the
      * satellites. Jingles bypass Do-Not-Disturb (a timer/alarm the user set should be heard). Returns the
      * jingle's duration in seconds so the caller can wait before speaking a following announcement.
@@ -654,6 +743,96 @@ class Assistant extends Adapter {
         const delivered = await this.deliverPcm(pcm, sampleRate, targetId, true);
         this.log.info(`Sound → ${targetId || 'all satellites'} (${delivered} channel(s)): ${clean}`);
         return pcm.length / 2 / sampleRate; // 16-bit mono → bytes/2 samples ÷ rate = seconds
+    }
+
+    /**
+     * Effect for an expiring timer/alarm: if a sound is set and `ringSeconds > 0`, ring (loop the sound)
+     * until stopped by voice ("stop"/"halt"/…) or the ring timeout; otherwise play once + announce.
+     */
+    private fireEffects(sound: string, announce: boolean, message: string, target: string | null): void {
+        const ringMs = Math.max(0, this.config.ringSeconds ?? 60) * 1000;
+        if (sound && ringMs > 0) {
+            this.startRing(sound, message, announce, target, ringMs);
+        } else {
+            void this.playAndAnnounce(sound, announce, message, target).catch(e =>
+                this.log.debug(`fire effects failed: ${(e as Error).message}`),
+            );
+        }
+    }
+
+    /**
+     * Ring: loop `sound` on `target` until stopped or `maxMs` elapses, announcing `message` once after the
+     * first ring. The user silences it by saying a stop word (handled in {@link produceAnswer}), writing
+     * `stopRinging`, or it auto-stops after the timeout.
+     */
+    private startRing(sound: string, message: string, announce: boolean, target: string | null, maxMs: number): void {
+        const session: { target: string | null; stopped: boolean; timeout: ReturnType<typeof setTimeout> | null } = {
+            target,
+            stopped: false,
+            timeout: null,
+        };
+        this.rings.push(session);
+        this.setStateAsync('ringing', { val: true, ack: true }).catch(() => {});
+        const endAt = Date.now() + maxMs;
+        let announced = false;
+        const tick = async (): Promise<void> => {
+            if (session.stopped) {
+                return;
+            }
+            let dur = 1;
+            try {
+                dur = (await this.playStoredSound(sound, target)) || 1;
+            } catch (e) {
+                this.log.debug(`ring play failed: ${(e as Error).message}`);
+                this.endRing(session);
+                return;
+            }
+            if (session.stopped) {
+                return;
+            }
+            if (!announced && announce && message) {
+                announced = true;
+                await this.delay(Math.min(dur * 1000 + 150, 6000)); // let the jingle finish, then speak once
+                if (session.stopped) {
+                    return;
+                }
+                await this.announceToSatellites(message, target).catch(() => {});
+            }
+            if (session.stopped) {
+                return;
+            }
+            if (Date.now() >= endAt) {
+                this.endRing(session);
+                return;
+            }
+            session.timeout = setTimeout(() => void tick(), Math.max(300, Math.round(dur * 1000) + 700));
+        };
+        void tick();
+    }
+
+    /** Remove a ring session and clear the "ringing" state when the last one ends. */
+    private endRing(session: { stopped: boolean; timeout: ReturnType<typeof setTimeout> | null }): void {
+        session.stopped = true;
+        if (session.timeout) {
+            clearTimeout(session.timeout);
+            session.timeout = null;
+        }
+        const i = this.rings.indexOf(session as (typeof this.rings)[number]);
+        if (i >= 0) {
+            this.rings.splice(i, 1);
+        }
+        if (!this.rings.length) {
+            this.setStateAsync('ringing', { val: false, ack: true }).catch(() => {});
+        }
+    }
+
+    /** Stop all active ring sessions (voice "stop", the `stopRinging` state, or on unload). Returns count. */
+    private stopRinging(): number {
+        const n = this.rings.length;
+        for (const s of [...this.rings]) {
+            this.endRing(s);
+        }
+        return n;
     }
 
     /**
@@ -735,6 +914,16 @@ class Assistant extends Adapter {
         const satTts = id.match(/\.satellites\.([^.]+)\.tts$/);
         if (satTts) {
             await this.announceToSatellites(String(state.val ?? ''), satTts[1]); // satTts[1] = satellite state id
+            return;
+        }
+
+        // Silence a ringing timer/alarm from vis/JS.
+        if (id.endsWith('.stopRinging')) {
+            if (state.val) {
+                const n = this.stopRinging();
+                this.log.info(`Ring stopped via stopRinging state (${n} session(s)).`);
+            }
+            await this.setStateAsync('stopRinging', { val: false, ack: true });
             return;
         }
 
@@ -961,6 +1150,9 @@ class Assistant extends Adapter {
                 this.nativeSatFrom.set(satId, from);
             }
             await this.updateSatelliteState(device, room, m.state || 'idle');
+            if (m.state !== 'offline') {
+                void this.setSatelliteHost(satId, String(obj.from));
+            }
             if (obj.callback) {
                 this.sendTo(obj.from, obj.command, { ok: true, id: satId }, obj.callback);
             }
@@ -979,8 +1171,10 @@ class Assistant extends Adapter {
             };
             // Remember the sender so announcements can be pushed back to this native satellite.
             const from = String(obj.from).replace(/^system\.adapter\./, '');
-            this.nativeSatFrom.set(this.satelliteStateId(m.source || 'satellite', m.room || ''), from);
+            const satId = this.satelliteStateId(m.source || 'satellite', m.room || '');
+            this.nativeSatFrom.set(satId, from);
             const res = await this.handleVoiceQuery(m);
+            void this.setSatelliteHost(satId, String(obj.from));
             if (obj.callback) {
                 this.sendTo(obj.from, obj.command, res, obj.callback);
             }
@@ -1113,6 +1307,37 @@ class Assistant extends Adapter {
             return;
         }
 
+        // Settings weather dropdown (selectSendTo): list installed weather-adapter instances/locations.
+        if (obj.command === 'getWeatherInstances') {
+            const list = await this.getWeatherInstances();
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, list, obj.callback);
+            }
+            return;
+        }
+
+        // Scripts: the normalized weather report from the configured source. message = { when? }.
+        if (obj.command === 'getWeather') {
+            const m = (obj.message || {}) as { when?: string };
+            const value = (this.config.weatherInstance || '').trim();
+            const res = value ? await this.readWeather(value) : { error: 'no weather source configured' };
+            const payload =
+                res.report !== undefined ? { ...res, report: trimReport(res.report, String(m.when || '')) } : res;
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, payload, obj.callback);
+            }
+            return;
+        }
+
+        // Scripts: silence a ringing timer/alarm.
+        if (obj.command === 'stopRinging') {
+            const n = this.stopRinging();
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, { ok: true, stopped: n }, obj.callback);
+            }
+            return;
+        }
+
         // Settings "Play" button / scripts: play an uploaded sound on the satellites. message = { name, target? }.
         if (obj.command === 'playSound') {
             const m = (obj.message || {}) as { name?: string; target?: string };
@@ -1133,6 +1358,7 @@ class Assistant extends Adapter {
         // Custom admin component: drop the cached device/room/function listings (Chat refresh button).
         if (obj.command === 'clearCache') {
             this.listCache?.clear();
+            this.siblingSwitch.clear();
             this.log.debug('list cache cleared (clearCache command)');
             if (obj.callback) {
                 this.sendTo(obj.from, obj.command, { ok: true }, obj.callback);
@@ -1251,20 +1477,53 @@ class Assistant extends Adapter {
     private async answer(question: string, source = ''): Promise<string> {
         const useCtx = this.config.useConversationContext !== false;
         const history = useCtx ? this.context.get(source) : [];
-        const result = await this.produceAnswer(question, history, source);
+        const raw = await this.produceAnswer(question, history, source);
+        // The LLM signals "I'm waiting for the user's reply" by appending the [[LISTEN]] control marker
+        // (see followUpHint). Strip it here so it's neither stored, shown nor spoken, and expose it as the
+        // follow-up flag. Single-user voice → a shared field is race-free enough (read right after await).
+        this.lastFollowUp = /\[\[LISTEN\]\]/i.test(raw);
+        const result = raw.replace(/\s*\[\[LISTEN\]\]\s*/gi, ' ').trim();
         if (useCtx && result) {
             this.context.add(source, question, result);
         }
         return result;
     }
 
+    /** Whether the LAST {@link answer} asked the user something (LLM-signalled via [[LISTEN]]). */
+    private lastFollowUp = false;
+
+    /**
+     * System-prompt instruction letting the LLM explicitly signal a follow-up: append [[LISTEN]] when it
+     * asks the user something and waits for an answer. More reliable than a "?" heuristic and lets a
+     * satellite re-open its mic on the model's decision. Localized (de/en/ru).
+     */
+    private followUpHint(): string {
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        if (lang === 'ru') {
+            return 'Если твой ответ — это встречный вопрос и ты ждёшь ответа пользователя, добавь в самом конце управляющий маркер [[LISTEN]] (он удаляется и не произносится). Если ответа не требуется — не добавляй.';
+        }
+        if (lang === 'de') {
+            return 'Wenn deine Antwort eine Rückfrage an den Nutzer ist und du auf dessen Antwort wartest, hänge ganz am Ende den Steuer-Marker [[LISTEN]] an (er wird entfernt und nicht vorgelesen). Wenn keine Antwort nötig ist, hänge ihn nicht an.';
+        }
+        return 'If your reply asks the user something and you are waiting for their answer, append the control marker [[LISTEN]] at the very end (it is removed and not spoken). If no answer is expected, do not append it.';
+    }
+
     private async produceAnswer(question: string, history: ConversationTurn[], source = ''): Promise<string> {
+        this.log.debug(`answer: source='${source}', context=${history.length} turn(s)`);
+        // A ringing timer/alarm is silenced by a stop word ("stop"/"halt"/"aufhören"/…) — checked first so
+        // it always wins over the normal pipeline while something is ringing.
+        if (this.rings.length && isStopCommand(question)) {
+            const n = this.stopRinging();
+            this.log.info(`Ring stopped by voice (${n} session(s)).`);
+            const lang = String(this.config.voiceLanguage || this.language || 'en');
+            return lang === 'ru' ? 'Хорошо.' : lang === 'de' ? 'Ok.' : 'Okay.';
+        }
         // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
         if (this.config.useLocalNlu) {
             try {
                 const handled = await this.tryLocalNlu(question, source);
                 if (handled !== null) {
-                    this.log.debug(`NLU handled locally: "${question}" → "${handled}"`);
+                    this.log.info(`Answered by rule-based NLU (source='${source}').`);
                     return handled;
                 }
             } catch (e) {
@@ -1272,17 +1531,22 @@ class Assistant extends Adapter {
             }
         }
         // Tier 1a: local LLM — answers general questions offline; emits HANDOFF for anything needing tools.
-        if (this.config.useLocalLlm && this.localLlm) {
+        // Skipped inside an ongoing conversation (history present): the tool-free local model gets no history,
+        // so it would answer a follow-up like "yes" context-free and swallow it — let the cloud LLM (which has
+        // the thread and the tools) handle follow-ups instead.
+        if (this.config.useLocalLlm && this.localLlm && !history.length) {
             try {
                 const ans = await this.localLlm.ask(question);
                 if (ans && !isHandoff(ans)) {
-                    this.log.debug(`Local LLM answered: "${question}"`);
+                    this.log.info(`Answered by local LLM (source='${source}').`);
                     return ans;
                 }
                 this.log.debug('Local LLM handed off to the cloud LLM.');
             } catch (e) {
                 this.log.debug(`Local LLM error: ${(e as Error).message}`);
             }
+        } else if (this.config.useLocalLlm && this.localLlm) {
+            this.log.debug('Local LLM skipped (follow-up in an ongoing conversation → cloud LLM).');
         }
         // Tier 2: cloud LLM with full tool access. Inject a compact device list into the system prompt so
         // the model can act without a first `list_devices` round-trip (kept cached via prompt caching).
@@ -1291,8 +1555,13 @@ class Assistant extends Adapter {
         }
         const ctx = await this.buildDeviceContext();
         const mem = this.buildMemoryContext();
-        const parts = [this.config.systemPrompt || '', mem, ctx].filter(Boolean);
+        // Only ask the model to emit the follow-up marker when satellites can actually re-open the mic.
+        const followUp = this.config.voiceEnabled ? this.followUpHint() : '';
+        const parts = [this.config.systemPrompt || '', followUp, mem, ctx].filter(Boolean);
         const sys = parts.length ? parts.join('\n\n') : undefined;
+        this.log.info(
+            `Cloud LLM [${this.agent.model}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}) — running tool loop…`,
+        );
         return this.agent.ask(question, sys, history);
     }
 
@@ -1516,17 +1785,36 @@ class Assistant extends Adapter {
                     const controls: Record<string, string> = {};
                     const writable: Record<string, boolean> = {};
                     const types: Record<string, string> = {};
+                    const roles: Record<string, string> = {};
                     const stateIds: string[] = [];
                     for (const [ct, c] of Object.entries(dev.controls || {})) {
                         if (c?.stateId) {
                             controls[ct] = c.stateId;
                             writable[ct] = !!c.writable;
                             types[ct] = (c as { ioBrokerValueType?: string }).ioBrokerValueType || '';
+                            roles[ct] = (c as { role?: string }).role || '';
                             stateIds.push(c.stateId);
                         }
                     }
                     if (!stateIds.length) {
                         continue;
+                    }
+                    // The type detector sometimes exposes only a numeric `<base>.SET` level and omits the
+                    // sibling on/off switch. Enrich the model with the ioBroker alias/iot convention switch
+                    // (`<base>.ON_SET` / `<base>.ON`) so on/off and "set to X%" can power the device on.
+                    if (!Object.keys(controls).some(k => types[k] === 'boolean')) {
+                        for (const [k, id] of Object.entries(controls)) {
+                            if (types[k] === 'number' && /\.SET$/.test(id)) {
+                                const onId = await this.probeSiblingSwitch(id);
+                                if (onId) {
+                                    controls.on = onId;
+                                    types.on = 'boolean';
+                                    writable.on = true;
+                                    roles.on = 'switch';
+                                    break;
+                                }
+                            }
+                        }
                     }
                     const name = await this.resolveDeviceName(
                         deviceKey(stateIds),
@@ -1540,6 +1828,7 @@ class Assistant extends Adapter {
                         controls,
                         writable,
                         types,
+                        roles,
                     });
                 }
             }
@@ -1548,6 +1837,37 @@ class Assistant extends Adapter {
             this.log.debug(`getNluDevices failed: ${(e as Error).message}`);
             return { rooms: [], devices: [] };
         }
+    }
+
+    /**
+     * Find the writable boolean on/off sibling of a `<base>.SET` level state (ioBroker alias/iot convention:
+     * `<base>.ON_SET`, or `<base>.ON`). Cached (incl. negative results) so it probes each state at most once.
+     * Returns the sibling state id, or '' if there is none.
+     */
+    private async probeSiblingSwitch(setId: string): Promise<string> {
+        if (!/\.SET$/.test(setId)) {
+            return '';
+        }
+        const cached = this.siblingSwitch.get(setId);
+        if (cached !== undefined) {
+            return cached;
+        }
+        let result = '';
+        for (const suffix of ['.ON_SET', '.ON']) {
+            const onId = setId.replace(/\.SET$/, suffix);
+            try {
+                const obj = await this.getForeignObjectAsync(onId);
+                const c = obj?.common as { type?: string; write?: boolean } | undefined;
+                if (c && c.type === 'boolean' && c.write !== false) {
+                    result = onId;
+                    break;
+                }
+            } catch {
+                /* sibling not present — try the next suffix */
+            }
+        }
+        this.siblingSwitch.set(setId, result);
+        return result;
     }
 
     /** Execute an NLU intent directly via the ioBroker API and return a short spoken-style response. */
@@ -1617,6 +1937,12 @@ class Assistant extends Adapter {
             `NLU control ${device.name} (${intent.action}): set_state ${intent.stateId} = ${JSON.stringify(intent.value)}`,
         );
         await mcp.callTool('set_state', { id: intent.stateId, value: intent.value });
+        // Secondary write: also flip the device's on/off switch when setting a level (e.g. dimmer that needs
+        // an explicit power-on besides the level). Same device → covered by the write-ACL check above.
+        if (intent.also) {
+            this.log.debug(`NLU control ${device.name} (also): set_state ${intent.also.stateId} = ${intent.also.value}`);
+            await mcp.callTool('set_state', { id: intent.also.stateId, value: intent.also.value });
+        }
 
         if (intent.action === 'on') {
             return pick(`${dev}${where} включено.`, `${dev}${where} wurde eingeschaltet.`, `${dev}${where} turned on.`);
@@ -1827,9 +2153,7 @@ class Assistant extends Adapter {
         this.setStateAsync('timers.lastFired', { val: t.label || t.id, ack: true }).catch(() => {});
         const announce = this.config.timerAnnounce !== false;
         const target = this.announceTargetForSource(t.source);
-        void this.playAndAnnounce(this.config.timerSound || '', announce, this.timerAnnounceMessage(t), target).catch(
-            e => this.log.debug(`timer effects failed: ${(e as Error).message}`),
-        );
+        this.fireEffects(this.config.timerSound || '', announce, this.timerAnnounceMessage(t), target);
     }
 
     /** Build the spoken expiry message ("Timer abgelaufen: die Nudeln.") in the interaction language. */
@@ -2123,9 +2447,7 @@ class Assistant extends Adapter {
             ? pick(`Будильник: ${a.label}.`, `Wecker: ${a.label}.`, `Alarm: ${a.label}.`)
             : pick(`Будильник, ${clock}.`, `Wecker, es ist ${clock} Uhr.`, `Alarm, it is ${clock}.`);
         const target = this.announceTargetForSource(a.source);
-        void this.playAndAnnounce(this.config.alarmSound || '', announce, msg, target).catch(e =>
-            this.log.debug(`alarm effects failed: ${(e as Error).message}`),
-        );
+        this.fireEffects(this.config.alarmSound || '', announce, msg, target);
     }
 
     /** Execute an alarm intent (set/query/cancel) from the NLU and return a spoken-style reply. */
@@ -2441,6 +2763,138 @@ class Assistant extends Adapter {
                 },
             },
         ];
+    }
+
+    // ── Weather (read a user-selected weather adapter) ──────────────────────
+
+    /**
+     * Read the configured weather adapter's states and normalize them. `value` is the settings value
+     * (`weatherInstance`): a state prefix that, for Open-Meteo, includes the location device
+     * (`open-meteo-weather.0.Berlin`) and for others is just the instance (`weatherunderground.0`). Returns
+     * a normalized report for known adapters, or a raw (filtered) state dump for unknown ones.
+     */
+    private async readWeather(
+        value: string,
+    ): Promise<{ report?: WeatherReport; raw?: StateValues; source?: string; error?: string }> {
+        const root = value.trim();
+        if (!root) {
+            return { error: 'no weather source configured' };
+        }
+        const adapter = root.split('.')[0];
+        let states: StateValues = {};
+        try {
+            const raw = await this.getForeignStatesAsync(`${root}.*`);
+            for (const [id, st] of Object.entries(raw || {})) {
+                states[id] = st?.val;
+            }
+        } catch (e) {
+            return { error: `cannot read ${root}: ${(e as Error).message}` };
+        }
+        const report = buildWeatherReport(adapter, root, states);
+        if (report) {
+            return { report };
+        }
+        if (WEATHER_ADAPTERS[adapter]?.kind) {
+            return { error: `weather adapter "${adapter}" selected but it has no data yet — start it once` };
+        }
+        // Unknown adapter: return a filtered raw dump so the LLM can still try.
+        const weatherish = /(temp|wind|humid|rain|precip|cloud|pressure|forecast|current|state|condition|weather|snow|uv)/i;
+        const dump: StateValues = {};
+        let n = 0;
+        for (const [id, v] of Object.entries(states)) {
+            if (n >= 80) {
+                break;
+            }
+            if ((typeof v === 'number' || typeof v === 'string') && weatherish.test(id)) {
+                dump[id.slice(root.length + 1)] = v;
+                n++;
+            }
+        }
+        return Object.keys(dump).length ? { raw: dump, source: adapter } : { error: 'no weather data found' };
+    }
+
+    /** The LLM tool for weather questions (reads the configured weather adapter). */
+    private buildWeatherTool(): Tool {
+        return {
+            name: 'get_weather',
+            description:
+                'Get the current weather and forecast from the configured weather station. Use this for any question about the weather, the temperature outside, rain, wind, or the forecast. Optional "when": current/today, tomorrow, or week.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    when: { type: 'string', enum: ['current', 'today', 'tomorrow', 'week'], description: 'Which period' },
+                },
+                additionalProperties: false,
+            },
+            run: async (args): Promise<string> => {
+                const value = (this.config.weatherInstance || '').trim();
+                if (!value) {
+                    return JSON.stringify({ ok: false, error: 'No weather source configured in the assistant settings.' });
+                }
+                const res = await this.readWeather(value);
+                if (res.report) {
+                    return JSON.stringify({ ok: true, data: trimReport(res.report, String(args.when || '')) });
+                }
+                if (res.raw) {
+                    return JSON.stringify({ ok: true, data: { source: res.source, states: res.raw } });
+                }
+                return JSON.stringify({ ok: false, error: res.error || 'no weather data' });
+            },
+        };
+    }
+
+    /**
+     * List installed weather-adapter instances for the settings dropdown (selectSendTo). For Open-Meteo,
+     * each configured location becomes its own option (the data is namespaced per location).
+     */
+    private async getWeatherInstances(): Promise<{ label: string; value: string }[]> {
+        const options: { label: string; value: string }[] = [{ label: '—', value: '' }];
+        let instances: Record<string, ioBroker.Object> = {};
+        try {
+            const view = await this.getObjectViewAsync('system', 'instance', {
+                startkey: 'system.adapter.',
+                endkey: 'system.adapter.香',
+            });
+            for (const row of view?.rows || []) {
+                if (row.value) {
+                    instances[row.id] = row.value;
+                }
+            }
+        } catch (e) {
+            this.log.warn(`getWeatherInstances failed: ${(e as Error).message}`);
+            return options;
+        }
+        for (const obj of Object.values(instances)) {
+            const adapter = String((obj.common as { name?: string })?.name || '');
+            const meta = WEATHER_ADAPTERS[adapter];
+            if (!meta) {
+                continue;
+            }
+            const instanceId = String(obj._id).replace('system.adapter.', '');
+            if (meta.perLocationProbe) {
+                // Adapter namespaces data per location — list each configured location as its own option.
+                const marker = `.${meta.perLocationProbe.split('.')[0]}.`;
+                let found = false;
+                try {
+                    const rows = await this.getForeignStatesAsync(`${instanceId}.*.${meta.perLocationProbe}`);
+                    for (const id of Object.keys(rows || {})) {
+                        const loc = id.slice(instanceId.length + 1, id.indexOf(marker));
+                        if (loc) {
+                            options.push({ label: `${meta.label}: ${loc.replace(/_/g, ' ')}`, value: `${instanceId}.${loc}` });
+                            found = true;
+                        }
+                    }
+                } catch {
+                    /* fall through to the instance-level option */
+                }
+                if (!found) {
+                    options.push({ label: `${meta.label} (${instanceId})`, value: instanceId });
+                }
+            } else {
+                options.push({ label: `${meta.label} (${instanceId})`, value: instanceId });
+            }
+        }
+        return options;
     }
 
     /** Flattened device list (name, type, room, state ids) for the admin per-device ACL component. */
@@ -2784,6 +3238,11 @@ class Assistant extends Adapter {
     }
 
     private async onUnload(callback: () => void): Promise<void> {
+        try {
+            this.stopRinging();
+        } catch {
+            // ignore
+        }
         try {
             this.timers?.dispose();
         } catch {

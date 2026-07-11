@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { TimerManager, formatDuration } = require('../../build/lib/timers.js');
-const { Nlu, parseDurationSeconds } = require('../../build/lib/nlu.js');
+const { Nlu, parseDurationSeconds, isStopCommand } = require('../../build/lib/nlu.js');
 
 // ── Duration parsing (de/en/ru) ─────────────────────────────────────────────
 test('parseDurationSeconds: units and combos', () => {
@@ -70,6 +70,16 @@ test('NLU: english + russian set', () => {
 
 test('NLU: "time" alone is not a timer command', () => {
     assert.equal(nlu.parse('what time is it'), null);
+});
+
+test('isStopCommand: recognizes stop/quiet words (de/en/ru), not device-off', () => {
+    for (const s of ['Stop', 'Halt', 'Aufhören', 'aufhoeren', 'Ruhe', 'genug', 'Schluss', 'abbrechen',
+        'stop it', 'cancel', 'enough', 'quiet', 'стоп', 'хватит', 'тихо', 'прекрати']) {
+        assert.equal(isStopCommand(s), true, s);
+    }
+    // "aus" (turn-off) and unrelated text must NOT count as a stop-ring command.
+    assert.equal(isStopCommand('mach das Licht aus'), false);
+    assert.equal(isStopCommand('wie spät ist es'), false);
 });
 
 test('NLU: plurals and German compounds still match', () => {

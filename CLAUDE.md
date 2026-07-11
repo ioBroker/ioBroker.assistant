@@ -48,12 +48,33 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   `memory.list` → `restoreMemory()`. LLM-Tools `remember`/`list_memories`/`forget`; sendTo `saveMemory`/
   `forgetMemory`/`listMemories`. Config `useLongTermMemory` (Default an, gated Tools + Injection). Later:
   Embeddings-Top-K möglich (Format bleibt kompatibel).
+- **Wetter-Fragen (Roadmap)** — Nutzer wählt in der Config `weatherInstance` (`selectSendTo`
+  `getWeatherInstances` listet installierte Wetter-Instanzen; Open-Meteo pro Standort-Option). `src/lib/weather.ts`
+  `buildWeatherReport(adapter,root,states)` normalisiert die Adapter-State-Bäume in einen `WeatherReport`
+  (current+forecast); **8 source-verifizierte Mapper**: `open-meteo-weather` (`<Ort>.weather.current.*`/
+  `forecast.dayN.*`, `weather_code`→`wmoText`), `weatherunderground` (`forecast.current.*`/`forecast.Nd.*`),
+  `openweathermap` (Wind m/s), `brightsky` (`weather.current.*`/`weather.daily.N.*`, DWD gratis), `pirate-weather`
+  (`weather.currently.*`/`weather.daily.N.*`, m/s), `accuweather` (`Current.*`/`Daily.DayN.*`, nested
+  `Temperature.Min/Max`), `daswetter` (pro Standort `location_N.ForecastDaily.Day_N.*`), `yr`/met.no (nur
+  stündlich → current aus `forecastHourly.0h`, keine Tagesvorhersage). Adapter mit `perLocationProbe`
+  (open-meteo, daswetter) → Dropdown-Option pro Standort. Unbekannt (`dwd`=Warnungen) → gefilterter Roh-Dump.
+  `main.ts`: `buildWeatherTool` (LLM-Tool `get_weather({when?})`, nur wenn `weatherInstance` gesetzt),
+  `readWeather` (liest `getForeignStates(${root}.*)`), `getWeatherInstances`, sendTo `getWeather`. **Hannah
+  nutzte `openweathermap` via MQTT** (`weather.py`) — Vorbild für die Normalisierung.
 - LLM-Agent mit Tool-Calling-Schleife für **OpenAI + Anthropic** — `src/lib/llm.ts` (`LlmAgent`).
 - Tools über native ioBroker-API — `src/lib/tools.ts`: `list_rooms`, `list_functions`,
   `find_states({room?,func?,query?})`, `get_state({id})`, `set_state({id,value})`.
 - Typisierte Config — `src/types.d.ts` (`AdapterConfig`).
 - Adapter — `src/main.ts`: schreibt in `assistant.0.text.response`, wenn man `assistant.0.text.request`
   setzt; zusätzlich `sendTo('assistant.0','ask',{text:'…'},cb)`.
+- **Telegram-Integration — bereits kompatibel, KEIN Code nötig** (geprüft in `C:\pWork\ioBroker.telegram`,
+  `src/main.ts:2476`). Der telegram-Adapter hat ein Config-Feld `assistantInstance`; ist es gesetzt, ruft er für
+  jede nicht intern gematchte Nachricht `sendTo(assistantInstance,'ask',{text,source:'telegram:<user>',user,
+  chatId,userId,messageThreadId})` und schickt `res.answer||res.error` selbst an den richtigen Chat/Thread
+  zurück. **Unser `ask`-Handler erfüllt das 1:1**: liest `message.text`+`message.source`, gibt `{answer}`/`{error}`
+  per Callback; `source:'telegram:<user>'` speist den Pro-Quelle-Kontext (#1). Zusatzfelder ignorieren wir
+  gefahrlos (telegram routet die Antwort selbst). → nur `assistantInstance=assistant.0` konfigurieren. Fallback-
+  Skript-Rezept für Chat-Adapter OHNE native Integration (Matrix/WhatsApp/Discord …) in `docs/TODO.md`.
 - Admin-Config — `admin/jsonConfig.json` (`i18n: true`), Icon `admin/assistant.svg`,
   Übersetzungen `admin/i18n/{en,de}.json`.
 - `io-package.json` `instanceObjects`: `info.connection`, `text.request`, `text.response`.
@@ -165,6 +186,11 @@ npm run lint       # eslint (eslint.config.mjs, @iobroker/eslint-config)
      `list_devices`; `tryLocalNlu()`→`executeIntent()` ruft direkt `set_state`/`get_states`, respektiert
      `allowWriteStates` + `deviceAcl`. Config-Schalter `useLocalNlu` (default true). Kein Modell, 0 Install.
      Fällt bei Nicht-Treffer auf das LLM zurück. NLU pur/getestet (Scratch-Test grün).
+     - **Control-Auswahl (`pickControl`) typ-/rollenbasiert:** An/Aus bevorzugt einen **booleschen** Control —
+       auch unter nicht-standard Key (`ON_SET`) —, nie einen numerischen Level; nur-numerisches Gerät → An/Aus =
+       Level 100/0 (nicht `true`→1 %). **Level-Befehl** (`setze auf 30%`) setzt den Level **und** flippt einen
+       separaten Schalter (`intent.also`, gefunden per `findSwitch` über Rolle `switch*`/Typ boolean; 0 % → aus);
+       Geräte ohne Schalter unberührt. `NluDevice.roles` aus `list_devices` (`getNluDevices`).
    - **Tier 1a — lokales LLM** ✅ implementiert (Runtime-Test auf Zielhardware steht aus). `src/lib/localLlm.ts`:
      `node-llama-cpp` wird **on-demand** installiert (NICHT in package.json — sonst großer Native-Download für
      alle) via `installLocalLlm()` = gespawntes `npm install` ins **Instanz-Datenverzeichnis**
@@ -291,6 +317,8 @@ unsere Provider (openai/anthropic, evtl. später gemini/deepseek/custom) reduzie
 
 - **Vorbild-Adapter (Key-Storage):** `C:\pWork\ioBroker.javascript`.
 - **Python-Ursprung (Feature-Ideen, Satelliten-Protokoll):** `C:\iot\Hannah` (dessen `CLAUDE.md`).
+- **Telegram-Integration (native `assistantInstance`→`ask`-Bridge):** `C:\pWork\ioBroker.telegram`
+  (`src/main.ts:2476` sendTo, `:2509` `communicate.request` = `[user] text`).
 
 ## Offene Entscheidungen
 

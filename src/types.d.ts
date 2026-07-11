@@ -29,6 +29,12 @@ export interface AdapterConfig {
     useConversationContext: boolean;
     /** Long-term memory: persist durable facts across sessions and inject them into the LLM prompt. */
     useLongTermMemory: boolean;
+    /**
+     * Weather source: the state prefix of a selected weather adapter to answer weather questions from.
+     * For Open-Meteo it includes the location device (e.g. `open-meteo-weather.0.Berlin`); for others it is
+     * the instance (e.g. `weatherunderground.0`). Empty = no weather answering.
+     */
+    weatherInstance: string;
     /** Speak an announcement on the origin satellite when a countdown timer expires. */
     timerAnnounce: boolean;
     /** Speak an announcement on the origin satellite when an alarm (fixed clock time) fires. */
@@ -37,6 +43,8 @@ export interface AdapterConfig {
     timerSound: string;
     /** Uploaded sound played before the alarm announcement. '' = none. */
     alarmSound: string;
+    /** How long a fired timer/alarm keeps ringing (looping its sound) until stopped. 0 = play once. */
+    ringSeconds: number;
     /** Tier-1a: use an on-demand-installed local LLM (node-llama-cpp) between NLU and the cloud LLM. */
     useLocalLlm: boolean;
     /** Direct URL of the GGUF model for the local LLM ('' → built-in default, Qwen2.5-1.5B). */

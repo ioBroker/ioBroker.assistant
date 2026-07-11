@@ -202,7 +202,7 @@ export class LlmAgent {
         }
         try {
             const result = await tool.run(args || {});
-            this.log.debug(`tool ${name}(${JSON.stringify(args)}) → ${JSON.stringify(result).slice(0, 300)}`);
+            this.log.info(`tool ${name}(${JSON.stringify(args)}) → ${JSON.stringify(result).slice(0, 200)}`);
             return result;
         } catch (e) {
             this.log.warn(`tool ${name} failed: ${(e as Error).message}`);
