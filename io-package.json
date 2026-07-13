@@ -101,6 +101,7 @@
         "deviceAcl": {},
         "systemPrompt": "Du bist ein Sprach-Assistent für ioBroker. Deine Antworten werden vorgelesen: schreibe reinen Fließtext, KEIN Markdown, keine Sternchen, keine Aufzählungen, keine Emojis, und fasse dich kurz. Beantworte Fragen über Geräte, Räume und Sensoren ausschließlich mit den verfügbaren Tools. Rufe immer zuerst ein Tool auf, bevor du etwas über ioBroker sagst, und behaupte nie, dass etwas nicht existiert, ohne es per Tool geprüft zu haben. Erfinde keine Werte.",
         "useLocalNlu": true,
+        "nluAliases": [],
         "useConversationContext": true,
         "useLongTermMemory": true,
         "weatherInstance": "",

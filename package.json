@@ -20,7 +20,7 @@
         "@anthropic-ai/sdk": "^0.110.0",
         "@aws-sdk/client-polly": "^3.1079.0",
         "@aws-sdk/client-transcribe-streaming": "^3.1079.0",
-        "@iobroker/adapter-core": "^3.4.1",
+        "@iobroker/adapter-core": "^3.4.2",
         "@iobroker/mcp-server": "^0.1.6",
         "microsoft-cognitiveservices-speech-sdk": "^1.50.0",
         "openai": "^6.45.0"
@@ -31,7 +31,7 @@
         "@alcalzone/release-script-plugin-license": "^5.2.0",
         "@iobroker/build-tools": "^3.0.1",
         "@iobroker/eslint-config": "^2.3.4",
-        "@iobroker/testing": "^5.2.2",
+        "@iobroker/testing": "^5.3.0",
         "@types/node": "^20.19.43",
         "typescript": "^6.0.3"
     },

@@ -25,6 +25,12 @@ export interface AdapterConfig {
     systemPrompt: string;
     /** Tier-0: try the built-in rule-based NLU before the LLM (fast, offline, free) for simple commands. */
     useLocalNlu: boolean;
+    /**
+     * NLU synonym dictionary: rewrite spoken/typed variants to canonical terms before matching
+     * (e.g. "TV" → "Fernseher", "Deckenlicht" → "Licht Wohnzimmer"). Applied to every input channel
+     * (voice + text). `language` empty = all languages, else the ISO code it applies to.
+     */
+    nluAliases: { from: string; to: string; language?: string }[];
     /** Short-term conversation context: remember recent turns per source so follow-ups resolve. */
     useConversationContext: boolean;
     /** Long-term memory: persist durable facts across sessions and inject them into the LLM prompt. */

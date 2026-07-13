@@ -39,6 +39,8 @@ export interface VoiceServerOptions {
     tts: TtsEngine;
     /** Produce the assistant reply for a transcribed utterance. */
     answer: (question: string, ctx: { device: string; room: string }) => Promise<string>;
+    /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
+    getHints?: () => string[] | Promise<string[]>;
     log: ioBroker.Logger;
     /** Notified on every satellite state transition (idle/listening/processing/speaking/offline). */
     onStatus?: (device: string, room: string, state: SatelliteState | 'offline') => void;
@@ -168,7 +170,8 @@ export class VoiceServer {
 
         this.setStatus(sat, 'processing');
         try {
-            const text = await this.opts.stt.transcribe(pcm, AUDIO_SAMPLE_RATE, this.opts.language);
+            const hints = this.opts.getHints ? await this.opts.getHints() : undefined;
+            const text = await this.opts.stt.transcribe(pcm, AUDIO_SAMPLE_RATE, this.opts.language, hints);
             this.opts.log.info(`Voice Q (${sat.device}): ${text || '(empty)'}`);
             if (!text) {
                 this.setStatus(sat, 'idle');

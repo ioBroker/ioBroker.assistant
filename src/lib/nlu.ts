@@ -37,7 +37,9 @@ export type NluActionType =
     | 'timerCancel'
     | 'alarmSet'
     | 'alarmQuery'
-    | 'alarmCancel';
+    | 'alarmCancel'
+    | 'timeQuery'
+    | 'dateQuery';
 
 export interface NluIntent {
     action: NluActionType;
@@ -610,16 +612,38 @@ function wordInText(word: string, text: string): boolean {
 export class Nlu {
     private readonly rooms: string[];
     private readonly devices: NluDevice[];
+    /** Synonym dictionary as normalized [from, to] pairs, applied to the input before matching. */
+    private readonly aliases: [string, string][];
 
-    constructor(rooms: string[], devices: NluDevice[]) {
+    constructor(rooms: string[], devices: NluDevice[], aliases: { from: string; to: string }[] = []) {
         this.rooms = rooms.filter(Boolean);
         this.devices = devices;
+        this.aliases = aliases
+            .map(a => [normalize(a.from || ''), normalize(a.to || '')] as [string, string])
+            .filter(([from]) => from);
+    }
+
+    /**
+     * Rewrite synonyms to canonical terms on the (normalized) input, matching whole words/phrases only
+     * (Unicode boundaries). E.g. "tv" → "fernseher", "deckenlicht" → "licht wohnzimmer". No-op when the
+     * dictionary is empty. Applied once up front so all downstream matching sees the canonical wording.
+     */
+    private applyAliases(norm: string): string {
+        let out = norm;
+        for (const [from, to] of this.aliases) {
+            try {
+                out = out.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(from)}(?![\\p{L}\\p{N}])`, 'gu'), to);
+            } catch {
+                // Defensive: a malformed alias must never break parsing.
+            }
+        }
+        return out;
     }
 
     /** Parse a command; returns a structured intent or null if nothing could be resolved confidently. */
     parse(text: string): NluIntent | null {
         const raw = text;
-        const norm = normalize(text.replace(STRIP, ' '));
+        const norm = this.applyAliases(normalize(text.replace(STRIP, ' ')));
         const tokens = norm.split(/\s+/).filter(t => t && !FILLER.has(t));
         if (!tokens.length) {
             return null;
@@ -632,6 +656,13 @@ export class Nlu {
         const schedule = this.parseSchedule(raw, norm, joined);
         if (schedule) {
             return schedule;
+        }
+
+        // Time / date query ("what time is it", "which day is today") — device-independent, answered from
+        // the host clock. After the schedule parse so a clock phrase with a timer/alarm keyword still wins.
+        const timeQuery = this.parseTimeQuery(joined);
+        if (timeQuery) {
+            return timeQuery;
         }
 
         // Aggregate query first ("which windows are open") — before single-device matching.
@@ -794,6 +825,49 @@ export class Nlu {
         }
         const words = tokens.slice(start).filter(w => !LABEL_STOP_WORDS.has(w) && !/^\d+([.,]\d+)?$/.test(w));
         return words.join(' ').trim();
+    }
+
+    /**
+     * "What time is it?" / "What's the date/day today?" (de/en/ru) → a device-independent time or date
+     * query, answered directly by the adapter from the host clock (no LLM). The date branch is checked
+     * first so "which day is it" is not swallowed by the time branch. Matching is stem-tolerant via
+     * {@link wordInText}; "сейчас"/"today"/"monday" don't false-match "час"/"day" (word-boundary guarded).
+     */
+    private parseTimeQuery(text: string): NluIntent | null {
+        const has = (w: string): boolean => wordInText(w, text);
+        const qualifier = (): boolean =>
+            has('heute') ||
+            has('welch') ||
+            has('what') ||
+            has('which') ||
+            has('today') ||
+            has('сегодня') ||
+            has('какой') ||
+            has('какое');
+        // Date / weekday question.
+        const isDate =
+            has('datum') ||
+            has('wochentag') ||
+            has('date') ||
+            has('число') ||
+            has('дата') ||
+            ((has('tag') || has('day') || has('день')) && qualifier());
+        if (isDate) {
+            return { action: 'dateQuery', confidence: 0.9 };
+        }
+        // Time-of-day question. "wie viel Uhr" needs both words so a bare "Uhr" (rare here) doesn't trigger.
+        const isTime =
+            has('spaet') ||
+            has('uhrzeit') ||
+            has('time') ||
+            has('clock') ||
+            has('час') ||
+            has('время') ||
+            (has('uhr') && has('viel'));
+        if (isTime) {
+            return { action: 'timeQuery', confidence: 0.9 };
+        }
+        return null;
     }
 
     /**

@@ -192,6 +192,15 @@ node --test test/integration/nlu.test.js
      (`executeIntent`/`describeValue`) ebenfalls de/en/ru. Deckt an/aus, Level (%), Farbe (hex), Status-Query
      und **Aggregat-Query „welche Fenster sind offen"** (`parseWindowsOpen` → `action:'listByState'` über alle
      `window`/`windowTilt`-Geräte, optional raumgefiltert → `executeListByState` liest alle States, nennt die offenen).
+     **Zeit/Datum** (`parseTimeQuery` → `action:'timeQuery'|'dateQuery'`, geräteunabhängig, läuft nach
+     `parseSchedule` damit „weck mich um 7 Uhr" Wecker bleibt): „wie spät ist es / what time is it / который час"
+     bzw. „welcher Tag/Datum / what day/date / какое число" → `main.ts.executeTimeIntent()` antwortet direkt
+     aus der Host-Uhr (`Intl`, Host-Zeitzone, de/en/ru), ohne LLM. Zusätzlich speist `buildTimeContext()` die
+     aktuelle Zeit in **jeden** Cloud-LLM-User-Turn ein (nicht in den gecachten System-Prompt).
+     **Synonym-Wörterbuch** (`Nlu(rooms,devices,aliases)`, `applyAliases` schreibt gesprochene/getippte Varianten
+     vor dem Matching auf kanonische Begriffe um — Wortgrenzen, normalisiert; z. B. „TV"→„Fernseher"): Config
+     `nluAliases: {from,to,language?}[]` (jsonConfig-`table`, sichtbar bei `useLocalNlu`), sprachgefiltert in
+     `main.ts.getNluAliases()` (leere `language` = alle), gilt für **alle** Kanäle (Voice + Text).
      `main.ts`: `getNluDevices()` baut `NluDevice[]` (controls = controlType→stateId) aus gecachtem
      `list_devices`; `tryLocalNlu()`→`executeIntent()` ruft direkt `set_state`/`get_states`, respektiert
      `allowWriteStates` + `deviceAcl`. Config-Schalter `useLocalNlu` (default true). Kein Modell, 0 Install.
@@ -230,6 +239,12 @@ node --test test/integration/nlu.test.js
      room,alive,lastSeen}`. Config-Tab „Voice" (`voiceEnabled/port/bind/voiceLanguage/ttsVoice/voiceApiKey`;
      Key = `voiceApiKey` sonst Haupt-Key bei Provider openai). In `onReady` gestartet, `onUnload` gestoppt.
      Protokoll-Smoke-Test grün; **echter OpenAI-Call + Python-Sat-Interop noch ungetestet.**
+   - **STT-Vokabular-Biasing ✅ fertig.** `main.ts.buildSttHints()` (Raum- + Gerätenamen aus der gecachten
+     NLU-Liste) → `SttEngine.transcribe(pcm,rate,lang,hints?)`. Die Voice-Server (`voiceServer`/`wyoming`) holen
+     die Hints pro Utterance via `getHints`-Callback; der native `ask`-Pfad ebenso. **Soft-Bias** nur wo möglich:
+     OpenAI-Whisper `prompt` (`hintsToPrompt`, längenbegrenzt) + Azure `PhraseListGrammar`. **Ignoriert** bei AWS
+     (Transcribe-Streaming kennt nur vorab registrierte `VocabularyName`) und Vosk (Grammar = harter Constraint,
+     bräche freie Fragen). Verbessert die Erkennung genau der Eigennamen, die die NLU danach matchen muss.
    - **V1b — Cloud-Provider Azure + AWS ✅ fertig.** STT/TTS **unabhängig** wählbar (`sttProvider`/`ttsProvider` =
      openai|azure|aws) via Factory `src/lib/voice/engines.ts` (`createSttEngine`/`createTtsEngine`, `VoiceCredentials`).
      `azure.ts` (Azure Speech: `recognizeOnceAsync` aus PushStream, TTS `Raw24Khz16BitMonoPcm`, `audioConfig=null`),

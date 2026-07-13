@@ -1,5 +1,19 @@
 'use strict';
 // Integration test: voice credential resolution (manual mode + manager fallbacks).
+//
+// credentials.js imports @iobroker/adapter-core, which resolves the js-controller directory the moment it
+// is loaded and calls process.exit(10) if none is found — fatal for this pure unit test on a bare CI. Since
+// adapter-core >= 3.4.2, IOBROKER_CONTROLLER_DIR short-circuits that lookup, so we point it at the installed
+// controller (or, as a last resort, any existing dir) BEFORE requiring the module. The test never touches
+// the controller, so the exact path is irrelevant — it only has to make the load-time lookup succeed.
+const path = require('node:path');
+if (!process.env.IOBROKER_CONTROLLER_DIR) {
+    try {
+        process.env.IOBROKER_CONTROLLER_DIR = path.dirname(require.resolve('iobroker.js-controller/package.json'));
+    } catch {
+        process.env.IOBROKER_CONTROLLER_DIR = __dirname;
+    }
+}
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { resolveVoiceCredentials } = require('../../build/lib/credentials.js');

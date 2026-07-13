@@ -254,6 +254,7 @@ class Assistant extends Adapter {
                 stt,
                 tts,
                 answer: question => this.answer(question, 'wyoming'),
+                getHints: () => this.buildSttHints(),
                 log: this.log,
             });
             await this.wyoming.start();
@@ -314,6 +315,7 @@ class Assistant extends Adapter {
                 stt,
                 tts,
                 answer: (question, ctx) => this.answerVoice(question, ctx.device),
+                getHints: () => this.buildSttHints(),
                 log: this.log,
                 onStatus: (device, room, state) => {
                     this.updateSatelliteState(device, room, state).catch(e =>
@@ -441,7 +443,7 @@ class Assistant extends Adapter {
                 pcm = pcm.subarray(44);
             }
             const language = msg.language || engines.language;
-            const text = (await engines.stt.transcribe(pcm, rate, language)).trim();
+            const text = (await engines.stt.transcribe(pcm, rate, language, await this.buildSttHints())).trim();
             if (!text) {
                 return { text: '', answer: '' };
             }
@@ -1531,6 +1533,61 @@ class Assistant extends Adapter {
         return 'If your reply asks the user something and you are waiting for their answer, append the control marker [[LISTEN]] at the very end (it is removed and not spoken). If no answer is expected, do not append it.';
     }
 
+    /**
+     * Current date/time line, prepended to the user turn so the LLM has a clock — it has none otherwise and
+     * cannot answer "what time/day is it?" or reason about relative times. Uses the host's local timezone and
+     * a localized label (de/en/ru). Deliberately kept OUT of the (prompt-cached) system prompt: a per-request
+     * timestamp there would bust the cache — incl. the large device list — on every single call.
+     */
+    private buildTimeContext(): string {
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const locale = lang === 'de' ? 'de-DE' : lang === 'ru' ? 'ru-RU' : 'en-GB';
+        let tz = '';
+        try {
+            tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        } catch {
+            /* no ICU/timezone data — omit the zone name */
+        }
+        const formatted = new Intl.DateTimeFormat(locale, {
+            weekday: 'long',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+        }).format(new Date());
+        const label =
+            lang === 'ru'
+                ? 'Текущие дата и время'
+                : lang === 'de'
+                  ? 'Aktuelles Datum und Uhrzeit'
+                  : 'Current date and time';
+        return tz ? `${label}: ${formatted} (${tz}).` : `${label}: ${formatted}.`;
+    }
+
+    /**
+     * Answer a time/date query from the rule-based NLU directly off the host clock — instant, offline, no
+     * LLM. Localized (de/en/ru) spoken-style reply; uses the host's local timezone via {@link Intl}.
+     */
+    private executeTimeIntent(intent: NluIntent): string {
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const locale = lang === 'de' ? 'de-DE' : lang === 'ru' ? 'ru-RU' : 'en-GB';
+        const now = new Date();
+        if (intent.action === 'dateQuery') {
+            const date = new Intl.DateTimeFormat(locale, {
+                weekday: 'long',
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric',
+            }).format(now);
+            const s = lang === 'ru' ? `Сегодня ${date}.` : lang === 'de' ? `Heute ist ${date}.` : `Today is ${date}.`;
+            // The ru locale already ends the date with "г." — collapse the resulting ".." to a single period.
+            return s.replace(/\.+$/, '.');
+        }
+        const time = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(now);
+        return lang === 'ru' ? `Сейчас ${time}.` : lang === 'de' ? `Es ist ${time} Uhr.` : `It's ${time}.`;
+    }
+
     private async produceAnswer(question: string, history: ConversationTurn[], source = ''): Promise<string> {
         this.log.debug(`answer: source='${source}', context=${history.length} turn(s)`);
         // A ringing timer/alarm is silenced by a stop word ("stop"/"halt"/"aufhören"/…) — checked first so
@@ -1585,7 +1642,10 @@ class Assistant extends Adapter {
         this.log.info(
             `Cloud LLM [${this.agent.model}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}) — running tool loop…`,
         );
-        return this.agent.ask(question, sys, history);
+        // Prepend the current date/time to the user turn (cache-safe — see buildTimeContext) so the model can
+        // answer time/date questions and reason about "now". The stored history keeps the untouched question.
+        const questionForLlm = `${this.buildTimeContext()}\n\n${question}`;
+        return this.agent.ask(questionForLlm, sys, history);
     }
 
     /**
@@ -1751,7 +1811,7 @@ class Assistant extends Adapter {
         // Timer intents match device-independently (parse() checks them first), so build the NLU even
         // when no devices are known and always try timers before bailing out.
         const { rooms, devices } = await this.getNluDevices();
-        const intent = new Nlu(rooms, devices).parse(question);
+        const intent = new Nlu(rooms, devices, this.getNluAliases()).parse(question);
         if (!intent) {
             return null;
         }
@@ -1760,6 +1820,9 @@ class Assistant extends Adapter {
         }
         if (intent.action === 'alarmSet' || intent.action === 'alarmQuery' || intent.action === 'alarmCancel') {
             return this.alarms ? this.executeAlarmIntent(intent, source) : null;
+        }
+        if (intent.action === 'timeQuery' || intent.action === 'dateQuery') {
+            return this.executeTimeIntent(intent);
         }
         if (!devices.length) {
             return null;
@@ -1770,6 +1833,46 @@ class Assistant extends Adapter {
             return null;
         }
         return this.executeIntent(intent);
+    }
+
+    /**
+     * The configured NLU synonym dictionary filtered to the current interaction language (entries with no
+     * language apply to every language). Passed to {@link Nlu} so spoken/typed variants are rewritten to
+     * the canonical device/room/action wording before matching.
+     */
+    private getNluAliases(): { from: string; to: string }[] {
+        const iso = String(this.config.voiceLanguage || this.language || 'en')
+            .split('-')[0]
+            .toLowerCase();
+        return (this.config.nluAliases || [])
+            .filter(a => a?.from && a?.to && (!a.language || String(a.language).split('-')[0].toLowerCase() === iso))
+            .map(a => ({ from: a.from, to: a.to }));
+    }
+
+    /**
+     * Vocabulary hints for STT biasing: the room and device names (in the interaction language), so the
+     * speech engine better recognizes those proper nouns — exactly the words the NLU then needs to match.
+     * Reuses the cached NLU device model; engines that support soft biasing (Whisper/Azure) consume it.
+     */
+    private async buildSttHints(): Promise<string[]> {
+        try {
+            const { rooms, devices } = await this.getNluDevices();
+            const set = new Set<string>();
+            for (const r of rooms) {
+                if (r) {
+                    set.add(r);
+                }
+            }
+            for (const d of devices) {
+                if (d.name) {
+                    set.add(d.name);
+                }
+            }
+            return [...set];
+        } catch (e) {
+            this.log.debug(`STT hints unavailable: ${(e as Error).message}`);
+            return [];
+        }
     }
 
     /** Device model for the NLU: friendly name, room, type and controls (controlType → state id). */

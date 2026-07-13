@@ -68,8 +68,8 @@ test('NLU: english + russian set', () => {
     assert.equal(ru.durationSec, 300);
 });
 
-test('NLU: "time" alone is not a timer command', () => {
-    assert.equal(nlu.parse('what time is it'), null);
+test('NLU: "what time is it" is a time query, not a timer command', () => {
+    assert.equal(nlu.parse('what time is it').action, 'timeQuery');
 });
 
 test('isStopCommand: recognizes stop/quiet words (de/en/ru), not device-off', () => {

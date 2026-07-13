@@ -29,7 +29,7 @@ export class AzureStt implements SttEngine {
         private readonly region: string,
     ) {}
 
-    async transcribe(pcm: Buffer, sampleRate: number, lang: string): Promise<string> {
+    async transcribe(pcm: Buffer, sampleRate: number, lang: string, hints?: string[]): Promise<string> {
         const speechConfig = sdk.SpeechConfig.fromSubscription(this.key, this.region);
         speechConfig.speechRecognitionLanguage = isoToLocale(lang);
 
@@ -40,6 +40,17 @@ export class AzureStt implements SttEngine {
         pushStream.close();
 
         const recognizer = new sdk.SpeechRecognizer(speechConfig, sdk.AudioConfig.fromStreamInput(pushStream));
+        // A phrase list softly boosts recognition of the given domain vocabulary (device/room names) without
+        // restricting the recognizer to only those words.
+        if (hints?.length) {
+            const phraseList = sdk.PhraseListGrammar.fromRecognizer(recognizer);
+            for (const h of hints) {
+                const term = (h || '').trim();
+                if (term) {
+                    phraseList.addPhrase(term);
+                }
+            }
+        }
         try {
             const result = await new Promise<sdk.SpeechRecognitionResult>((resolve, reject) => {
                 recognizer.recognizeOnceAsync(resolve, reject);

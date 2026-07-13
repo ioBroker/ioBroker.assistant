@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createSttEngine, createTtsEngine, listVoices } = require('../../build/lib/voice/engines.js');
 const { isoToLocale } = require('../../build/lib/voice/lang.js');
-const { pcmToWav } = require('../../build/lib/voice/stt.js');
+const { pcmToWav, hintsToPrompt } = require('../../build/lib/voice/stt.js');
 
 const silentLog = { info() {}, warn() {}, error() {}, debug() {} };
 
@@ -65,4 +65,16 @@ test('pcmToWav prepends a valid 44-byte RIFF/WAVE header', () => {
     assert.equal(wav.readUInt32LE(24), 16000, 'sample rate in header');
     assert.equal(wav.readUInt16LE(22), 1, 'mono');
     assert.equal(wav.readUInt16LE(34), 16, 'bits per sample');
+});
+
+test('hintsToPrompt joins, de-dups and bounds the STT vocabulary bias', () => {
+    assert.equal(hintsToPrompt(undefined), '');
+    assert.equal(hintsToPrompt([]), '');
+    // joined as a comma list, blanks dropped, case-insensitive de-dup (first spelling kept)
+    assert.equal(hintsToPrompt(['Wohnzimmer', 'Licht', '', 'wohnzimmer']), 'Wohnzimmer, Licht');
+    // length-bounded: with a tiny budget only what fits is kept
+    const many = Array.from({ length: 100 }, (_, i) => `Device${i}`);
+    const out = hintsToPrompt(many, 20);
+    assert.ok(out.length <= 20, `bounded (${out.length})`);
+    assert.ok(out.startsWith('Device0'));
 });

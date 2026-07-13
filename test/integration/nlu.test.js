@@ -52,8 +52,69 @@ test('status query (?)', () => {
 });
 
 test('no device → null (falls through to the LLM)', () => {
-    assert.equal(nlu.parse('wie spät ist es'), null);
+    assert.equal(nlu.parse('erzähl mir einen Witz'), null);
     assert.equal(nlu.parse('Kaffeemaschine anschalten'), null);
+});
+
+// ── Time / date queries (device-independent, answered from the host clock) ───
+test('time query (de/en/ru)', () => {
+    assert.equal(nlu.parse('wie spät ist es').action, 'timeQuery');
+    assert.equal(nlu.parse('wie viel Uhr ist es?').action, 'timeQuery');
+    assert.equal(nlu.parse('what time is it').action, 'timeQuery');
+    assert.equal(nlu.parse("what's the time?").action, 'timeQuery');
+    assert.equal(nlu.parse('который час').action, 'timeQuery');
+    assert.equal(nlu.parse('сколько сейчас времени').action, 'timeQuery');
+});
+
+test('date query (de/en/ru)', () => {
+    assert.equal(nlu.parse('welcher Tag ist heute?').action, 'dateQuery');
+    assert.equal(nlu.parse('welches Datum haben wir').action, 'dateQuery');
+    assert.equal(nlu.parse('what day is it').action, 'dateQuery');
+    assert.equal(nlu.parse("what's the date today").action, 'dateQuery');
+    assert.equal(nlu.parse('какое сегодня число').action, 'dateQuery');
+    assert.equal(nlu.parse('какой сегодня день').action, 'dateQuery');
+});
+
+test('time/date query does not steal timer/alarm or device phrases', () => {
+    // A clock phrase carrying a timer/alarm keyword stays a schedule intent.
+    assert.equal(nlu.parse('weck mich um 7 Uhr').action, 'alarmSet');
+    assert.equal(nlu.parse('Timer auf 5 Minuten').action, 'timerSet');
+    // "сейчас"/"today"/"monday" must not false-match "час"/"day".
+    assert.equal(nlu.parse('Licht im Wohnzimmer an').action, 'on');
+    // A device status question is still a device query, not a time query.
+    assert.equal(nlu.parse('Temperatur im Wohnzimmer?').action, 'query');
+});
+
+// ── Synonym dictionary (alias rewriting before matching) ─────────────────────
+test('alias dictionary rewrites synonyms to canonical terms', () => {
+    const withAlias = new Nlu(
+        ['Wohnzimmer', 'Schlafzimmer'],
+        [light, blind, temp],
+        [
+            { from: 'Beleuchtung', to: 'Licht' },
+            { from: 'Jalousie', to: 'Rollo' },
+        ],
+    );
+    // "Beleuchtung" → "Licht" → resolves to the light device
+    const on = withAlias.parse('Beleuchtung im Wohnzimmer an');
+    assert.equal(on.action, 'on');
+    assert.equal(on.stateId, 'x.p');
+    // multi-token command still works and a second alias maps the blind
+    const lvl = withAlias.parse('Jalousie auf 40 Prozent');
+    assert.equal(lvl.action, 'level');
+    assert.equal(lvl.stateId, 'x.l');
+    assert.equal(lvl.value, 40);
+    // without the dictionary, the synonym does not resolve → falls through to the LLM
+    assert.equal(nlu.parse('Beleuchtung im Wohnzimmer an'), null);
+});
+
+test('alias matches whole words only, not substrings', () => {
+    // "auf" → "zu" must not corrupt words that merely contain the alias as a substring ("Aufnahme").
+    const n = new Nlu(['Wohnzimmer'], [light], [{ from: 'xyz', to: 'licht' }]);
+    // "xyz" as a standalone word is rewritten …
+    assert.equal(n.parse('xyz im Wohnzimmer an').action, 'on');
+    // … but embedded in another token it is left alone (no device match → null)
+    assert.equal(n.parse('xyzabc im Wohnzimmer an'), null);
 });
 
 test('normalize lowercases, expands German umlauts and Russian ё', () => {

@@ -225,6 +225,10 @@ export class VoskStt implements SttEngine {
         await this.ensureModel(lang);
     }
 
+    // Note: the SttEngine `hints` vocabulary is intentionally not applied here. Vosk can bias only via a
+    // grammar (vosk_recognizer_new_grm), but that is a *hard* constraint — it restricts recognition to the
+    // listed words, which would break free-form questions (weather, general chat). Its words must also exist
+    // in the model's lexicon, which arbitrary device names usually don't. So we keep open dictation instead.
     async transcribe(pcm: Buffer, sampleRate: number, lang: string): Promise<string> {
         await this.ensureReady();
         const model = await this.ensureModel(lang);

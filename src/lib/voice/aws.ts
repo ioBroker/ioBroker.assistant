@@ -63,6 +63,9 @@ export class AwsStt implements SttEngine {
         });
     }
 
+    // Note: the SttEngine `hints` vocabulary is intentionally not applied here. Amazon Transcribe biases
+    // only via a *custom vocabulary* that must be created/registered ahead of time (CreateVocabulary) and
+    // referenced by name — there is no inline per-request word list for streaming. So we skip biasing for AWS.
     async transcribe(pcm: Buffer, sampleRate: number, lang: string): Promise<string> {
         // Must be an async generator: Transcribe's AudioStream is an AsyncIterable.
         // eslint-disable-next-line @typescript-eslint/require-await

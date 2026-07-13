@@ -103,6 +103,19 @@
                     "sm": 6,
                     "md": 4
                 },
+                "nluAliases": {
+                    "type": "table",
+                    "label": "Synonym dictionary",
+                    "help": "Rewrite spoken or typed variants to your device/room names before local matching, e.g. \"TV\" to \"Fernseher\". Leave the language empty to apply to all languages. Also used for the text channels.",
+                    "hidden": "!data.useLocalNlu",
+                    "sm": 12,
+                    "md": 12,
+                    "items": [
+                        { "type": "text", "attr": "from", "title": "Said or typed", "width": "40%" },
+                        { "type": "text", "attr": "to", "title": "Canonical term", "width": "40%" },
+                        { "type": "text", "attr": "language", "title": "Language (empty = all)", "width": "20%" }
+                    ]
+                },
                 "useConversationContext": {
                     "type": "checkbox",
                     "label": "Remember the conversation (follow-up questions)",

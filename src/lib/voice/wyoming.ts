@@ -22,6 +22,8 @@ export interface WyomingServerOptions {
     stt: SttEngine;
     tts: TtsEngine;
     answer: (question: string) => Promise<string>;
+    /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
+    getHints?: () => string[] | Promise<string[]>;
     log: ioBroker.Logger;
 }
 
@@ -205,7 +207,8 @@ class WyomingConnection {
             return;
         }
         try {
-            const text = await this.opts.stt.transcribe(pcm, this.audioRate, this.lang);
+            const hints = this.opts.getHints ? await this.opts.getHints() : undefined;
+            const text = await this.opts.stt.transcribe(pcm, this.audioRate, this.lang, hints);
             this.opts.log.info(`Wyoming Q: ${text || '(empty)'}`);
             this.write('transcript', { text });
             if (!text) {

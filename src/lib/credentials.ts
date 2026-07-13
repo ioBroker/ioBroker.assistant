@@ -11,7 +11,7 @@
  * js-controller >= 7.2 / a recent \@iobroker/adapter-core. We access it defensively so the
  * adapter still compiles and runs (in `manual` mode) on older controllers.
  */
-import { Credentials } from '@iobroker/adapter-core';
+import Credentials from '@iobroker/adapter-core/credentials';
 import type { AdapterConfig } from '../types';
 import type { VoiceCredentials } from './voice/engines';
 
