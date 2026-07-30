@@ -24,7 +24,7 @@ import {
 import { Translate as TranslateIcon } from '@mui/icons-material';
 import { ConfigGeneric, type ConfigGenericProps, type ConfigGenericState } from '@iobroker/json-config';
 import type { AssistantAdapterConfig, DeviceInfo } from './types';
-import { I18n, DeviceTypeIcon, extendDeviceTypeTranslation } from '@iobroker/adapter-react-v5';
+import { I18n, DeviceTypeIcon, extendDeviceTypeTranslation } from '@iobroker/gui-components';
 import type { Types } from '@iobroker/type-detector';
 
 // Register the shared `type-<deviceType>` translations (e.g. type-dimmer → "Dimmer") into admin I18n.

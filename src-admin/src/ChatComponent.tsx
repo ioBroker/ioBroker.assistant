@@ -11,7 +11,7 @@ import {
     PlayArrow as PlayIcon,
 } from '@mui/icons-material';
 import { ConfigGeneric, type ConfigGenericProps, type ConfigGenericState } from '@iobroker/json-config';
-import { I18n } from '@iobroker/adapter-react-v5';
+import { I18n } from '@iobroker/gui-components';
 
 // Register this component's translations into the shared admin I18n so the `custom_assistant_*`
 // keys resolve (instance-config custom components don't auto-load admin/custom/i18n).

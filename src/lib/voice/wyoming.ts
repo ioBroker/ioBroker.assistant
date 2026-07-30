@@ -13,6 +13,7 @@
 import * as net from 'node:net';
 import type { SttEngine } from './stt';
 import type { TtsEngine } from './tts';
+import { Buffer } from 'node:buffer';
 
 export interface WyomingServerOptions {
     port: number;
@@ -83,7 +84,7 @@ class WyomingConnection {
     private draining = false;
     private audioChunks: Buffer[] = [];
     private audioRate = 16000;
-    /** Per-utterance language (overridable via `transcribe`/`synthesize` data.language). */
+    /** Per-utterance language (overridable via `transcribe`/`synthesize` `data.language`). */
     private lang: string;
 
     constructor(
@@ -92,7 +93,7 @@ class WyomingConnection {
     ) {
         this.lang = opts.language;
         sock.on('data', d => {
-            this.buf = Buffer.concat([this.buf, d]);
+            this.buf = Buffer.concat([this.buf, d as Buffer<ArrayBuffer>]);
             void this.drain();
         });
     }
