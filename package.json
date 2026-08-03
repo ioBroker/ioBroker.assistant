@@ -1,6 +1,6 @@
 {
   "name": "iobroker.assistant",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "LLM assistant for ioBroker — ask about and control any state via an LLM with tool-calling",
   "author": "ioBroker",
   "license": "MIT",
