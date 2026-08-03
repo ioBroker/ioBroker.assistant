@@ -93,7 +93,7 @@ class WyomingConnection {
     ) {
         this.lang = opts.language;
         sock.on('data', d => {
-            this.buf = Buffer.concat([this.buf, d as Buffer<ArrayBuffer>]);
+            this.buf = Buffer.concat([this.buf, d]);
             void this.drain();
         });
     }
