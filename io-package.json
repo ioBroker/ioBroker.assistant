@@ -1,495 +1,541 @@
 {
-    "common": {
-        "name": "assistant",
-        "version": "0.0.1",
-        "title": "Assistant",
-        "news": {
-            "0.0.1": {
-                "en": "Initial release",
-                "de": "Erstveröffentlichung",
-                "ru": "Начальная версия",
-                "pt": "Lançamento inicial",
-                "nl": "Eerste release",
-                "fr": "Version initiale",
-                "it": "Rilascio iniziale",
-                "es": "Lanzamiento inicial",
-                "pl": "Wersja początkowa",
-                "uk": "Початковий випуск",
-                "zh-cn": "首次发布"
-            }
-        },
-        "titleLang": {
-            "en": "Voice Assistant",
-            "de": "Sprach-Assistent",
-            "ru": "Голосовой ассистент",
-            "pt": "Assistente de voz",
-            "nl": "Spraakassistent",
-            "fr": "Assistant vocal",
-            "it": "Assistente vocale",
-            "es": "Asistente de voz",
-            "pl": "Asystent głosowy",
-            "uk": "Голосовий помічник",
-            "zh-cn": "语音助手"
-        },
-        "desc": {
-            "en": "LLM assistant that answers questions and controls any ioBroker state via tool-calling",
-            "de": "LLM-Assistent, der Fragen beantwortet und beliebige ioBroker-States per Tool-Calling steuert",
-            "ru": "Ассистент LLM, который отвечает на вопросы и управляет любым состоянием ioBroker с помощью вызова инструментов",
-            "pt": "Assistente LLM que responde a perguntas e controla qualquer estado do ioBroker via chamada de ferramenta",
-            "nl": "LLM-assistent die vragen beantwoordt en elke ioBroker-status via tool-aanroepen beheert",
-            "fr": "Assistant LLM qui répond aux questions et contrôle n'importe quel état ioBroker via des appels d'outils",
-            "it": "Assistente LLM che risponde alle domande e controlla qualsiasi stato di ioBroker tramite chiamate agli strumenti",
-            "es": "Asistente LLM que responde preguntas y controla cualquier estado de ioBroker mediante llamadas a herramientas",
-            "pl": "Asystent LLM, który odpowiada na pytania i kontroluje dowolny stan ioBroker za pomocą wywołań narzędzi",
-            "uk": "Асистент LLM, який відповідає на запитання та керує будь-яким станом ioBroker за допомогою викликів інструментів",
-            "zh-cn": "LLM助手，通过工具调用回答问题并控制任何ioBroker状态"
-        },
-        "authors": ["ioBroker"],
-        "keywords": ["assistant", "llm", "voice", "openai", "anthropic"],
-        "platform": "Javascript/Node.js",
-        "main": "build/main.js",
-        "icon": "assistant.svg",
-        "enabled": true,
-        "extIcon": "https://raw.githubusercontent.com/ioBroker/ioBroker.assistant/main/admin/assistant.svg",
-        "readme": "https://github.com/ioBroker/ioBroker.assistant/blob/main/README.md",
-        "loglevel": "info",
-        "mode": "daemon",
-        "type": "general",
-        "compact": true,
-        "tier": 3,
-        "nogit": true,
-        "licenseInformation": {
-            "license": "MIT",
-            "type": "free"
-        },
-        "connectionType": "cloud",
-        "dataSource": "push",
-        "adminUI": {
-            "config": "json"
-        },
-        "dependencies": [
-            {
-                "js-controller": ">=6.0.11"
-            }
-        ],
-        "globalDependencies": [
-            {
-                "admin": ">=8.0.0"
-            }
-        ],
-        "osDependencies": {
-            "linux": ["unzip", "tar"]
-        },
-        "messagebox": true
+  "common": {
+    "name": "assistant",
+    "version": "0.1.0",
+    "title": "Assistant",
+    "news": {
+      "0.1.0": {
+        "en": "Initial commit",
+        "de": "Erster Commit",
+        "ru": "Первоначальный коммит",
+        "pt": "Confirmação inicial",
+        "nl": "Eerste commit",
+        "fr": "Engagement initial",
+        "it": "Inizial impegnato",
+        "es": "Compromiso inicial",
+        "pl": "Początkowe zatwierdzenie",
+        "uk": "Початковий коміт",
+        "zh-cn": "初始提交"
+      },
+      "0.0.1": {
+        "en": "Initial release",
+        "de": "Erstveröffentlichung",
+        "ru": "Начальная версия",
+        "pt": "Lançamento inicial",
+        "nl": "Eerste release",
+        "fr": "Version initiale",
+        "it": "Rilascio iniziale",
+        "es": "Lanzamiento inicial",
+        "pl": "Wersja początkowa",
+        "uk": "Початковий випуск",
+        "zh-cn": "首次发布"
+      }
     },
-    "native": {
-        "provider": "openai",
-        "credentialType": "manual",
-        "apiKey": "",
-        "credentialIdApiKey": "",
-        "model": "gpt-4o-mini",
-        "baseUrl": "",
-        "maxTokens": 1024,
-        "allowWriteStates": true,
-        "allowObjectChange": false,
-        "readObjects": "devices",
-        "allowReadLogs": false,
-        "allowWriteLogs": false,
-        "allowHistory": true,
-        "allowFiles": false,
-        "allowSystemInfo": true,
-        "deviceAcl": {},
-        "systemPrompt": "Du bist ein Sprach-Assistent für ioBroker. Deine Antworten werden vorgelesen: schreibe reinen Fließtext, KEIN Markdown, keine Sternchen, keine Aufzählungen, keine Emojis, und fasse dich kurz. Beantworte Fragen über Geräte, Räume und Sensoren ausschließlich mit den verfügbaren Tools. Rufe immer zuerst ein Tool auf, bevor du etwas über ioBroker sagst, und behaupte nie, dass etwas nicht existiert, ohne es per Tool geprüft zu haben. Erfinde keine Werte.",
-        "useLocalNlu": true,
-        "nluAliases": [],
-        "useConversationContext": true,
-        "useLongTermMemory": true,
-        "weatherInstance": "",
-        "timerAnnounce": true,
-        "alarmAnnounce": true,
-        "timerSound": "sounds/timer.wav",
-        "alarmSound": "sounds/alarm.wav",
-        "ringSeconds": 60,
-        "useLocalLlm": false,
-        "localLlmModelUrl": "",
-        "voiceEnabled": false,
-        "udpServerEnabled": false,
-        "port": 7775,
-        "bind": "0.0.0.0",
-        "wyomingEnabled": false,
-        "wyomingPort": 10700,
-        "voiceLanguage": "",
-        "voiceApiKey": "",
-        "ttsVoice": "alloy",
-        "sttModel": "",
-        "ttsModel": "",
-        "sttProvider": "openai",
-        "ttsProvider": "openai",
-        "azureSpeechKey": "",
-        "azureSpeechRegion": "",
-        "azureVoice": "",
-        "awsAccessKeyId": "",
-        "awsSecretAccessKey": "",
-        "awsRegion": "",
-        "awsVoice": "",
-        "voskModel": "",
-        "piperVoice": "",
-        "voiceCredentialType": "manual",
-        "voiceCredentialId": "",
-        "azureCredentialId": "",
-        "awsCredentialId": ""
+    "titleLang": {
+      "en": "Voice Assistant",
+      "de": "Sprach-Assistent",
+      "ru": "Голосовой ассистент",
+      "pt": "Assistente de voz",
+      "nl": "Spraakassistent",
+      "fr": "Assistant vocal",
+      "it": "Assistente vocale",
+      "es": "Asistente de voz",
+      "pl": "Asystent głosowy",
+      "uk": "Голосовий помічник",
+      "zh-cn": "语音助手"
     },
-    "encryptedNative": ["apiKey", "voiceApiKey", "azureSpeechKey", "awsSecretAccessKey"],
-    "protectedNative": ["apiKey", "voiceApiKey", "azureSpeechKey", "awsSecretAccessKey"],
-    "objects": [],
-    "instanceObjects": [
-        {
-            "_id": "info",
-            "type": "channel",
-            "common": { "name": "Information" },
-            "native": {}
-        },
-        {
-            "_id": "info.connection",
-            "type": "state",
-            "common": {
-                "name": "Provider configured/reachable",
-                "type": "boolean",
-                "role": "indicator.connected",
-                "read": true,
-                "write": false,
-                "def": false
-            },
-            "native": {}
-        },
-        {
-            "_id": "text",
-            "type": "channel",
-            "common": { "name": "Text interface" },
-            "native": {}
-        },
-        {
-            "_id": "text.request",
-            "type": "state",
-            "common": {
-                "name": "Ask the assistant (write your question here)",
-                "type": "string",
-                "role": "text",
-                "read": true,
-                "write": true,
-                "def": ""
-            },
-            "native": {}
-        },
-        {
-            "_id": "text.response",
-            "type": "state",
-            "common": {
-                "name": "Assistant answer",
-                "type": "string",
-                "role": "text",
-                "read": true,
-                "write": false,
-                "def": ""
-            },
-            "native": {}
-        },
-        {
-            "_id": "text.querySource",
-            "type": "state",
-            "common": {
-                "name": "Source of the current request/response ('' = state, 'chat' = message, else satellite name)",
-                "type": "string",
-                "role": "text",
-                "read": true,
-                "write": false,
-                "def": ""
-            },
-            "native": {}
-        },
-        {
-            "_id": "timers",
-            "type": "channel",
-            "common": { "name": "Countdown timers" },
-            "native": {}
-        },
-        {
-            "_id": "timers.count",
-            "type": "state",
-            "common": {
-                "name": "Number of active timers",
-                "type": "number",
-                "role": "value",
-                "read": true,
-                "write": false,
-                "def": 0
-            },
-            "native": {}
-        },
-        {
-            "_id": "timers.list",
-            "type": "state",
-            "common": {
-                "name": "Active timers (JSON)",
-                "type": "string",
-                "role": "json",
-                "read": true,
-                "write": false,
-                "def": "[]"
-            },
-            "native": {}
-        },
-        {
-            "_id": "timers.nextExpiry",
-            "type": "state",
-            "common": {
-                "name": "When the next timer fires (0 = none)",
-                "type": "number",
-                "role": "value.time",
-                "read": true,
-                "write": false,
-                "def": 0
-            },
-            "native": {}
-        },
-        {
-            "_id": "timers.nextLabel",
-            "type": "state",
-            "common": {
-                "name": "Label of the next timer",
-                "type": "string",
-                "role": "text",
-                "read": true,
-                "write": false,
-                "def": ""
-            },
-            "native": {}
-        },
-        {
-            "_id": "timers.lastFired",
-            "type": "state",
-            "common": {
-                "name": "Label of the last expired timer",
-                "type": "string",
-                "role": "text",
-                "read": true,
-                "write": false,
-                "def": ""
-            },
-            "native": {}
-        },
-        {
-            "_id": "timers.cancelAll",
-            "type": "state",
-            "common": {
-                "name": "Cancel all timers (write true)",
-                "type": "boolean",
-                "role": "button",
-                "read": false,
-                "write": true,
-                "def": false
-            },
-            "native": {}
-        },
-        {
-            "_id": "alarms",
-            "type": "channel",
-            "common": { "name": "Alarms (fixed clock time)" },
-            "native": {}
-        },
-        {
-            "_id": "alarms.count",
-            "type": "state",
-            "common": {
-                "name": "Number of configured alarms",
-                "type": "number",
-                "role": "value",
-                "read": true,
-                "write": false,
-                "def": 0
-            },
-            "native": {}
-        },
-        {
-            "_id": "alarms.list",
-            "type": "state",
-            "common": {
-                "name": "Alarms (JSON)",
-                "type": "string",
-                "role": "json",
-                "read": true,
-                "write": false,
-                "def": "[]"
-            },
-            "native": {}
-        },
-        {
-            "_id": "alarms.nextAlarm",
-            "type": "state",
-            "common": {
-                "name": "When the next alarm fires (0 = none)",
-                "type": "number",
-                "role": "value.time",
-                "read": true,
-                "write": false,
-                "def": 0
-            },
-            "native": {}
-        },
-        {
-            "_id": "alarms.nextLabel",
-            "type": "state",
-            "common": {
-                "name": "Label/time of the next alarm",
-                "type": "string",
-                "role": "text",
-                "read": true,
-                "write": false,
-                "def": ""
-            },
-            "native": {}
-        },
-        {
-            "_id": "alarms.lastFired",
-            "type": "state",
-            "common": {
-                "name": "Label/time of the last fired alarm",
-                "type": "string",
-                "role": "text",
-                "read": true,
-                "write": false,
-                "def": ""
-            },
-            "native": {}
-        },
-        {
-            "_id": "alarms.cancelAll",
-            "type": "state",
-            "common": {
-                "name": "Delete all alarms (write true)",
-                "type": "boolean",
-                "role": "button",
-                "read": false,
-                "write": true,
-                "def": false
-            },
-            "native": {}
-        },
-        {
-            "_id": "memory",
-            "type": "channel",
-            "common": { "name": "Long-term memory (remembered facts)" },
-            "native": {}
-        },
-        {
-            "_id": "memory.count",
-            "type": "state",
-            "common": {
-                "name": "Number of remembered facts",
-                "type": "number",
-                "role": "value",
-                "read": true,
-                "write": false,
-                "def": 0
-            },
-            "native": {}
-        },
-        {
-            "_id": "memory.list",
-            "type": "state",
-            "common": {
-                "name": "Remembered facts (JSON)",
-                "type": "string",
-                "role": "json",
-                "read": true,
-                "write": false,
-                "def": "[]"
-            },
-            "native": {}
-        },
-        {
-            "_id": "memory.add",
-            "type": "state",
-            "common": {
-                "name": "Remember a fact (write the text)",
-                "type": "string",
-                "role": "text",
-                "read": false,
-                "write": true,
-                "def": ""
-            },
-            "native": {}
-        },
-        {
-            "_id": "memory.forget",
-            "type": "state",
-            "common": {
-                "name": "Forget a fact (write its id or key)",
-                "type": "string",
-                "role": "text",
-                "read": false,
-                "write": true,
-                "def": ""
-            },
-            "native": {}
-        },
-        {
-            "_id": "memory.clearAll",
-            "type": "state",
-            "common": {
-                "name": "Forget all facts (write true)",
-                "type": "boolean",
-                "role": "button",
-                "read": false,
-                "write": true,
-                "def": false
-            },
-            "native": {}
-        },
-        {
-            "_id": "ringing",
-            "type": "state",
-            "common": {
-                "name": "A timer/alarm is currently ringing",
-                "type": "boolean",
-                "role": "indicator",
-                "read": true,
-                "write": false,
-                "def": false
-            },
-            "native": {}
-        },
-        {
-            "_id": "stopRinging",
-            "type": "state",
-            "common": {
-                "name": "Silence the ringing timer/alarm (write true)",
-                "type": "boolean",
-                "role": "button",
-                "read": false,
-                "write": true,
-                "def": false
-            },
-            "native": {}
-        },
-        {
-            "_id": "tts",
-            "type": "channel",
-            "common": { "name": "Text-to-speech / announcements" },
-            "native": {}
-        },
-        {
-            "_id": "tts.text",
-            "type": "state",
-            "common": {
-                "name": "Speak on all satellites (plain text, or a URL/path to an mp3/wav)",
-                "type": "string",
-                "role": "text",
-                "read": true,
-                "write": true,
-                "def": ""
-            },
-            "native": {}
-        }
-    ]
+    "desc": {
+      "en": "LLM assistant that answers questions and controls any ioBroker state via tool-calling",
+      "de": "LLM-Assistent, der Fragen beantwortet und beliebige ioBroker-States per Tool-Calling steuert",
+      "ru": "Ассистент LLM, который отвечает на вопросы и управляет любым состоянием ioBroker с помощью вызова инструментов",
+      "pt": "Assistente LLM que responde a perguntas e controla qualquer estado do ioBroker via chamada de ferramenta",
+      "nl": "LLM-assistent die vragen beantwoordt en elke ioBroker-status via tool-aanroepen beheert",
+      "fr": "Assistant LLM qui répond aux questions et contrôle n'importe quel état ioBroker via des appels d'outils",
+      "it": "Assistente LLM che risponde alle domande e controlla qualsiasi stato di ioBroker tramite chiamate agli strumenti",
+      "es": "Asistente LLM que responde preguntas y controla cualquier estado de ioBroker mediante llamadas a herramientas",
+      "pl": "Asystent LLM, który odpowiada na pytania i kontroluje dowolny stan ioBroker za pomocą wywołań narzędzi",
+      "uk": "Асистент LLM, який відповідає на запитання та керує будь-яким станом ioBroker за допомогою викликів інструментів",
+      "zh-cn": "LLM助手，通过工具调用回答问题并控制任何ioBroker状态"
+    },
+    "authors": [
+      "ioBroker"
+    ],
+    "keywords": [
+      "assistant",
+      "llm",
+      "voice",
+      "openai",
+      "anthropic"
+    ],
+    "platform": "Javascript/Node.js",
+    "main": "build/main.js",
+    "icon": "assistant.svg",
+    "enabled": true,
+    "extIcon": "https://raw.githubusercontent.com/ioBroker/ioBroker.assistant/main/admin/assistant.svg",
+    "readme": "https://github.com/ioBroker/ioBroker.assistant/blob/main/README.md",
+    "loglevel": "info",
+    "mode": "daemon",
+    "type": "general",
+    "compact": true,
+    "tier": 3,
+    "nogit": true,
+    "licenseInformation": {
+      "license": "MIT",
+      "type": "free"
+    },
+    "connectionType": "cloud",
+    "dataSource": "push",
+    "adminUI": {
+      "config": "json"
+    },
+    "dependencies": [
+      {
+        "js-controller": ">=6.0.11"
+      }
+    ],
+    "globalDependencies": [
+      {
+        "admin": ">=8.0.0"
+      }
+    ],
+    "osDependencies": {
+      "linux": [
+        "unzip",
+        "tar"
+      ]
+    },
+    "messagebox": true
+  },
+  "native": {
+    "provider": "openai",
+    "credentialType": "manual",
+    "apiKey": "",
+    "credentialIdApiKey": "",
+    "model": "gpt-4o-mini",
+    "baseUrl": "",
+    "maxTokens": 1024,
+    "allowWriteStates": true,
+    "allowObjectChange": false,
+    "readObjects": "devices",
+    "allowReadLogs": false,
+    "allowWriteLogs": false,
+    "allowHistory": true,
+    "allowFiles": false,
+    "allowSystemInfo": true,
+    "deviceAcl": {},
+    "systemPrompt": "Du bist ein Sprach-Assistent für ioBroker. Deine Antworten werden vorgelesen: schreibe reinen Fließtext, KEIN Markdown, keine Sternchen, keine Aufzählungen, keine Emojis, und fasse dich kurz. Beantworte Fragen über Geräte, Räume und Sensoren ausschließlich mit den verfügbaren Tools. Rufe immer zuerst ein Tool auf, bevor du etwas über ioBroker sagst, und behaupte nie, dass etwas nicht existiert, ohne es per Tool geprüft zu haben. Erfinde keine Werte.",
+    "useLocalNlu": true,
+    "nluAliases": [],
+    "useConversationContext": true,
+    "useLongTermMemory": true,
+    "weatherInstance": "",
+    "timerAnnounce": true,
+    "alarmAnnounce": true,
+    "timerSound": "sounds/timer.wav",
+    "alarmSound": "sounds/alarm.wav",
+    "ringSeconds": 60,
+    "useLocalLlm": false,
+    "localLlmModelUrl": "",
+    "voiceEnabled": false,
+    "udpServerEnabled": false,
+    "port": 7775,
+    "bind": "0.0.0.0",
+    "wyomingEnabled": false,
+    "wyomingPort": 10700,
+    "voiceLanguage": "",
+    "voiceApiKey": "",
+    "ttsVoice": "alloy",
+    "sttModel": "",
+    "ttsModel": "",
+    "sttProvider": "openai",
+    "ttsProvider": "openai",
+    "azureSpeechKey": "",
+    "azureSpeechRegion": "",
+    "azureVoice": "",
+    "awsAccessKeyId": "",
+    "awsSecretAccessKey": "",
+    "awsRegion": "",
+    "awsVoice": "",
+    "voskModel": "",
+    "piperVoice": "",
+    "voiceCredentialType": "manual",
+    "voiceCredentialId": "",
+    "azureCredentialId": "",
+    "awsCredentialId": ""
+  },
+  "encryptedNative": [
+    "apiKey",
+    "voiceApiKey",
+    "azureSpeechKey",
+    "awsSecretAccessKey"
+  ],
+  "protectedNative": [
+    "apiKey",
+    "voiceApiKey",
+    "azureSpeechKey",
+    "awsSecretAccessKey"
+  ],
+  "objects": [],
+  "instanceObjects": [
+    {
+      "_id": "info",
+      "type": "channel",
+      "common": {
+        "name": "Information"
+      },
+      "native": {}
+    },
+    {
+      "_id": "info.connection",
+      "type": "state",
+      "common": {
+        "name": "Provider configured/reachable",
+        "type": "boolean",
+        "role": "indicator.connected",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    },
+    {
+      "_id": "text",
+      "type": "channel",
+      "common": {
+        "name": "Text interface"
+      },
+      "native": {}
+    },
+    {
+      "_id": "text.request",
+      "type": "state",
+      "common": {
+        "name": "Ask the assistant (write your question here)",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": true,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "text.response",
+      "type": "state",
+      "common": {
+        "name": "Assistant answer",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "text.querySource",
+      "type": "state",
+      "common": {
+        "name": "Source of the current request/response ('' = state, 'chat' = message, else satellite name)",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "timers",
+      "type": "channel",
+      "common": {
+        "name": "Countdown timers"
+      },
+      "native": {}
+    },
+    {
+      "_id": "timers.count",
+      "type": "state",
+      "common": {
+        "name": "Number of active timers",
+        "type": "number",
+        "role": "value",
+        "read": true,
+        "write": false,
+        "def": 0
+      },
+      "native": {}
+    },
+    {
+      "_id": "timers.list",
+      "type": "state",
+      "common": {
+        "name": "Active timers (JSON)",
+        "type": "string",
+        "role": "json",
+        "read": true,
+        "write": false,
+        "def": "[]"
+      },
+      "native": {}
+    },
+    {
+      "_id": "timers.nextExpiry",
+      "type": "state",
+      "common": {
+        "name": "When the next timer fires (0 = none)",
+        "type": "number",
+        "role": "value.time",
+        "read": true,
+        "write": false,
+        "def": 0
+      },
+      "native": {}
+    },
+    {
+      "_id": "timers.nextLabel",
+      "type": "state",
+      "common": {
+        "name": "Label of the next timer",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "timers.lastFired",
+      "type": "state",
+      "common": {
+        "name": "Label of the last expired timer",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "timers.cancelAll",
+      "type": "state",
+      "common": {
+        "name": "Cancel all timers (write true)",
+        "type": "boolean",
+        "role": "button",
+        "read": false,
+        "write": true,
+        "def": false
+      },
+      "native": {}
+    },
+    {
+      "_id": "alarms",
+      "type": "channel",
+      "common": {
+        "name": "Alarms (fixed clock time)"
+      },
+      "native": {}
+    },
+    {
+      "_id": "alarms.count",
+      "type": "state",
+      "common": {
+        "name": "Number of configured alarms",
+        "type": "number",
+        "role": "value",
+        "read": true,
+        "write": false,
+        "def": 0
+      },
+      "native": {}
+    },
+    {
+      "_id": "alarms.list",
+      "type": "state",
+      "common": {
+        "name": "Alarms (JSON)",
+        "type": "string",
+        "role": "json",
+        "read": true,
+        "write": false,
+        "def": "[]"
+      },
+      "native": {}
+    },
+    {
+      "_id": "alarms.nextAlarm",
+      "type": "state",
+      "common": {
+        "name": "When the next alarm fires (0 = none)",
+        "type": "number",
+        "role": "value.time",
+        "read": true,
+        "write": false,
+        "def": 0
+      },
+      "native": {}
+    },
+    {
+      "_id": "alarms.nextLabel",
+      "type": "state",
+      "common": {
+        "name": "Label/time of the next alarm",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "alarms.lastFired",
+      "type": "state",
+      "common": {
+        "name": "Label/time of the last fired alarm",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "alarms.cancelAll",
+      "type": "state",
+      "common": {
+        "name": "Delete all alarms (write true)",
+        "type": "boolean",
+        "role": "button",
+        "read": false,
+        "write": true,
+        "def": false
+      },
+      "native": {}
+    },
+    {
+      "_id": "memory",
+      "type": "channel",
+      "common": {
+        "name": "Long-term memory (remembered facts)"
+      },
+      "native": {}
+    },
+    {
+      "_id": "memory.count",
+      "type": "state",
+      "common": {
+        "name": "Number of remembered facts",
+        "type": "number",
+        "role": "value",
+        "read": true,
+        "write": false,
+        "def": 0
+      },
+      "native": {}
+    },
+    {
+      "_id": "memory.list",
+      "type": "state",
+      "common": {
+        "name": "Remembered facts (JSON)",
+        "type": "string",
+        "role": "json",
+        "read": true,
+        "write": false,
+        "def": "[]"
+      },
+      "native": {}
+    },
+    {
+      "_id": "memory.add",
+      "type": "state",
+      "common": {
+        "name": "Remember a fact (write the text)",
+        "type": "string",
+        "role": "text",
+        "read": false,
+        "write": true,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "memory.forget",
+      "type": "state",
+      "common": {
+        "name": "Forget a fact (write its id or key)",
+        "type": "string",
+        "role": "text",
+        "read": false,
+        "write": true,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "memory.clearAll",
+      "type": "state",
+      "common": {
+        "name": "Forget all facts (write true)",
+        "type": "boolean",
+        "role": "button",
+        "read": false,
+        "write": true,
+        "def": false
+      },
+      "native": {}
+    },
+    {
+      "_id": "ringing",
+      "type": "state",
+      "common": {
+        "name": "A timer/alarm is currently ringing",
+        "type": "boolean",
+        "role": "indicator",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    },
+    {
+      "_id": "stopRinging",
+      "type": "state",
+      "common": {
+        "name": "Silence the ringing timer/alarm (write true)",
+        "type": "boolean",
+        "role": "button",
+        "read": false,
+        "write": true,
+        "def": false
+      },
+      "native": {}
+    },
+    {
+      "_id": "tts",
+      "type": "channel",
+      "common": {
+        "name": "Text-to-speech / announcements"
+      },
+      "native": {}
+    },
+    {
+      "_id": "tts.text",
+      "type": "state",
+      "common": {
+        "name": "Speak on all satellites (plain text, or a URL/path to an mp3/wav)",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": true,
+        "def": ""
+      },
+      "native": {}
+    }
+  ]
 }
