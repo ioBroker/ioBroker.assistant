@@ -261,6 +261,7 @@
                     "url": "custom/customComponents.js",
                     "name": "ConfigCustomAssistant/Components/LocalLlmProgress",
                     "bundlerType": "module",
+                    "guiApi": 2,
                     "hidden": "!data.useLocalLlm",
                     "sm": 12,
                     "md": 8
@@ -355,6 +356,7 @@
                     "i18n": true,
                     "url": "custom/customComponents.js",
                     "name": "ConfigCustomAssistant/Components/DeviceAclComponent",
+                    "guiApi": 2,
                     "bundlerType": "module",
                     "sm": 12
                 }
@@ -716,6 +718,7 @@
                     "i18n": true,
                     "url": "custom/customComponents.js",
                     "name": "ConfigCustomAssistant/Components/ChatComponent",
+                    "guiApi": 2,
                     "bundlerType": "module",
                     "sm": 12
                 }
@@ -730,6 +733,7 @@
                     "i18n": true,
                     "url": "custom/customComponents.js",
                     "name": "ConfigCustomAssistant/Components/SatellitesComponent",
+                    "guiApi": 2,
                     "bundlerType": "module",
                     "sm": 12
                 }

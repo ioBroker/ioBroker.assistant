@@ -4,19 +4,6 @@
     "version": "0.1.1",
     "title": "Assistant",
     "news": {
-      "0.1.1": {
-        "en": "Initial commit",
-        "de": "Erster Commit",
-        "ru": "Первоначальный коммит",
-        "pt": "Confirmação inicial",
-        "nl": "Eerste commit",
-        "fr": "Engagement initial",
-        "it": "Inizial impegnato",
-        "es": "Compromiso inicial",
-        "pl": "Początkowe zatwierdzenie",
-        "uk": "Початковий коміт",
-        "zh-cn": "初始提交"
-      }
     },
     "titleLang": {
       "en": "Voice Assistant",
