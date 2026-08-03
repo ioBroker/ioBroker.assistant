@@ -18,17 +18,17 @@
     },
     "dependencies": {
         "@anthropic-ai/sdk": "^0.115.0",
-        "@aws-sdk/client-polly": "^3.1097.0",
-        "@aws-sdk/client-transcribe-streaming": "^3.1097.0",
+        "@aws-sdk/client-polly": "^3.1101.0",
+        "@aws-sdk/client-transcribe-streaming": "^3.1101.0",
         "@iobroker/adapter-core": "^3.4.3",
         "@iobroker/mcp-server": "^0.1.6",
         "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
-        "openai": "^7.1.0"
+        "openai": "^7.3.0"
     },
     "devDependencies": {
         "@alcalzone/release-script": "^5.2.1",
         "@alcalzone/release-script-plugin-iobroker": "^5.2.0",
-        "@alcalzone/release-script-plugin-license": "^5.2.0",
+        "@alcalzone/release-script-plugin-license": "^5.2.2",
         "@iobroker/build-tools": "^3.0.1",
         "@iobroker/eslint-config": "^2.3.4",
         "@iobroker/testing": "^5.3.0",
@@ -43,12 +43,13 @@
         "build:backend": "tsc -p tsconfig.build.json",
         "build:gui": "cd src-admin && npm install && npm run build",
         "lint": "eslint -c eslint.config.mjs",
+        "npm": "npm i && cd src-admin && npm i",
         "prepublishOnly": "npm run build",
         "release-patch": "release-script patch --yes",
         "release-minor": "release-script minor --yes",
         "release-major": "release-script major --yes",
         "release": "release-script",
-        "update-packages": "npx -y npm-check-updates --upgrade"
+        "update-packages": "npx -y npm-check-updates --upgrade && cd src-admin && npx -y npm-check-updates --upgrade"
     },
     "bugs": {
         "url": "https://github.com/ioBroker/ioBroker.assistant/issues"
