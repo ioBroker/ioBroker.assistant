@@ -148,6 +148,9 @@ STT → answer → TTS streamed back as `audio-*` (plus a `transcript` event); `
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) Updated packages
+
 ### 0.1.2 (2026-08-03)
 * (@GermanBluefox) Initial commit
 

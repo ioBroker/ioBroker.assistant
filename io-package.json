@@ -2,7 +2,6 @@
   "common": {
     "name": "assistant",
     "version": "0.1.2",
-    "title": "Assistant",
     "news": {
       "0.1.2": {
         "en": "Initial commit",
@@ -62,7 +61,7 @@
     "readme": "https://github.com/ioBroker/ioBroker.assistant/blob/main/README.md",
     "loglevel": "info",
     "mode": "daemon",
-    "type": "general",
+    "type": "logic",
     "compact": true,
     "tier": 3,
     "nogit": true,
