@@ -3,19 +3,6 @@
     "name": "assistant",
     "version": "0.1.4",
     "news": {
-      "0.1.4": {
-        "en": "Corrected credentials",
-        "de": "Korrigierte Zugangsdaten",
-        "ru": "Исправлены учетные данные",
-        "pt": "Credenciais corrigidas",
-        "nl": "Gecorrigeerde inloggegevens",
-        "fr": "Identifiants corrigés",
-        "it": "Credenziali corrette",
-        "es": "Credenciales corregidas",
-        "pl": "Poprawione dane uwierzytelniające",
-        "uk": "Виправлені облікові дані",
-        "zh-cn": "更正后的凭证"
-      },
       "0.1.3": {
         "en": "Updated packages",
         "de": "Aktualisierte Pakete",
