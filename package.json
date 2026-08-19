@@ -17,13 +17,13 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.117.1",
-    "@aws-sdk/client-polly": "^3.1111.0",
-    "@aws-sdk/client-transcribe-streaming": "^3.1111.0",
+    "@anthropic-ai/sdk": "^0.119.0",
+    "@aws-sdk/client-polly": "^3.1113.0",
+    "@aws-sdk/client-transcribe-streaming": "^3.1113.0",
     "@iobroker/adapter-core": "^3.4.3",
     "@iobroker/mcp-server": "^1.0.1",
     "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
-    "openai": "^7.4.0"
+    "openai": "^7.5.0"
   },
   "devDependencies": {
     "@alcalzone/release-script": "^5.2.1",
