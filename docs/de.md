@@ -17,6 +17,8 @@ Optional arbeitet er mit **Satelliten** (Mikrofon-/Lautsprecher-Boxen in jedem R
   Küche warmweiß"*.
 - **Text oder Sprache** — in einen State schreiben / den eingebauten Test-Chat nutzen, oder mit einem
   Satelliten reden.
+- **Wetter** — beantwortet Wetterfragen aus einem **bereits installierten Wetter-Adapter** (siehe §4),
+  ohne zusätzlichen Dienst oder API-Schlüssel.
 - **Wo möglich günstig und privat** — eine gestufte Pipeline versucht zuerst eine schnelle **Offline-
   Regel-Engine**, dann optional ein **kleines lokales LLM**, und eskaliert nur bei Bedarf ans **Cloud-LLM**.
 - **Feingranulare Rechte** — du legst fest, was der Assistent lesen/schreiben darf, bis auf **Geräte-Ebene**.
@@ -30,8 +32,10 @@ Optional arbeitet er mit **Satelliten** (Mikrofon-/Lautsprecher-Boxen in jedem R
 Jede Anfrage läuft durch bis zu drei Stufen und stoppt bei der ersten, die antworten kann:
 
 1. **Regelbasiertes NLU (offline, sofort)** — erkennt einfache Befehle (an/aus, Dimmen, Farbe, Status) auf
-   **Deutsch, Englisch und Russisch**. Kein Modell, keine Cloud. Schalter: *Einfache Befehle lokal
-   beantworten*.
+   **Deutsch, Englisch und Russisch**. Auch **mehrere Befehle in einem Satz**: *„Schalte das Licht an und
+   setze das Rollo auf 30 %"* — und ein Verb für mehrere Geräte: *„Schalte das Licht und die Lampe an"*
+   (getrennt durch *und / sowie / dann*, Komma oder Semikolon). Kein Modell, keine Cloud. Schalter:
+   *Einfache Befehle lokal beantworten*.
 2. **Lokales LLM (optional)** — ein kleines Modell (über `node-llama-cpp`), bei Bedarf installiert, für
    allgemeine Fragen. Es eskaliert an die Cloud, wenn es aktuelle Gerätedaten braucht. Schalter: *Lokales
    LLM verwenden*.
@@ -95,6 +99,23 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
   **`assistant.0.text.response`**. Die Herkunft steht in `text.querySource`.
 - Oder aus einem Skript: `sendTo('assistant.0', 'ask', { text: 'Ist ein Fenster offen?' }, cb)`.
 - Oder den **Test-Chat**-Reiter in den Adapter-Einstellungen nutzen (funktioniert bei laufender Instanz).
+
+### Wetter
+
+Wetterfragen (*„Wie ist das Wetter?"*, *„Regnet es morgen?"*) beantwortet der Assistent aus einem
+Wetter-Adapter, den du ohnehin schon betreibst — kein zusätzlicher Dienst, kein weiterer API-Schlüssel:
+
+1. Installiere und starte einen Wetter-Adapter (Open-Meteo, Weather Underground, OpenWeatherMap,
+   Bright Sky/DWD, Pirate Weather, AccuWeather, DasWetter, Yr) und lass ihn einmal Daten holen.
+2. Instanz-Einstellungen → **Wetter-Quelle**: das Dropdown listet die installierten Wetter-Instanzen
+   (bei Open-Meteo und DasWetter jeden Standort einzeln). Auswählen und speichern.
+
+Danach bekommt das LLM bei **jeder** Anfrage das aktuelle Wetter samt heute/morgen kompakt in den Kontext
+gelegt (5 Minuten gecacht) und antwortet direkt daraus; für weitere Tage ruft es zusätzlich das Werkzeug
+`get_weather` auf. Aus einem Skript: `sendTo('assistant.0', 'getWeather', { when: 'week' }, cb)`.
+Andere Wetter-Adapter lassen sich ebenfalls wählen — sie werden dann bestmöglich als Roh-Daten gelesen.
+
+---
 
 ---
 

@@ -17,9 +17,9 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.119.0",
-    "@aws-sdk/client-polly": "^3.1113.0",
-    "@aws-sdk/client-transcribe-streaming": "^3.1113.0",
+    "@anthropic-ai/sdk": "^0.120.0",
+    "@aws-sdk/client-polly": "^3.1118.0",
+    "@aws-sdk/client-transcribe-streaming": "^3.1118.0",
     "@iobroker/adapter-core": "^3.4.3",
     "@iobroker/mcp-server": "^1.0.1",
     "microsoft-cognitiveservices-speech-sdk": "^1.51.0",

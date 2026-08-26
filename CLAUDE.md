@@ -59,7 +59,15 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   stündlich → current aus `forecastHourly.0h`, keine Tagesvorhersage). Adapter mit `perLocationProbe`
   (open-meteo, daswetter) → Dropdown-Option pro Standort. Unbekannt (`dwd`=Warnungen) → gefilterter Roh-Dump.
   `main.ts`: `buildWeatherTool` (LLM-Tool `get_weather({when?})`, nur wenn `weatherInstance` gesetzt),
-  `readWeather` (liest `getForeignStates(${root}.*)`), `getWeatherInstances`, sendTo `getWeather`. **Hannah
+  `readWeather` (liest `getForeignStates(${root}.*)`), `getWeatherInstances`, sendTo `getWeather`.
+  **Kontext-Injektion (statt nur Tool):** `weather.ts.buildWeatherPrompt(report,lang)` rendert current +
+  heute/morgen als kompakte, lokalisierte (de/en/ru) Zeilen; `main.ts.buildWeatherContext()` (Cache
+  `weatherCtx`, TTL `WEATHER_CTX_TTL`=5 min, Key `source|lang`) hängt sie in `produceAnswer` **an den
+  User-Turn** — wie `buildTimeContext` bewusst **nicht** in den prompt-gecachten System-Prompt (Werte ändern
+  sich ständig → würde den Cache inkl. Geräteliste jede Runde busten). Gilt für **beide** LLM-Tiers: auch
+  `localLlm.ask()` bekommt die Zeile vorangestellt (das lokale Modell hat keine Tools und würde sonst
+  Wetter erfinden). Tage nach morgen bleiben beim Tool (Hinweis-Satz am Ende der Injektion). Adapter ohne
+  Mapper (Roh-Dump) → keine Injektion, nur Tool. **Hannah
   nutzte `openweathermap` via MQTT** (`weather.py`) — Vorbild für die Normalisierung.
 - LLM-Agent mit Tool-Calling-Schleife für **OpenAI + Anthropic** — `src/lib/llm.ts` (`LlmAgent`).
 - Tools über native ioBroker-API — `src/lib/tools.ts`: `list_rooms`, `list_functions`,
@@ -205,6 +213,24 @@ node --test test/integration/nlu.test.js
      `list_devices`; `tryLocalNlu()`→`executeIntent()` ruft direkt `set_state`/`get_states`, respektiert
      `allowWriteStates` + `deviceAcl`. Config-Schalter `useLocalNlu` (default true). Kein Modell, 0 Install.
      Fällt bei Nicht-Treffer auf das LLM zurück. NLU pur/getestet (Scratch-Test grün).
+     - **Kombi-Befehle (mehrere Kommandos in einem Satz)** — `Nlu.parseAll(text): NluIntent[]` (neben
+       `parse()` = weiterhin genau ein Intent). `splitCommands()` trennt an Konjunktions-**Ketten**
+       (`CONJUNCTIONS` = und|sowie|dann|danach|and|then|plus|и|затем|потом, „und dann" zählt als eine),
+       `,`/`;` — **kein** Split bei `,` vor einer Ziffer (Dezimalwerte „50,5 %"). Zwei Formen: verschiedene
+       Befehle („Licht an und Rollo auf 30 %") und **ein Verb für mehrere Geräte** („Schalte A und B an").
+       Dafür ist `parse()` zerlegt in `prepare()` (Prepared: raw/norm/tokens/joined/tokenSet),
+       `extractFeatures()` (`CommandFeatures` = action/level/color/isQuery/onOffQuery = die „Was tun"-Hälfte)
+       und `buildDeviceIntent()` (die „Welches Gerät"-Hälfte); `parsePrepared()` klebt beides zusammen.
+       Ein Segment **ohne eigene Aktion** (`isBare`) erbt die des nächsten Nachbarn (erst vorwärts, dann
+       rückwärts) — aber **nur** wenn `namesOnly()` gilt: außer Gerätename, Raum und einem richtungslosen
+       Verb (`NEUTRAL_VERBS`: schalte/stelle/setze/set/turn/поставь …) steht nichts drin. Sonst („mach die
+       Musik **lauter**") kein Erben → LLM. **Fallback:** liefert der Split < 2 Intents, gilt wieder das
+       Ergebnis von `parse()` über den Gesamttext — so bleiben „1 Stunde und 30 Minuten", Raum-/Gerätenamen
+       mit „und" usw. unverändert. Ausführung: `main.ts.tryLocalNlu` → `parseAll` → **erst** `canExecuteNlu()`
+       für **alle** Intents (Manager da? Geräte bekannt? `allowWriteStates`?), dann sequenziell
+       `executeNluIntent()`; Antworten mit `' '` verkettet. Nie halb ausführen und dann ans LLM geben (das
+       würde bereits Geschriebenes wiederholen); wirft ein späterer Intent, kommt `nluFailureText()` in die
+       Antwort statt eines Abbruchs. Nebenbei gefixt: `findLevel` kannte **`percent`** (en) nicht.
      - **Control-Auswahl (`pickControl`) typ-/rollenbasiert:** An/Aus bevorzugt einen **booleschen** Control —
        auch unter nicht-standard Key (`ON_SET`) —, nie einen numerischen Level; nur-numerisches Gerät → An/Aus =
        Level 100/0 (nicht `true`→1 %). **Level-Befehl** (`setze auf 30%`) setzt den Level **und** flippt einen

@@ -480,3 +480,135 @@ export function trimReport(report: WeatherReport, when?: string): WeatherReport 
     }
     return report; // 'week' / unspecified → everything
 }
+
+/** Localized wording for {@link buildWeatherPrompt} (the assistant's voice languages: de/en/ru). */
+const PROMPT_LABELS: Record<string, Record<string, string>> = {
+    en: {
+        header: 'Current weather',
+        feels: 'feels like',
+        wind: 'wind',
+        humidity: 'humidity',
+        precip: 'precipitation',
+        clouds: 'cloud cover',
+        uv: 'UV index',
+        pressure: 'pressure',
+        today: 'Today',
+        tomorrow: 'Tomorrow',
+        chance: 'precipitation probability',
+        max: 'max',
+        min: 'min',
+        hint: 'Answer weather questions from this data; call get_weather only for days beyond tomorrow.',
+    },
+    de: {
+        header: 'Aktuelles Wetter',
+        feels: 'gefühlt',
+        wind: 'Wind',
+        humidity: 'Luftfeuchte',
+        precip: 'Niederschlag',
+        clouds: 'Bewölkung',
+        uv: 'UV-Index',
+        pressure: 'Luftdruck',
+        today: 'Heute',
+        tomorrow: 'Morgen',
+        chance: 'Niederschlagswahrscheinlichkeit',
+        max: 'max.',
+        min: 'min.',
+        hint: 'Beantworte Wetterfragen aus diesen Daten; rufe get_weather nur für Tage nach morgen auf.',
+    },
+    ru: {
+        header: 'Текущая погода',
+        feels: 'ощущается как',
+        wind: 'ветер',
+        humidity: 'влажность',
+        precip: 'осадки',
+        clouds: 'облачность',
+        uv: 'УФ-индекс',
+        pressure: 'давление',
+        today: 'Сегодня',
+        tomorrow: 'Завтра',
+        chance: 'вероятность осадков',
+        max: 'макс.',
+        min: 'мин.',
+        hint: 'Отвечай на вопросы о погоде по этим данным; вызывай get_weather только для дней после завтра.',
+    },
+};
+
+/** At most one decimal — weather values carry no meaningful precision beyond that. */
+function fmtNum(v: number): string {
+    return String(Math.round(v * 10) / 10);
+}
+
+/**
+ * Compact, localized summary of the current conditions plus today/tomorrow, meant to be prepended to the
+ * LLM's user turn so it can answer "how's the weather?" straight away — no `get_weather` round-trip, and
+ * small/local models (which have no tools at all) can answer instead of inventing a forecast. Days beyond
+ * tomorrow stay behind the tool so the injected block stays short. Returns '' if the report carries nothing.
+ */
+export function buildWeatherPrompt(report: WeatherReport, lang: string): string {
+    const t = PROMPT_LABELS[lang] || PROMPT_LABELS.en;
+    const u = report.units;
+    const lines: string[] = [];
+    const where = [WEATHER_ADAPTERS[report.source]?.label || report.source, report.location].filter(Boolean).join(', ');
+    const c = report.current;
+    if (c) {
+        const parts: string[] = [];
+        if (c.temperature !== undefined) {
+            const feels = c.feelsLike !== undefined ? ` (${t.feels} ${fmtNum(c.feelsLike)} ${u.temp})` : '';
+            parts.push(`${fmtNum(c.temperature)} ${u.temp}${feels}`);
+        }
+        if (c.condition) {
+            parts.push(String(c.condition));
+        }
+        if (c.windSpeed !== undefined) {
+            parts.push(`${t.wind} ${fmtNum(c.windSpeed)} ${u.wind}`);
+        }
+        if (c.humidity !== undefined) {
+            parts.push(`${t.humidity} ${fmtNum(c.humidity)} %`);
+        }
+        if (c.precipitation !== undefined) {
+            parts.push(`${t.precip} ${fmtNum(c.precipitation)} ${u.precip}`);
+        }
+        if (c.cloudCover !== undefined) {
+            parts.push(`${t.clouds} ${fmtNum(c.cloudCover)} %`);
+        }
+        if (c.uvIndex !== undefined) {
+            parts.push(`${t.uv} ${fmtNum(c.uvIndex)}`);
+        }
+        if (c.pressure !== undefined) {
+            parts.push(`${t.pressure} ${fmtNum(c.pressure)} hPa`);
+        }
+        if (parts.length) {
+            lines.push(`${t.header} (${where}): ${parts.join(', ')}.`);
+        }
+    }
+    for (const d of report.forecast.filter(f => f.day === 0 || f.day === 1)) {
+        const parts: string[] = [];
+        if (d.tempMin !== undefined && d.tempMax !== undefined) {
+            parts.push(`${fmtNum(d.tempMin)}…${fmtNum(d.tempMax)} ${u.temp}`);
+        } else if (d.tempMax !== undefined) {
+            parts.push(`${t.max} ${fmtNum(d.tempMax)} ${u.temp}`);
+        } else if (d.tempMin !== undefined) {
+            parts.push(`${t.min} ${fmtNum(d.tempMin)} ${u.temp}`);
+        }
+        if (d.condition) {
+            parts.push(String(d.condition));
+        }
+        if (d.precipProbability !== undefined) {
+            parts.push(`${t.chance} ${fmtNum(d.precipProbability)} %`);
+        }
+        if (d.precipitation !== undefined) {
+            parts.push(`${t.precip} ${fmtNum(d.precipitation)} ${u.precip}`);
+        }
+        if (d.windSpeed !== undefined) {
+            parts.push(`${t.wind} ${fmtNum(d.windSpeed)} ${u.wind}`);
+        }
+        if (parts.length) {
+            lines.push(`${d.day === 0 ? t.today : t.tomorrow}: ${parts.join(', ')}.`);
+        }
+    }
+    if (!lines.length) {
+        return '';
+    }
+    lines.push(t.hint);
+    return lines.join('\n');
+}

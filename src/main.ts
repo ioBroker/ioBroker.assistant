@@ -25,7 +25,14 @@ import {
 import { TimerManager, formatDuration, type TimerInfo } from './lib/timers';
 import { AlarmManager, formatClock, formatWeekdays, type AlarmInfo } from './lib/alarms';
 import { MemoryStore, buildMemoryPrompt, type MemoryEntry } from './lib/memory';
-import { WEATHER_ADAPTERS, buildWeatherReport, trimReport, type WeatherReport, type StateValues } from './lib/weather';
+import {
+    WEATHER_ADAPTERS,
+    buildWeatherReport,
+    buildWeatherPrompt,
+    trimReport,
+    type WeatherReport,
+    type StateValues,
+} from './lib/weather';
 import { LocalLlm, installLocalLlm, isLocalLlmInstalled, isHandoff, DEFAULT_LOCAL_MODEL_URL } from './lib/localLlm';
 import { resolveApiKey, resolveVoiceCredentials } from './lib/credentials';
 import { ConversationStore, type ConversationTurn } from './lib/context';
@@ -44,6 +51,12 @@ import type { SttEngine } from './lib/voice/stt';
 import type { TtsEngine } from './lib/voice/tts';
 import type { SatelliteState } from './lib/voice/protocol';
 import type { AdapterConfig } from './types';
+
+/**
+ * How long a rendered weather context line stays valid. Weather adapters refresh every few minutes at best,
+ * so re-reading their whole state tree on every single request would be pure overhead.
+ */
+const WEATHER_CTX_TTL = 5 * 60 * 1000;
 
 /** A tts value is treated as an audio file (not text) when it looks like an mp3/wav/… URL or path. */
 function isAudioRef(v: string): boolean {
@@ -121,6 +134,8 @@ class Assistant extends Adapter {
     private memory: MemoryStore | null = null;
     /** Per-memory `memory.items.<id>` channels currently rendered. */
     private readonly memoryObjIds = new Set<string>();
+    /** Cached weather context line (see `buildWeatherContext`); `key` = source + language. */
+    private weatherCtx: { key: string; ts: number; text: string } | null = null;
     /** Active "ringing" sessions (a timer/alarm looping its sound until stopped or timed out). */
     private readonly rings: {
         target: string | null;
@@ -1610,13 +1625,17 @@ class Assistant extends Adapter {
                 this.log.debug(`NLU skipped: ${(e as Error).message}`);
             }
         }
+        // Current weather from the configured adapter — prepended to the user turn of BOTH LLM tiers so
+        // "how's the weather?" is answered from real data (the local model has no tools and would otherwise
+        // invent a forecast; the cloud model saves a get_weather round-trip). Cached, see buildWeatherContext.
+        const weather = await this.buildWeatherContext();
         // Tier 1a: local LLM — answers general questions offline; emits HANDOFF for anything needing tools.
         // Skipped inside an ongoing conversation (history present): the tool-free local model gets no history,
         // so it would answer a follow-up like "yes" context-free and swallow it — let the cloud LLM (which has
         // the thread and the tools) handle follow-ups instead.
         if (this.config.useLocalLlm && this.localLlm && !history.length) {
             try {
-                const ans = await this.localLlm.ask(question);
+                const ans = await this.localLlm.ask(weather ? `${weather}\n\n${question}` : question);
                 if (ans && !isHandoff(ans)) {
                     this.log.info(`Answered by local LLM (source='${source}').`);
                     return ans;
@@ -1640,11 +1659,11 @@ class Assistant extends Adapter {
         const parts = [this.config.systemPrompt || '', followUp, mem, ctx].filter(Boolean);
         const sys = parts.length ? parts.join('\n\n') : undefined;
         this.log.info(
-            `Cloud LLM [${this.agent.model}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}) — running tool loop…`,
+            `Cloud LLM [${this.agent.model}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}${weather ? ', weather' : ''}) — running tool loop…`,
         );
-        // Prepend the current date/time to the user turn (cache-safe — see buildTimeContext) so the model can
-        // answer time/date questions and reason about "now". The stored history keeps the untouched question.
-        const questionForLlm = `${this.buildTimeContext()}\n\n${question}`;
+        // Prepend the current date/time (and the weather line, if a source is configured) to the user turn —
+        // cache-safe, see buildTimeContext. The stored history keeps the untouched question.
+        const questionForLlm = [this.buildTimeContext(), weather, question].filter(Boolean).join('\n\n');
         return this.agent.ask(questionForLlm, sys, history);
     }
 
@@ -1803,7 +1822,12 @@ class Assistant extends Adapter {
         return this.localLlmLoading;
     }
 
-    /** Run the rule-based NLU; returns a response string if it produced an executable intent, else null. */
+    /**
+     * Run the rule-based NLU; returns a response string if it produced executable intents, else null.
+     * A combined command ("Schalte A an und setze B auf 30 %", "Schalte A und B an") yields several
+     * intents: they are all checked up front and only then executed in order, so an utterance is never
+     * half-executed here and then handed to the LLM, which would repeat the parts already done.
+     */
     private async tryLocalNlu(question: string, source = ''): Promise<string | null> {
         if (!this.mcp) {
             return null;
@@ -1811,28 +1835,85 @@ class Assistant extends Adapter {
         // Timer intents match device-independently (parse() checks them first), so build the NLU even
         // when no devices are known and always try timers before bailing out.
         const { rooms, devices } = await this.getNluDevices();
-        const intent = new Nlu(rooms, devices, this.getNluAliases()).parse(question);
-        if (!intent) {
-            return null;
+        const intents = new Nlu(rooms, devices, this.getNluAliases()).parseAll(question);
+        if (!intents.length || !intents.every(i => this.canExecuteNlu(i, devices.length))) {
+            return null; // nothing matched, or one part cannot run here → let the LLM answer the whole thing
         }
-        if (intent.action === 'timerSet' || intent.action === 'timerQuery' || intent.action === 'timerCancel') {
-            return this.timers ? this.executeTimerIntent(intent, source) : null;
+        const answers: string[] = [];
+        for (const intent of intents) {
+            try {
+                answers.push(await this.executeNluIntent(intent, source));
+            } catch (e) {
+                // Nothing executed yet → hand the whole utterance to the LLM. Afterwards a state has already
+                // been written and the LLM would repeat it, so report the failed part instead of bailing out.
+                if (!answers.length) {
+                    throw e;
+                }
+                this.log.warn(`NLU intent '${intent.action}' failed: ${(e as Error).message}`);
+                answers.push(this.nluFailureText(intent));
+            }
         }
-        if (intent.action === 'alarmSet' || intent.action === 'alarmQuery' || intent.action === 'alarmCancel') {
-            return this.alarms ? this.executeAlarmIntent(intent, source) : null;
+        if (intents.length > 1) {
+            this.log.debug(`NLU handled a combined command (${intents.length} parts).`);
         }
-        if (intent.action === 'timeQuery' || intent.action === 'dateQuery') {
-            return this.executeTimeIntent(intent);
+        return answers.filter(Boolean).join(' ');
+    }
+
+    /**
+     * Can this intent run locally at all? Checked for **every** part of a combined command before anything
+     * is executed: a missing manager, no known devices or disabled writes send the whole utterance to the
+     * LLM (which can explain why) instead of silently doing nothing — or only half of it.
+     */
+    private canExecuteNlu(intent: NluIntent, deviceCount: number): boolean {
+        switch (intent.action) {
+            case 'timerSet':
+            case 'timerQuery':
+            case 'timerCancel':
+                return !!this.timers;
+            case 'alarmSet':
+            case 'alarmQuery':
+            case 'alarmCancel':
+                return !!this.alarms;
+            case 'timeQuery':
+            case 'dateQuery':
+                return true;
+            default:
+                // Device intents; writes additionally require the coarse "allow control" toggle.
+                return (
+                    deviceCount > 0 &&
+                    (!['on', 'off', 'level', 'color'].includes(intent.action) || !!this.config.allowWriteStates)
+                );
         }
-        if (!devices.length) {
-            return null;
+    }
+
+    /** Execute one intent that {@link canExecuteNlu} accepted, and return its spoken answer. */
+    private async executeNluIntent(intent: NluIntent, source: string): Promise<string> {
+        switch (intent.action) {
+            case 'timerSet':
+            case 'timerQuery':
+            case 'timerCancel':
+                return this.executeTimerIntent(intent, source);
+            case 'alarmSet':
+            case 'alarmQuery':
+            case 'alarmCancel':
+                return this.executeAlarmIntent(intent, source);
+            case 'timeQuery':
+            case 'dateQuery':
+                return this.executeTimeIntent(intent);
+            default:
+                return this.executeIntent(intent);
         }
-        // Writes require the coarse toggle; if off, let the LLM explain instead of silently doing nothing.
-        const isWrite = ['on', 'off', 'level', 'color'].includes(intent.action);
-        if (isWrite && !this.config.allowWriteStates) {
-            return null;
-        }
-        return this.executeIntent(intent);
+    }
+
+    /** Localized "this part did not work" sentence for a failed part of a combined command. */
+    private nluFailureText(intent: NluIntent): string {
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const what = intent.device?.name ? ` (${intent.device.name})` : '';
+        return lang === 'ru'
+            ? `Одну команду${what} выполнить не удалось.`
+            : lang === 'de'
+              ? `Ein Befehl${what} hat nicht funktioniert.`
+              : `One command${what} did not work.`;
     }
 
     /**
@@ -3000,6 +3081,40 @@ class Assistant extends Adapter {
             }
         }
         return Object.keys(dump).length ? { raw: dump, source: adapter } : { error: 'no weather data found' };
+    }
+
+    /**
+     * Compact current-weather line for the LLM, prepended to the user turn (never to the prompt-cached
+     * system prompt — the values change constantly and would bust the cache, incl. the large device list,
+     * on every call). Cached for {@link WEATHER_CTX_TTL}; the cache key carries source + language so a
+     * settings change takes effect at once. Returns '' when no source is configured, the adapter has no
+     * data yet, or it has no mapper (unknown adapters stay tool-only — a raw state dump is no prompt line).
+     */
+    private async buildWeatherContext(): Promise<string> {
+        const value = (this.config.weatherInstance || '').trim();
+        if (!value) {
+            return '';
+        }
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const key = `${value}|${lang}`;
+        const now = Date.now();
+        if (this.weatherCtx && this.weatherCtx.key === key && now - this.weatherCtx.ts < WEATHER_CTX_TTL) {
+            return this.weatherCtx.text;
+        }
+        let text = '';
+        try {
+            const res = await this.readWeather(value);
+            if (res.report) {
+                text = buildWeatherPrompt(res.report, lang);
+            } else if (res.error) {
+                this.log.debug(`Weather context skipped: ${res.error}`);
+            }
+        } catch (e) {
+            this.log.debug(`Weather context failed: ${(e as Error).message}`);
+        }
+        // Cache the empty result too — a missing/unmapped source must not re-read the tree every request.
+        this.weatherCtx = { key, ts: now, text };
+        return text;
     }
 
     /** The LLM tool for weather questions (reads the configured weather adapter). */

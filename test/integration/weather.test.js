@@ -2,7 +2,13 @@
 // Integration test: weather adapter normalization (open-meteo-weather / weatherunderground / openweathermap).
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildWeatherReport, trimReport, wmoText, WEATHER_ADAPTERS } = require('../../build/lib/weather.js');
+const {
+    buildWeatherReport,
+    buildWeatherPrompt,
+    trimReport,
+    wmoText,
+    WEATHER_ADAPTERS,
+} = require('../../build/lib/weather.js');
 
 test('wmoText maps codes, empty for unknown', () => {
     assert.equal(wmoText(0), 'clear sky');
@@ -212,4 +218,56 @@ test('registry: understood adapters have a kind, per-location ones a probe', () 
     assert.ok(WEATHER_ADAPTERS['open-meteo-weather'].perLocationProbe);
     assert.ok(WEATHER_ADAPTERS['daswetter'].perLocationProbe);
     assert.equal(WEATHER_ADAPTERS['dwd'].kind, undefined); // warnings only, no mapper
+});
+
+// ── buildWeatherPrompt: the block injected into the LLM's user turn ──────────
+
+const PROMPT_REPORT = {
+    source: 'open-meteo-weather',
+    location: 'Berlin',
+    units: { temp: '°C', wind: 'km/h', precip: 'mm' },
+    current: { temperature: 12.44, feelsLike: 10, humidity: 80, condition: 'overcast', windSpeed: 15 },
+    forecast: [
+        { day: 0, tempMin: 6, tempMax: 14, condition: 'Rain', precipProbability: 60 },
+        { day: 1, tempMin: 7, tempMax: 16, condition: 'clear sky' },
+        { day: 2, tempMin: 8, tempMax: 18 },
+    ],
+};
+
+test('buildWeatherPrompt: localized, compact, today+tomorrow only', () => {
+    const de = buildWeatherPrompt(PROMPT_REPORT, 'de');
+    assert.match(
+        de,
+        /^Aktuelles Wetter \(Open-Meteo, Berlin\): 12\.4 °C \(gefühlt 10 °C\), overcast, Wind 15 km\/h, Luftfeuchte 80 %\./m,
+    );
+    assert.match(de, /^Heute: 6…14 °C, Rain, Niederschlagswahrscheinlichkeit 60 %\.$/m);
+    assert.match(de, /^Morgen: 7…16 °C, clear sky\.$/m);
+    assert.ok(!de.includes('8…18'), 'day 2+ stays behind the get_weather tool');
+    assert.match(de, /get_weather/); // hint tells the model where the rest is
+
+    const en = buildWeatherPrompt(PROMPT_REPORT, 'en');
+    assert.match(en, /^Current weather \(Open-Meteo, Berlin\): 12\.4 °C \(feels like 10 °C\)/m);
+    assert.match(en, /^Today: 6…14 °C/m);
+
+    const ru = buildWeatherPrompt(PROMPT_REPORT, 'ru');
+    assert.match(ru, /^Текущая погода \(Open-Meteo, Berlin\)/m);
+    assert.match(ru, /^Завтра: 7…16 °C/m);
+
+    // Unknown language falls back to English rather than throwing.
+    assert.match(buildWeatherPrompt(PROMPT_REPORT, 'fr'), /^Current weather/m);
+});
+
+test('buildWeatherPrompt: omits missing fields and returns empty for an empty report', () => {
+    const bare = buildWeatherPrompt(
+        { source: 'yr', units: { temp: '°C', wind: 'm/s', precip: 'mm' }, current: { temperature: 5 }, forecast: [] },
+        'de',
+    );
+    assert.equal(bare.split('\n')[0], 'Aktuelles Wetter (Yr / met.no): 5 °C.');
+    assert.ok(!bare.includes('Wind'));
+    assert.ok(!bare.includes('gefühlt'));
+
+    assert.equal(
+        buildWeatherPrompt({ source: 'x', units: { temp: '°C', wind: 'km/h', precip: 'mm' }, forecast: [] }, 'de'),
+        '',
+    );
 });

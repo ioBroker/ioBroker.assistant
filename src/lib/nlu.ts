@@ -609,6 +609,94 @@ function wordInText(word: string, text: string): boolean {
     }
 }
 
+/**
+ * Directionless command verbs: they mark an imperative but carry no on/off/level of their own. A segment
+ * holding nothing but such a verb and a device name ("schalte das Licht" in "schalte das Licht und die
+ * Lampe an") may therefore borrow the action from its sibling segment.
+ */
+const NEUTRAL_VERBS = new Set([
+    // de
+    'schalte',
+    'schalt',
+    'schalten',
+    'stelle',
+    'stell',
+    'stellen',
+    'setze',
+    'setz',
+    'setzen',
+    'drehe',
+    'dreh',
+    'fahre',
+    'fahr',
+    'mache',
+    'machen',
+    // en
+    'set',
+    'put',
+    'turn',
+    'switch',
+    'change',
+    'adjust',
+    'make',
+    // ru
+    'поставь',
+    'установи',
+    'выстави',
+    'сделай',
+]);
+
+/** Conjunctions that join two commands in one utterance (de/en/ru). */
+const CONJUNCTIONS = 'und|sowie|dann|danach|and|then|plus|и|затем|потом';
+
+/**
+ * Separators between two commands: a run of conjunctions ("und dann"), a comma or a semicolon. A comma
+ * directly followed by a digit is NOT a separator (decimal values like "50,5 %").
+ */
+const SPLIT_RE = new RegExp(`\\s*[;,](?!\\d)\\s*|\\s+(?:${CONJUNCTIONS})(?:\\s+(?:${CONJUNCTIONS}))*\\s+`, 'giu');
+
+/**
+ * Split a combined command ("Schalte A an und setze B auf 30 %") into its parts; a single-element array
+ * when there is nothing to split.
+ */
+export function splitCommands(text: string): string[] {
+    return text
+        .split(SPLIT_RE)
+        .map(s => s.trim())
+        .filter(Boolean);
+}
+
+/** Normalized views of one command, shared by every matching step. */
+interface Prepared {
+    /** The original segment text (kept for the "?" test and the schedule parser). */
+    raw: string;
+    /** Lowercased/umlaut-expanded text with aliases applied — still contains filler words. */
+    norm: string;
+    /** `norm` split into words, filler removed. */
+    tokens: string[];
+    /** `tokens` joined by a space — the text every name matcher works on. */
+    joined: string;
+    tokenSet: Set<string>;
+}
+
+/**
+ * The "what to do" half of a device command, kept separate from the "which device" half so the segments
+ * of a combined command can share one verb ("Schalte A und B **an**").
+ */
+interface CommandFeatures {
+    action: 'on' | 'off' | null;
+    level: number | null;
+    color: string | null;
+    isQuery: boolean;
+    /** The question asks about on/off ("ist das Licht an?"), not about a value ("wie warm ist es?"). */
+    onOffQuery: boolean;
+}
+
+/** True when a segment states no action at all ("… und die Lampe") and may inherit its sibling's. */
+function isBare(f: CommandFeatures): boolean {
+    return !f.action && f.level === null && !f.color && !f.isQuery;
+}
+
 export class Nlu {
     private readonly rooms: string[];
     private readonly devices: NluDevice[];
@@ -640,58 +728,149 @@ export class Nlu {
         return out;
     }
 
-    /** Parse a command; returns a structured intent or null if nothing could be resolved confidently. */
+    /** Parse a single command; returns a structured intent or null if nothing could be resolved confidently. */
     parse(text: string): NluIntent | null {
-        const raw = text;
+        const p = this.prepare(text);
+        return p ? this.parsePrepared(p, null) : null;
+    }
+
+    /**
+     * Parse a possibly **combined** command into the intents to execute, in order:
+     *  - several commands joined by a conjunction — "Schalte A an und setze B auf 30 %",
+     *  - one verb driving several devices — "Schalte A und B an", where the segment that names only a
+     *    device inherits its sibling's action.
+     * Falls back to the single-command reading unless the split produces at least two intents, so a device
+     * or room name containing "und"/"and" — or "1 Stunde und 30 Minuten" — still parses as one command.
+     */
+    parseAll(text: string): NluIntent[] {
+        const combined = this.parseCombined(text);
+        if (combined.length > 1) {
+            return combined;
+        }
+        const single = this.parse(text);
+        return single ? [single] : [];
+    }
+
+    /** Segment-wise parse of a combined command; `[]` unless it yields at least two intents. */
+    private parseCombined(text: string): NluIntent[] {
+        const segments = splitCommands(text);
+        if (segments.length < 2) {
+            return [];
+        }
+        const parts: Prepared[] = [];
+        for (const segment of segments) {
+            const p = this.prepare(segment);
+            if (p) {
+                parts.push(p);
+            }
+        }
+        if (parts.length < 2) {
+            return [];
+        }
+        const features = parts.map(p => this.extractFeatures(p));
+        const intents: NluIntent[] = [];
+        for (let i = 0; i < parts.length; i++) {
+            // A segment stating no action borrows the nearest sibling's — looking ahead first, because the
+            // verb usually comes last in this shape ("schalte A | und B **an**").
+            let inherited: CommandFeatures | null = null;
+            if (isBare(features[i])) {
+                inherited = features.slice(i + 1).find(f => !isBare(f)) || null;
+                for (let j = i - 1; !inherited && j >= 0; j--) {
+                    inherited = isBare(features[j]) ? null : features[j];
+                }
+            }
+            const intent = this.parsePrepared(parts[i], inherited);
+            if (intent) {
+                intents.push(intent);
+            }
+        }
+        return intents.length > 1 ? intents : [];
+    }
+
+    /** Normalized views of a command (aliases applied, filler dropped); null when nothing remains to match. */
+    private prepare(text: string): Prepared | null {
         const norm = this.applyAliases(normalize(text.replace(STRIP, ' ')));
         const tokens = norm.split(/\s+/).filter(t => t && !FILLER.has(t));
         if (!tokens.length) {
             return null;
         }
-        const joined = tokens.join(' ');
-        const tokenSet = new Set(tokens);
+        return { raw: text, norm, tokens, joined: tokens.join(' '), tokenSet: new Set(tokens) };
+    }
 
+    /**
+     * Resolve one prepared command. Device-independent intents (timer/alarm/time/aggregate query) are tried
+     * first and never inherit anything; `inherited` supplies the action for a segment that names only a
+     * device (see {@link parseCombined}).
+     */
+    private parsePrepared(p: Prepared, inherited: CommandFeatures | null): NluIntent | null {
         // Timer / alarm intents ("timer 5 minuten", "weck mich um 7 Uhr", "wie lange noch") — before
         // window/device matching, and device-independent.
-        const schedule = this.parseSchedule(raw, norm, joined);
+        const schedule = this.parseSchedule(p.raw, p.norm, p.joined);
         if (schedule) {
             return schedule;
         }
 
         // Time / date query ("what time is it", "which day is today") — device-independent, answered from
         // the host clock. After the schedule parse so a clock phrase with a timer/alarm keyword still wins.
-        const timeQuery = this.parseTimeQuery(joined);
+        const timeQuery = this.parseTimeQuery(p.joined);
         if (timeQuery) {
             return timeQuery;
         }
 
         // Aggregate query first ("which windows are open") — before single-device matching.
-        const windowsQuery = this.parseWindowsOpen(joined);
+        const windowsQuery = this.parseWindowsOpen(p.joined);
         if (windowsQuery) {
             return windowsQuery;
         }
 
-        const roomName = this.findRoom(joined);
-        const device = this.findDevice(joined, roomName);
+        const roomName = this.findRoom(p.joined);
+        const device = this.findDevice(p.joined, roomName);
         if (!device) {
             return null; // no device → let the LLM handle it
         }
+        let features = this.extractFeatures(p);
+        if (inherited && this.namesOnly(p, device, roomName)) {
+            features = inherited;
+        }
+        return this.buildDeviceIntent(device, roomName, features);
+    }
 
-        const action = this.findAction(tokenSet); // 'on' | 'off' | null
-        const level = this.findLevel(norm); // number | null
-        const color = this.findColor(joined);
-        const isQuery = tokens.some(t => QUERY_WORDS.has(t)) || raw.trim().endsWith('?');
+    /** The action half of a command: on/off, level, color, and whether it is a question. */
+    private extractFeatures(p: Prepared): CommandFeatures {
+        return {
+            action: this.findAction(p.tokenSet), // 'on' | 'off' | null
+            level: this.findLevel(p.norm),
+            color: this.findColor(p.joined),
+            // A question ("ist das Licht an?") must never trigger a write — only the query branch does.
+            isQuery: p.tokens.some(t => QUERY_WORDS.has(t)) || p.raw.trim().endsWith('?'),
+            onOffQuery: ON_OFF_QUERY_WORDS.some(w => wordInText(w, p.joined)),
+        };
+    }
 
-        // A question ("ist das Licht an?") must never trigger a write — only the query branch below.
+    /**
+     * True when the segment holds nothing but the device name, its room and a directionless verb — the only
+     * case in which borrowing a sibling's action is safe. Any unmatched word ("mach die Musik *lauter*")
+     * means the segment carries an intent of its own that the rules do not cover: leave it to the LLM.
+     */
+    private namesOnly(p: Prepared, device: NluDevice, roomName: string): boolean {
+        const known = [device.name, roomName]
+            .filter(Boolean)
+            .flatMap(n => normalize(n).split(/\s+/))
+            .filter(Boolean);
+        return p.tokens.every(t => NEUTRAL_VERBS.has(t) || known.some(w => wordInText(w, t) || wordInText(t, w)));
+    }
+
+    /** Turn a resolved device plus the command's action half into an intent (branches in priority order). */
+    private buildDeviceIntent(device: NluDevice, roomName: string, f: CommandFeatures): NluIntent | null {
         // 1. Set level (dimmer/blind …) — needs a numeric level-like control.
-        if (level !== null && !isQuery) {
+        if (f.level !== null && !f.isQuery) {
             const stateId = this.pickControl(device, ['level', 'brightness', 'dimmer'], true, 'number');
             if (stateId) {
                 const intent: NluIntent = {
                     action: 'level',
                     device,
                     stateId,
-                    value: level,
+                    value: f.level,
                     room: roomName,
                     confidence: 0.9,
                 };
@@ -700,32 +879,32 @@ export class Nlu {
                 // unaffected. The switch is found by role/type, not by name (not every device names it ON_SET).
                 const sw = this.findSwitch(device, stateId);
                 if (sw) {
-                    intent.also = { stateId: sw, value: level > 0 };
+                    intent.also = { stateId: sw, value: f.level > 0 };
                 }
                 return intent;
             }
         }
 
         // 2. Set color — only a hex color on a color-capable device (warm/cold color-temp is out of scope for v1).
-        if (color && color.startsWith('#') && COLOR_TYPES.has(device.type) && !isQuery) {
+        if (f.color && f.color.startsWith('#') && COLOR_TYPES.has(device.type) && !f.isQuery) {
             const stateId = this.pickControl(device, ['rgb', 'color', 'hue', 'cie', 'ct'], true);
             if (stateId) {
-                return { action: 'color', device, stateId, value: color, room: roomName, confidence: 0.85 };
+                return { action: 'color', device, stateId, value: f.color, room: roomName, confidence: 0.85 };
             }
         }
 
         // 3. Turn on / off — prefer a writable boolean switch (never a metering state like CONSUMPTION).
-        if (action && !isQuery) {
+        if (f.action && !f.isQuery) {
             const stateId = this.pickControl(device, ['power', 'switch', 'on', 'level'], true, 'boolean');
             if (stateId) {
                 // If only a numeric (dimmer/level) control is available, on/off means full/zero level, not a
                 // boolean 1/0 (writing `true` to a 0–100 state would land on ~1%).
                 const numeric = this.valueTypeOf(device, stateId) === 'number';
                 return {
-                    action,
+                    action: f.action,
                     device,
                     stateId,
-                    value: numeric ? (action === 'on' ? 100 : 0) : action === 'on',
+                    value: numeric ? (f.action === 'on' ? 100 : 0) : f.action === 'on',
                     room: roomName,
                     confidence: 0.9,
                 };
@@ -734,10 +913,11 @@ export class Nlu {
 
         // 4. Status query — read the right control: an on/off question ("is the light on?") reads the
         //    boolean switch/feedback; a value question ("what temperature?") reads the actual value.
-        if (isQuery) {
-            const onOff = ON_OFF_QUERY_WORDS.some(w => wordInText(w, joined));
-            const order = onOff ? ['power', 'switch', 'on', 'actual', 'level'] : ['actual', 'value', 'level', 'power'];
-            const stateId = this.pickControl(device, order, false, onOff ? 'boolean' : undefined);
+        if (f.isQuery) {
+            const order = f.onOffQuery
+                ? ['power', 'switch', 'on', 'actual', 'level']
+                : ['actual', 'value', 'level', 'power'];
+            const stateId = this.pickControl(device, order, false, f.onOffQuery ? 'boolean' : undefined);
             if (stateId) {
                 return { action: 'query', device, stateId, room: roomName, confidence: 0.7 };
             }
@@ -960,7 +1140,7 @@ export class Nlu {
     }
 
     private findLevel(text: string): number | null {
-        const m = text.match(/(\d+(?:[.,]\d+)?)\s*(?:prozent|процент\w*|%)/u);
+        const m = text.match(/(\d+(?:[.,]\d+)?)\s*(?:prozent|percent|процент\w*|%)/u);
         return m ? parseFloat(m[1].replace(',', '.')) : null;
     }
 

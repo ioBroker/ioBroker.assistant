@@ -16,6 +16,8 @@ Optionally it works with **satellites** (microphone + speaker boxes in each room
 - **Control devices** — *"Turn off the living-room light"*, *"Set the blinds to 50 %"*, *"Make the
   kitchen warm white"*.
 - **Text or voice** — write to a state / use the built-in test chat, or talk to a satellite.
+- **Weather** — answers weather questions from a **weather adapter you already run** (see §4), with no
+  extra service and no extra API key.
 - **Runs cheap and private where possible** — a tiered pipeline tries a fast **offline rule engine**,
   then optionally a **small local LLM**, and only escalates to the **cloud LLM** when needed.
 - **Fine-grained permissions** — decide what the assistant may read/write, down to **per-device** access.
@@ -29,7 +31,10 @@ Optionally it works with **satellites** (microphone + speaker boxes in each room
 Every request runs through up to three tiers, stopping at the first that can answer:
 
 1. **Rule-based NLU (offline, instant)** — recognises simple commands (on/off, dimming, colour, status)
-   in **German, English and Russian**. No model, no cloud. Toggle: *Answer simple commands locally*.
+   in **German, English and Russian**, including **several commands in one sentence**: *"Turn the light on
+   and set the blind to 30 %"* — and one verb for several devices: *"Turn the light and the lamp on"*
+   (separated by *and / then*, a comma or a semicolon). No model, no cloud. Toggle: *Answer simple commands
+   locally*.
 2. **Local LLM (optional)** — a small model (via `node-llama-cpp`) installed on demand, for general
    questions. It escalates to the cloud when it needs live device data. Toggle: *Use a local LLM*.
 3. **Cloud LLM (tool-calling)** — the full assistant. It gets a compact list of your devices in its prompt
@@ -89,6 +94,23 @@ satellites stay simple. See §7.
   **`assistant.0.text.response`**. The origin is recorded in `text.querySource`.
 - Or from a script: `sendTo('assistant.0', 'ask', { text: 'Is a window open?' }, cb)`.
 - Or use the **Test chat** tab in the adapter settings (works while the instance is running).
+
+### Weather
+
+Weather questions (*"What's the weather like?"*, *"Will it rain tomorrow?"*) are answered from a weather
+adapter you already run — no extra service, no extra API key:
+
+1. Install and start a weather adapter (Open-Meteo, Weather Underground, OpenWeatherMap, Bright Sky/DWD,
+   Pirate Weather, AccuWeather, DasWetter, Yr) and let it fetch data once.
+2. Instance settings → **Weather source**: the dropdown lists the installed weather instances (Open-Meteo
+   and DasWetter list each location separately). Pick one and save.
+
+From then on the LLM gets the current conditions plus today/tomorrow injected into the context of **every**
+request (cached for 5 minutes) and answers straight from it; for days further out it additionally calls the
+`get_weather` tool. From a script: `sendTo('assistant.0', 'getWeather', { when: 'week' }, cb)`.
+Other weather adapters can be selected too — they are then read best-effort as raw data.
+
+---
 
 ---
 
