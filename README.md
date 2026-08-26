@@ -148,7 +148,7 @@ STT → answer → TTS streamed back as `audio-*` (plus a `transcript` event); `
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 0.1.6 (2026-08-26)
 * (@GermanBluefox) The offline rule engine now understands combined commands: "switch the light on and set the blind to 30 %", and one verb for several devices ("switch the light and the lamp on")
 * (@GermanBluefox) Fixed: "50 percent" was not recognised as a level in English
 * (@GermanBluefox) The selected weather adapter is now fed to the LLM as context (current conditions plus today/tomorrow), so weather questions are answered without an extra tool round-trip
