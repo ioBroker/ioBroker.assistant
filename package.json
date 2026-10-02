@@ -17,7 +17,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.120.0",
+    "@anthropic-ai/sdk": "^0.128.0",
     "@aws-sdk/client-polly": "^3.1118.0",
     "@aws-sdk/client-transcribe-streaming": "^3.1118.0",
     "@iobroker/adapter-core": "^3.4.3",
