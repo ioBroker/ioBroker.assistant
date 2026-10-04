@@ -23,6 +23,16 @@ Optionally it works with **satellites** (microphone + speaker boxes in each room
   extra service and no extra API key.
 - **Runs cheap and private where possible** — a tiered pipeline tries a fast **offline rule engine**,
   then optionally a **small local LLM**, and only escalates to the **cloud LLM** when needed.
+- **Timers and alarms** — *"set a timer for 10 minutes"*, *"wake me at 6:30 on weekdays"*; they ring
+  with a sound of your choice and are silenced by saying *"stop"* (§11).
+- **Routines and proactive triggers** — one phrase runs several actions (*"good night"*), and the
+  assistant starts by itself: it says something, switches something, or **asks you** and acts on
+  your answer (§10).
+- **Announcements and system notifications** — to a room, a group or one person's speakers;
+  ioBroker notifications are reworded into a speakable sentence, and Do-Not-Disturb is respected
+  (§9).
+- **It knows who is at home** and **remembers what you tell it** — presence from the states you
+  already have, plus a long-term memory you can read and edit (§4, §11).
 - **Fine-grained permissions** — decide what the assistant may read/write, down to **per-device** access.
 
 ---
@@ -173,6 +183,40 @@ Routines are checked **before** the offline rule engine and before the LLM. That
 night, and the light off too" the rule engine would find "light" and do only that half, and the LLM would
 cost a round-trip for a decision you already made. Actions use the same shape as a trigger's, so a routine
 is really a trigger whose condition is a phrase — including `{"say":…,"room":…}` to speak somewhere.
+
+---
+
+### What the offline rule engine answers
+
+Before any model is asked, a rule engine tries the request — instant, free and working without the
+internet. It is worth knowing what it covers, because these are the sentences that will never cost you a
+cloud call:
+
+- **Switching and setting** — "turn the living-room light off", "set the blinds to 30 %", "make the
+  kitchen warm white". Several commands in one sentence work too ("switch the light on and the blind to
+  30 %"), including one verb for several devices ("switch the light and the lamp on").
+- **Status** — "is the kitchen light on?", "how warm is it in the bedroom?"
+- **Aggregates** — "which windows are open?" checks every window, optionally in one room.
+- **By category, without naming a device** — "how is the air in here?", "how warm is it everywhere?",
+  "how bright is it?", "how humid is it?". Every sensor of that kind answers; a room name filters them,
+  "everywhere" removes the filter again. For air quality the number also gets a word ("good", "moderate"),
+  because an IAQ of 85 means nothing read out loud.
+- **Timers, alarms, time and date** — see §11.
+
+Two rules decide what wins: a **named device** beats a category ("how warm is the radiator" is about that
+thermostat), and a **routine** beats everything (see above). Anything the engine cannot resolve falls
+through to the LLM, so you lose nothing by it being wrong.
+
+#### Synonym dictionary
+
+The engine matches your device and room names, which is a problem when nobody says them that way. The
+**Synonym dictionary** table on the Settings tab rewrites what was said before matching: `TV` →
+`Fernseher`, `couch light` → `Licht Wohnzimmer`. Leave the language column empty to apply a row to every
+language. It applies to voice **and** text, so the chat and Telegram benefit from the same entries.
+
+With **Remember the conversation** on, follow-ups work per source for a few minutes: "turn the light on" —
+"and the kitchen too", "turn it back off". The thread is kept in memory only, one per channel (chat,
+Telegram, each satellite).
 
 ---
 
@@ -614,7 +658,95 @@ text is used.
 
 ---
 
-## 11. Troubleshooting
+## 11. Timers, alarms, sounds and what it remembers
+
+### Timers and alarms
+
+Both are set in plain language, in German, English or Russian, and both are created by the offline engine
+without a cloud call:
+
+- **Timer** (countdown) — "set a timer for 10 minutes", "timer 1 hour 30 minutes for the laundry", "how
+  long is left?", "cancel the timer".
+- **Alarm** (a fixed time, optionally recurring) — "wake me at 7", "alarm at 6:30 on weekdays", "which
+  alarms do I have?", "delete the alarm".
+
+The engine tells the two apart by what you said, not by the word you used: "wake me in 5 minutes" is a
+timer, "timer at 5 o'clock" is not an alarm.
+
+Nothing is polled: each timer and alarm fires from its own timeout, and the states carry only the
+absolute timestamp (`fireAt` / `nextFireAt`) — a vis widget or a script computes the remaining time
+itself. They survive a restart (persisted in `timers.list` / `alarms.list`); a one-shot alarm whose time
+passed while the adapter was down is dropped rather than fired late.
+
+| State | |
+|---|---|
+| `timers.{count,list,nextExpiry,nextLabel,lastFired}` | how many, all of them as JSON, when the next one fires and its label |
+| `timers.items.<id>.{label,room,duration,fireAt,cancel}` | one channel per timer; `cancel` is a button |
+| `timers.cancelAll` | button: drop them all |
+| `alarms.{count,list,nextAlarm,nextLabel,lastFired}` | the same for alarms |
+| `alarms.items.<id>.{label,room,time,weekdays,nextFireAt,enabled,delete}` | `enabled` switches one off without deleting it |
+| `alarms.cancelAll` | button |
+
+From a script:
+
+```js
+sendTo('assistant.0', 'setTimer', { duration: '10 min', label: 'pasta', room: 'Kitchen' }, r => log(r.id));
+sendTo('assistant.0', 'setAlarm', { time: '06:30', weekdays: [1, 2, 3, 4, 5], label: 'work' });
+sendTo('assistant.0', 'listTimers', {}, r => log(JSON.stringify(r)));
+```
+
+A timer set by voice announces on the satellite it was set from; one from the chat, Telegram or a script
+announces everywhere. On a satellite that reports the ESPHome *timers* feature, running timers also appear
+on the device's own LED ring.
+
+### Sounds and ringing
+
+A timer or alarm can play a sound before it speaks. Two are preinstalled (`timer.wav`, `alarm.wav`); your
+own mp3/wav files are uploaded on the Settings tab and land in `assistant.0/sounds/`. Pick one per purpose
+under **Timer sound** / **Alarm sound**, or leave it empty to only speak.
+
+**Ring duration (seconds)** decides how long it keeps going: with a value above 0 the sound repeats until
+somebody stops it, and the announcement is spoken once in between. Stopping works by **voice** — "stop",
+"halt", "aufhören" — while something is ringing, that word always wins over everything else; by writing
+`stopRinging`; or from a script. `ringing` tells you whether something is ringing right now.
+
+```js
+sendTo('assistant.0', 'playSound', { sound: 'doorbell.mp3', room: 'Kitchen' });
+sendTo('assistant.0', 'stopRinging', {});
+```
+
+Playing a sound needs **ffmpeg** on the ioBroker host (it decodes mp3/wav to raw audio); without it the
+announcement is still spoken.
+
+### Long-term memory
+
+With **Long-term memory** on (the default), the assistant can keep facts across sessions — names,
+preferences, where things are — and gets them back into its context in later conversations. It decides
+this itself: "remember that the cat's food is in the pantry" is stored, "what did I say about the cat?"
+reads it back. There are tools for it (`remember`, `list_memories`, `forget`), so no state writing is
+needed.
+
+Everything is visible and editable, because memory that you cannot inspect is unsettling:
+
+| State | |
+|---|---|
+| `memory.count` / `memory.list` | how many facts, and all of them as JSON |
+| `memory.items.<id>.text` | the fact itself — **editable**, write to correct it |
+| `memory.items.<id>.{key,source,createdAt,delete}` | where it came from, when, and a delete button |
+| `memory.add` / `memory.forget` / `memory.clearAll` | write a fact / forget by id or text / wipe everything |
+
+```js
+sendTo('assistant.0', 'saveMemory', { text: 'The guest room key is in the hallway drawer' });
+sendTo('assistant.0', 'listMemories', {}, r => log(JSON.stringify(r)));
+sendTo('assistant.0', 'forgetMemory', { text: 'guest room key' });
+```
+
+Facts are deduplicated and capped, and the whole list is put in front of the system prompt — so keep it to
+things that matter, not a diary.
+
+---
+
+## 12. Troubleshooting
 
 - **No microphone audio / `arecord: capture slave is not defined` / `Device or resource busy`** — the mic
   device is wrong. Set it to a real capture device like `plughw:2,0` (from `arecord -l`), not `default`.
@@ -635,7 +767,7 @@ text is used.
 
 ---
 
-## 12. States overview
+## 13. States overview
 
 | State                                              | Meaning                                                        |
 |----------------------------------------------------|----------------------------------------------------------------|
@@ -650,3 +782,36 @@ text is used.
 | `dnd` / `satellites.<id>.dnd` | Do-Not-Disturb, globally or per satellite (alerts still play) |
 | `presence.anyoneHome` / `presence.count` / `presence.list` | who is at home, from the configured presence states |
 | `presence.lastArrival` / `presence.lastDeparture` | who came home / left last |
+| `timers.*` / `timers.items.<id>.*` | countdown timers, one channel each (§11) |
+| `alarms.*` / `alarms.items.<id>.*` | alarms at a fixed time, one channel each (§11) |
+| `memory.*` / `memory.items.<id>.*` | the facts it remembers — editable (§11) |
+| `ringing` / `stopRinging` | whether something is ringing, and the button that stops it |
+
+---
+
+### Script interface (sendTo)
+
+Everything the assistant can do is reachable from a script. The reply always arrives in the callback.
+
+| Command | Message | Answer |
+|---|---|---|
+| `ask` | `{ text, source? }` | `{ answer }` / `{ error }` — the full pipeline, like asking by voice |
+| `askUser` | `{ question, room?/target?/source?, timeoutMs? }` | `{ answer }` / `{ timeout: true }` — ask and wait (§9) |
+| `notify` | `{ text, severity?, target?/room?, onlyWhenHome? }` | `{ spoken }` — speak a system notification (§9) |
+| `tts` / `ttsAvailable` | `{ text, language? }` / `{}` | a WAV as base64 / whether an engine is configured |
+| `playSound` | `{ sound, room?/target? }` | play a file from `sounds/` |
+| `stopRinging` | `{}` | silence a ringing timer or alarm |
+| `setTimer` / `cancelTimer` / `listTimers` | `{ duration, label?, room? }` / `{ id? }` / `{}` | §11 |
+| `setAlarm` / `cancelAlarm` / `listAlarms` | `{ time or hour+minute, weekdays?, label?, room? }` / `{ id? }` / `{}` | §11 |
+| `saveMemory` / `forgetMemory` / `listMemories` | `{ text, key? }` / `{ id? or text? }` / `{}` | §11 |
+| `listTriggers` / `fireTrigger` / `setTriggerEnabled` | `{}` / `{ id }` / `{ id, enabled }` | §10 |
+| `getWeather` | `{ when? }` | the weather from your weather adapter (§4) |
+| `getWakeWords` / `setWakeWords` | `{}` / `{ device, wakeWords }` | §6 |
+| `getControls` / `setControl` | `{}` / `{ device, control, value }` | §6 |
+| `getDevices` / `setDeviceName` / `translateName` | `{ language? }` / `{ stateId, name, language }` / … | the device list the assistant sees, and its names (§5) |
+| `clearCache` | `{}` | re-read devices, rooms and functions now |
+| `sendNotification` | the notification-manager payload | `{ sent }` — not meant to be called by hand |
+| `voice` / `registerSatellite` | audio / registration | the satellite protocol, see §7 |
+
+`getModels`, `getVoices`, `getSttModels`, `getWeatherInstances`, `installLocalLlm` and
+`testApiConnection` exist for the settings dialog and are of little use elsewhere.
