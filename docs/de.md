@@ -257,13 +257,13 @@ wähle:
 
 ### Arten von Satelliten / Transporten
 
-|                   | **ioBroker-nativer Satellit** (empfohlen)             | **UDP-Satellit** (ESP / Hannah)                     | **ESPHome-Satellit** (ThirdReality, HA Voice PE)                          |
-|-------------------|-------------------------------------------------------|-----------------------------------------------------|---------------------------------------------------------------------------|
-| Adapter           | `ioBroker.assistant-satellite` auf dem Gerät          | ESP-Firmware, oder derselbe Adapter im UDP-Modus    | keiner — die Werks-Firmware des Geräts                                     |
-| Transport         | Audio über den ioBroker-**Nachrichtenbus** (`sendTo`) | Roher Audio-**UDP-Stream** (Hannah-Protokoll)       | ESPHome-Native-API über **TCP 6053**; der Adapter wählt das Gerät an        |
+|                   | **ioBroker-nativer Satellit** (empfohlen)             | **UDP-Satellit** (ESP / Hannah)                     | **ESPHome-Satellit** (ThirdReality, HA Voice PE)                                       |
+|-------------------|-------------------------------------------------------|-----------------------------------------------------|----------------------------------------------------------------------------------------|
+| Adapter           | `ioBroker.assistant-satellite` auf dem Gerät          | ESP-Firmware, oder derselbe Adapter im UDP-Modus    | keiner — die Werks-Firmware des Geräts                                                 |
+| Transport         | Audio über den ioBroker-**Nachrichtenbus** (`sendTo`) | Roher Audio-**UDP-Stream** (Hannah-Protokoll)       | ESPHome-Native-API über **TCP 6053**; der Adapter wählt das Gerät an                   |
 | Port am Assistant | **keiner**                                            | UDP-Port (*UDP-Sprach-Server betreiben* aktivieren) | keiner eingehend — aber ein HTTP-**Medien-Server**, von dem das Gerät die Antwort holt |
-| STT/TTS           | zentral, im Assistenten                               | zentral, im Assistenten                             | zentral, im Assistenten                                                   |
-| Am besten für     | Raspberry Pi / PC-Satelliten                          | ESP32-Geräte, bestehende Hannah-Satelliten          | fertige Sprach-Lautsprecher, die man nicht flashen will                   |
+| STT/TTS           | zentral, im Assistenten                               | zentral, im Assistenten                             | zentral, im Assistenten                                                                |
+| Am besten für     | Raspberry Pi / PC-Satelliten                          | ESP32-Geräte, bestehende Hannah-Satelliten          | fertige Sprach-Lautsprecher, die man nicht flashen will                                |
 
 - Für **ioBroker-native** Satelliten brauchst du am Assistant nichts außer *Sprache aktivieren*.
 - Für **ESP/UDP**-Satelliten zusätzlich **UDP-Sprach-Server betreiben** aktivieren (öffnet den UDP-Port).
@@ -307,10 +307,10 @@ Zwei Dinge laufen hier anders:
 Das Wake-Word läuft **auf dem Gerät**, welche seiner eingebauten Modelle lauschen, lässt sich aber von hier
 aus setzen. Jeder Satellit bekommt dafür zwei States:
 
-| State | |
-|---|---|
+| State                                |                                                                                                                                      |
+|--------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
 | `satellites.<id>.availableWakeWords` | nur lesbar, JSON: alle Modelle der Firmware mit gesprochener Phrase, trainierten Sprachen und wie viele gleichzeitig lauschen dürfen |
-| `satellites.<id>.wakeWords` | schreibbar, ids kommagetrennt, z. B. `okay_nabu,hey_jarvis` |
+| `satellites.<id>.wakeWords`          | schreibbar, ids kommagetrennt, z. B. `okay_nabu,hey_jarvis`                                                                          |
 
 Du schreibst die gewünschten ids hinein, das Gerät stellt um — und der Wert wird vom Gerät
 zurückgelesen, du siehst also immer den echten Zustand. Unbekannte ids werden mit einer Warnung
@@ -339,16 +339,16 @@ Dieselben Werte gibt es auch als States unter `satellites.<id>.controls.*` — a
 Gerät selbst meldet. Eine Home Assistant Voice PE bekommt so ihren eigenen Satz, ohne dass hier etwas
 geändert werden muss. Ein ThirdReality-Lautsprecher bietet zwölf:
 
-| Control | |
-|---|---|
-| `mic_gain`, `mic_volume` | Mikrofon-Verstärkung (0–31) und -Lautstärke (1–4000) |
-| `mic_noise` | Rauschunterdrückung: Off / Low / Medium / High / Max |
-| `wake_word_1_sensitivity`, `wake_word_2_sensitivity` | je eine pro Wake-Word-Platz, 0–1 |
-| `stop_word_sensitivity` | wie leicht das Stop-Wort eine Antwort unterbricht, 0–1 |
-| `continue_conversation_delay` | wie lange das Mikro für eine Nachfrage offen bleibt, 0–10 s |
-| `mute`, `thinking_sound` | Mikrofon stumm und der „Denk“-Ton |
-| `<media player>.{state,volume,command,muted}` | `command` nimmt play, pause, stop, mute, unmute, toggle, volume_up, volume_down, turn_on, turn_off |
-| `<firmware>.{currentVersion,latestVersion,inProgress,progress,install}` | `install` ist ein Button |
+| Control                                                                 |                                                                                                    |
+|-------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------|
+| `mic_gain`, `mic_volume`                                                | Mikrofon-Verstärkung (0–31) und -Lautstärke (1–4000)                                               |
+| `mic_noise`                                                             | Rauschunterdrückung: Off / Low / Medium / High / Max                                               |
+| `wake_word_1_sensitivity`, `wake_word_2_sensitivity`                    | je eine pro Wake-Word-Platz, 0–1                                                                   |
+| `stop_word_sensitivity`                                                 | wie leicht das Stop-Wort eine Antwort unterbricht, 0–1                                             |
+| `continue_conversation_delay`                                           | wie lange das Mikro für eine Nachfrage offen bleibt, 0–10 s                                        |
+| `mute`, `thinking_sound`                                                | Mikrofon stumm und der „Denk“-Ton                                                                  |
+| `<media player>.{state,volume,command,muted}`                           | `command` nimmt play, pause, stop, mute, unmute, toggle, volume_up, volume_down, turn_on, turn_off |
+| `<firmware>.{currentVersion,latestVersion,inProgress,progress,install}` | `install` ist ein Button                                                                           |
 
 Schreibvorgänge werden **nicht** optimistisch bestätigt: das Gerät meldet zurück, was es tatsächlich
 übernommen hat, und genau das steht im State. Eine Zahl außerhalb des Geräte-Bereichs wird darauf
@@ -466,11 +466,11 @@ und Betonung —, während die übrigen Engines den Text ohne Markup bekommen, s
 Gib einer Gruppe von Satelliten in der Tabelle **Durchsage-Ziele** im Tab Voice einen Namen — dann kann
 alles, was ansagt, sie ansprechen: eine Gruppe von Räumen oder die Lautsprecher einer Person.
 
-| Spalte | Beispiel |
-|---|---|
-| **Name** | `Obergeschoss`, `Denis` |
+| Spalte                            | Beispiel                                      |
+|-----------------------------------|-----------------------------------------------|
+| **Name**                          | `Obergeschoss`, `Denis`                       |
 | **Satelliten, Räume oder Geräte** | `bad_oben, schlafzimmer` — mit Komma getrennt |
-| **Art** | leer oder `group`, oder `person` |
+| **Art**                           | leer oder `group`, oder `person`              |
 
 Das gilt überall, wo ein Ziel erlaubt ist — der `tts`-State pro Satellit, `notify`, die Spalte **Room**
 eines Triggers und `askUser` (eine Frage geht an alle Mitglieder, die erste Antwort zählt):
@@ -516,12 +516,12 @@ deshalb die Herkunfts-Präfixe und lässt das LLM **einen gesprochenen Satz** da
 Severity (**Systemmeldungen umformulieren** im Tab Einstellungen, standardmäßig an; ein kleiner LLM-Aufruf
 pro Meldung, bei einem Fehler wird der Originaltext gesprochen).
 
-| Severity | Ton | Nicht stören |
-|---|---|---|
-| `alert` | klar und dringlich | **wird ignoriert** — ein Alert ist immer zu hören |
-| `notify` (Standard) | locker und direkt | wird beachtet |
-| `info` | beiläufig erwähnt | wird beachtet |
-| `direct` | gar nicht umformuliert, wörtlich gesprochen | wird beachtet |
+| Severity            | Ton                                         | Nicht stören                                      |
+|---------------------|---------------------------------------------|---------------------------------------------------|
+| `alert`             | klar und dringlich                          | **wird ignoriert** — ein Alert ist immer zu hören |
+| `notify` (Standard) | locker und direkt                           | wird beachtet                                     |
+| `info`              | beiläufig erwähnt                           | wird beachtet                                     |
+| `direct`            | gar nicht umformuliert, wörtlich gesprochen | wird beachtet                                     |
 
 Über States:
 
@@ -555,14 +555,14 @@ sendTo('assistant.0', 'askUser', { question: 'Die Friteuse ist noch an. Soll ich
 });
 ```
 
-| Feld        | Bedeutung                                                                                       |
-|-------------|-------------------------------------------------------------------------------------------------|
-| `question`  | Die Frage (Pflichtfeld).                                                                        |
-| `room`      | Auf dem Satelliten in diesem Raum fragen.                                                       |
-| `target`    | Auf einem Satelliten fragen, per State-Id (`satellites.kueche`, `kueche`) oder Gerätename.      |
-| *(keins)*   | Auf **allen** Satelliten fragen — die erste Antwort gewinnt.                                    |
+| Feld        | Bedeutung                                                                                                                                    |
+|-------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| `question`  | Die Frage (Pflichtfeld).                                                                                                                     |
+| `room`      | Auf dem Satelliten in diesem Raum fragen.                                                                                                    |
+| `target`    | Auf einem Satelliten fragen, per State-Id (`satellites.kueche`, `kueche`) oder Gerätename.                                                   |
+| *(keins)*   | Auf **allen** Satelliten fragen — die erste Antwort gewinnt.                                                                                 |
 | `source`    | Stattdessen einen Textkanal scharf stellen (`chat`, `telegram:Max`): es wird nichts gesprochen, die nächste Nachricht dort gilt als Antwort. |
-| `timeoutMs` | Wartezeit, Standard `60000`.                                                                    |
+| `timeoutMs` | Wartezeit, Standard `60000`.                                                                                                                 |
 
 Die Antwort ist `{ answer: '…' }`, oder `{ timeout: true }`, wenn niemand rechtzeitig etwas gesagt hat,
 oder `{ error: '…' }`, wenn die Frage nicht gestellt werden konnte (unbekannter Raum, kein Satellit
@@ -588,18 +588,18 @@ Antwort**. Konfiguriert werden sie im Tab **Trigger**, eine Zeile pro Trigger.
 
 ### Die Felder
 
-| Spalte | Bedeutung |
-|---|---|
-| **Id** | Kurze, eindeutige Id; gleichzeitig der Name seiner `triggers.items.<id>`-States. |
-| **Name** | Freie Bezeichnung für Log und States. |
-| **Wenn (JSON)** | Die Bedingung - siehe unten. |
-| **Room** | Wo gesprochen bzw. wer gefragt wird. Leer = alle Satelliten. |
-| **Ansage** | Was angesagt wird. |
-| **Rückfrage** | Stattdessen fragen und nach der Antwort entscheiden (braucht Antwortregeln). |
-| **Antwortregeln (JSON)** | Was mit der Antwort passiert - siehe unten. |
-| **Weitere Aktionen (JSON)** | Mehr als eine Sache tun, z. B. ansagen *und* schalten. |
-| **Verzögerung** | Vorher warten: `90s`, `30m`, `5h`, `2d`. |
-| **Cooldown (s)** | Mindestabstand zweier Auslösungen. Standard 3600, `0` = keiner. |
+| Spalte                      | Bedeutung                                                                        |
+|-----------------------------|----------------------------------------------------------------------------------|
+| **Id**                      | Kurze, eindeutige Id; gleichzeitig der Name seiner `triggers.items.<id>`-States. |
+| **Name**                    | Freie Bezeichnung für Log und States.                                            |
+| **Wenn (JSON)**             | Die Bedingung - siehe unten.                                                     |
+| **Room**                    | Wo gesprochen bzw. wer gefragt wird. Leer = alle Satelliten.                     |
+| **Ansage**                  | Was angesagt wird.                                                               |
+| **Rückfrage**               | Stattdessen fragen und nach der Antwort entscheiden (braucht Antwortregeln).     |
+| **Antwortregeln (JSON)**    | Was mit der Antwort passiert - siehe unten.                                      |
+| **Weitere Aktionen (JSON)** | Mehr als eine Sache tun, z. B. ansagen *und* schalten.                           |
+| **Verzögerung**             | Vorher warten: `90s`, `30m`, `5h`, `2d`.                                         |
+| **Cooldown (s)**            | Mindestabstand zweier Auslösungen. Standard 3600, `0` = keiner.                  |
 
 ### Bedingungen
 
@@ -695,14 +695,14 @@ Skript selbst aus. Sie überstehen einen Neustart (persistiert in `timers.list` 
 einmaliger Wecker, dessen Zeit während der Ausfallzeit verstrich, wird verworfen statt verspätet
 auszulösen.
 
-| State | |
-|---|---|
-| `timers.{count,list,nextExpiry,nextLabel,lastFired}` | wie viele, alle als JSON, wann der nächste fällig ist und wie er heißt |
-| `timers.items.<id>.{label,room,duration,fireAt,cancel}` | ein Kanal pro Timer; `cancel` ist ein Knopf |
-| `timers.cancelAll` | Knopf: alle verwerfen |
-| `alarms.{count,list,nextAlarm,nextLabel,lastFired}` | dasselbe für Wecker |
-| `alarms.items.<id>.{label,room,time,weekdays,nextFireAt,enabled,delete}` | `enabled` schaltet einen ab, ohne ihn zu löschen |
-| `alarms.cancelAll` | Knopf |
+| State                                                                    |                                                                        |
+|--------------------------------------------------------------------------|------------------------------------------------------------------------|
+| `timers.{count,list,nextExpiry,nextLabel,lastFired}`                     | wie viele, alle als JSON, wann der nächste fällig ist und wie er heißt |
+| `timers.items.<id>.{label,room,duration,fireAt,cancel}`                  | ein Kanal pro Timer; `cancel` ist ein Knopf                            |
+| `timers.cancelAll`                                                       | Knopf: alle verwerfen                                                  |
+| `alarms.{count,list,nextAlarm,nextLabel,lastFired}`                      | dasselbe für Wecker                                                    |
+| `alarms.items.<id>.{label,room,time,weekdays,nextFireAt,enabled,delete}` | `enabled` schaltet einen ab, ohne ihn zu löschen                       |
+| `alarms.cancelAll`                                                       | Knopf                                                                  |
 
 Aus einem Skript:
 
@@ -747,12 +747,12 @@ habe ich über die Katze gesagt?" liest es zurück. Dafür gibt es Tools (`remem
 Alles ist sichtbar und editierbar, denn ein Gedächtnis, in das man nicht hineinsehen kann, ist
 unheimlich:
 
-| State | |
-|---|---|
-| `memory.count` / `memory.list` | wie viele Fakten, und alle als JSON |
-| `memory.items.<id>.text` | der Fakt selbst — **editierbar**, einfach überschreiben zum Korrigieren |
-| `memory.items.<id>.{key,source,createdAt,delete}` | woher er kam, wann, und ein Löschknopf |
-| `memory.add` / `memory.forget` / `memory.clearAll` | Fakt schreiben / per Id oder Text vergessen / alles leeren |
+| State                                              |                                                                         |
+|----------------------------------------------------|-------------------------------------------------------------------------|
+| `memory.count` / `memory.list`                     | wie viele Fakten, und alle als JSON                                     |
+| `memory.items.<id>.text`                           | der Fakt selbst — **editierbar**, einfach überschreiben zum Korrigieren |
+| `memory.items.<id>.{key,source,createdAt,delete}`  | woher er kam, wann, und ein Löschknopf                                  |
+| `memory.add` / `memory.forget` / `memory.clearAll` | Fakt schreiben / per Id oder Text vergessen / alles leeren              |
 
 ```js
 sendTo('assistant.0', 'saveMemory', { text: 'Der Gästezimmerschlüssel liegt in der Flurschublade' });
@@ -788,23 +788,23 @@ sie also auf Dinge, die zählen, statt auf ein Tagebuch.
 
 ## 13. States-Übersicht
 
-| State                                              | Bedeutung                                                            |
-|----------------------------------------------------|----------------------------------------------------------------------|
-| `info.connection`                                  | Assistent bereit                                                     |
-| `text.request` / `text.response`                   | Frage stellen / Antwort lesen                                        |
-| `text.querySource`                                 | Herkunft der letzten Anfrage (`''`, `chat` oder ein Satelliten-Name) |
-| `tts.text`                                         | Durchsage an **alle** Satelliten (Text oder Audio-Pfad)              |
-| `satellites.<id>.{status,room,alive,lastSeen,tts}` | Zustand pro Satellit + Durchsage                                     |
-| `triggers.enabled` / `triggers.count` / `triggers.list` | proaktive Trigger: Hauptschalter, Anzahl, Live-Status (JSON) |
-| `triggers.items.<id>.{enabled,fire,lastFired,nextFireAt}` | Schalter, Test-Knopf und Zeiten pro Trigger |
-| `notify.text` / `notify.alert` / `notify.last` | Systemmeldung sprechen / dringend / was gesprochen wurde |
-| `dnd` / `satellites.<id>.dnd` | Nicht stören, global oder pro Satellit (Alerts laufen trotzdem) |
-| `presence.anyoneHome` / `presence.count` / `presence.list` | wer zuhause ist, aus den konfigurierten States |
-| `presence.lastArrival` / `presence.lastDeparture` | wer zuletzt kam / ging |
-| `timers.*` / `timers.items.<id>.*` | Countdown-Timer, je ein Kanal (§11) |
-| `alarms.*` / `alarms.items.<id>.*` | Wecker zur festen Uhrzeit, je ein Kanal (§11) |
-| `memory.*` / `memory.items.<id>.*` | was er sich merkt — editierbar (§11) |
-| `ringing` / `stopRinging` | ob gerade etwas klingelt, und der Knopf, der es stoppt |
+| State                                                      | Bedeutung                                                             |
+|------------------------------------------------------------|-----------------------------------------------------------------------|
+| `info.connection`                                          | Assistent bereit                                                      |
+| `text.request` / `text.response`                           | Frage stellen / Antwort lesen                                         |
+| `text.querySource`                                         | Herkunft der letzten Anfrage (`''`, `chat` oder ein Satelliten-Name)  |
+| `tts.text`                                                 | Durchsage an **alle** Satelliten (Text oder Audio-Pfad)               |
+| `satellites.<id>.{status,room,alive,lastSeen,tts}`         | Zustand pro Satellit + Durchsage                                      |
+| `triggers.enabled` / `triggers.count` / `triggers.list`    | proaktive Trigger: Hauptschalter, Anzahl, Live-Status (JSON)          |
+| `triggers.items.<id>.{enabled,fire,lastFired,nextFireAt}`  | Schalter, Test-Knopf und Zeiten pro Trigger                           |
+| `notify.text` / `notify.alert` / `notify.last`             | Systemmeldung sprechen / dringend / was gesprochen wurde              |
+| `dnd` / `satellites.<id>.dnd`                              | Nicht stören, global oder pro Satellit (Alerts laufen trotzdem)       |
+| `presence.anyoneHome` / `presence.count` / `presence.list` | wer zuhause ist, aus den konfigurierten States                        |
+| `presence.lastArrival` / `presence.lastDeparture`          | wer zuletzt kam / ging                                                |
+| `timers.*` / `timers.items.<id>.*`                         | Countdown-Timer, je ein Kanal (§11)                                   |
+| `alarms.*` / `alarms.items.<id>.*`                         | Wecker zur festen Uhrzeit, je ein Kanal (§11)                         |
+| `memory.*` / `memory.items.<id>.*`                         | was er sich merkt — editierbar (§11)                                  |
+| `ringing` / `stopRinging`                                  | ob gerade etwas klingelt, und der Knopf, der es stoppt                |
 
 ---
 
@@ -812,25 +812,25 @@ sie also auf Dinge, die zählen, statt auf ein Tagebuch.
 
 Alles, was der Assistent kann, ist aus einem Skript erreichbar. Die Antwort kommt immer im Callback.
 
-| Befehl | Message | Antwort |
-|---|---|---|
-| `ask` | `{ text, source? }` | `{ answer }` / `{ error }` — die komplette Pipeline, wie per Sprache gefragt |
-| `askUser` | `{ question, room?/target?/source?, timeoutMs? }` | `{ answer }` / `{ timeout: true }` — fragen und warten (§9) |
-| `notify` | `{ text, severity?, target?/room?, onlyWhenHome? }` | `{ spoken }` — Systemmeldung sprechen (§9) |
-| `tts` / `ttsAvailable` | `{ text, language? }` / `{}` | ein WAV als base64 / ob eine Engine konfiguriert ist |
-| `playSound` | `{ sound, room?/target? }` | eine Datei aus `sounds/` abspielen |
-| `stopRinging` | `{}` | klingelnden Timer oder Wecker verstummen lassen |
-| `setTimer` / `cancelTimer` / `listTimers` | `{ duration, label?, room? }` / `{ id? }` / `{}` | §11 |
-| `setAlarm` / `cancelAlarm` / `listAlarms` | `{ time oder hour+minute, weekdays?, label?, room? }` / `{ id? }` / `{}` | §11 |
-| `saveMemory` / `forgetMemory` / `listMemories` | `{ text, key? }` / `{ id? oder text? }` / `{}` | §11 |
-| `listTriggers` / `fireTrigger` / `setTriggerEnabled` | `{}` / `{ id }` / `{ id, enabled }` | §10 |
-| `getWeather` | `{ when? }` | das Wetter aus deinem Wetter-Adapter (§4) |
-| `getWakeWords` / `setWakeWords` | `{}` / `{ device, wakeWords }` | §6 |
-| `getControls` / `setControl` | `{}` / `{ device, control, value }` | §6 |
-| `getDevices` / `setDeviceName` / `translateName` | `{ language? }` / `{ stateId, name, language }` / … | die Geräteliste, die der Assistent sieht, und ihre Namen (§5) |
-| `clearCache` | `{}` | Geräte, Räume und Funktionen jetzt neu einlesen |
-| `sendNotification` | die Payload des Benachrichtigungsmanagers | `{ sent }` — nicht für den Handbetrieb gedacht |
-| `voice` / `registerSatellite` | Audio / Registrierung | das Satelliten-Protokoll, siehe §7 |
+| Befehl                                               | Message                                                                  | Antwort                                                                      |
+|------------------------------------------------------|--------------------------------------------------------------------------|------------------------------------------------------------------------------|
+| `ask`                                                | `{ text, source? }`                                                      | `{ answer }` / `{ error }` — die komplette Pipeline, wie per Sprache gefragt |
+| `askUser`                                            | `{ question, room?/target?/source?, timeoutMs? }`                        | `{ answer }` / `{ timeout: true }` — fragen und warten (§9)                  |
+| `notify`                                             | `{ text, severity?, target?/room?, onlyWhenHome? }`                      | `{ spoken }` — Systemmeldung sprechen (§9)                                   |
+| `tts` / `ttsAvailable`                               | `{ text, language? }` / `{}`                                             | ein WAV als base64 / ob eine Engine konfiguriert ist                         |
+| `playSound`                                          | `{ sound, room?/target? }`                                               | eine Datei aus `sounds/` abspielen                                           |
+| `stopRinging`                                        | `{}`                                                                     | klingelnden Timer oder Wecker verstummen lassen                              |
+| `setTimer` / `cancelTimer` / `listTimers`            | `{ duration, label?, room? }` / `{ id? }` / `{}`                         | §11                                                                          |
+| `setAlarm` / `cancelAlarm` / `listAlarms`            | `{ time oder hour+minute, weekdays?, label?, room? }` / `{ id? }` / `{}` | §11                                                                          |
+| `saveMemory` / `forgetMemory` / `listMemories`       | `{ text, key? }` / `{ id? oder text? }` / `{}`                           | §11                                                                          |
+| `listTriggers` / `fireTrigger` / `setTriggerEnabled` | `{}` / `{ id }` / `{ id, enabled }`                                      | §10                                                                          |
+| `getWeather`                                         | `{ when? }`                                                              | das Wetter aus deinem Wetter-Adapter (§4)                                    |
+| `getWakeWords` / `setWakeWords`                      | `{}` / `{ device, wakeWords }`                                           | §6                                                                           |
+| `getControls` / `setControl`                         | `{}` / `{ device, control, value }`                                      | §6                                                                           |
+| `getDevices` / `setDeviceName` / `translateName`     | `{ language? }` / `{ stateId, name, language }` / …                      | die Geräteliste, die der Assistent sieht, und ihre Namen (§5)                |
+| `clearCache`                                         | `{}`                                                                     | Geräte, Räume und Funktionen jetzt neu einlesen                              |
+| `sendNotification`                                   | die Payload des Benachrichtigungsmanagers                                | `{ sent }` — nicht für den Handbetrieb gedacht                               |
+| `voice` / `registerSatellite`                        | Audio / Registrierung                                                    | das Satelliten-Protokoll, siehe §7                                           |
 
 `getModels`, `getVoices`, `getSttModels`, `getWeatherInstances`, `installLocalLlm` und
 `testApiConnection` gibt es für den Einstellungsdialog und sind anderswo kaum nützlich.
