@@ -21,7 +21,7 @@ function audio(buf) {
 /** A fake satellite socket that records what the server sends back. */
 function fakeSat() {
     const sock = dgram.createSocket('udp4');
-    const rec = { registered: false, ackCount: 0, ttsBytes: 0, ttsEnd: null, status: [] };
+    const rec = { registered: false, ackCount: 0, ttsBytes: 0, ttsEnd: null, status: [], listens: 0 };
     sock.on('message', d => {
         if (d[0] === TYPE_TTS) {
             rec.ttsBytes += d.length - 1;
@@ -32,6 +32,7 @@ function fakeSat() {
         else if (m.type === 'heartbeat_ack') rec.ackCount++;
         else if (m.type === 'tts_end') rec.ttsEnd = m.sample_rate;
         else if (m.type === 'status') rec.status.push(m.state);
+        else if (m.type === 'listen') rec.listens++;
     });
     return { sock, rec, send: b => sock.send(b, PORT, '127.0.0.1') };
 }
@@ -98,5 +99,18 @@ test('announce plays PCM on a specific device and on all', async () => {
         await server.announce(null, Buffer.alloc(8000, 1), 24000);
         await delay(60);
         assert.equal(sat.rec.ttsBytes, 8000, 'broadcast announce delivered');
+    });
+});
+
+test('listen re-opens the mic for the answer to a question', async () => {
+    await withServer({}, async (server, sat) => {
+        sat.send(ctrl({ type: 'register', device: 'wz', listen_port: SAT }));
+        await delay(60);
+        assert.equal(server.listen('wz'), 1, 'told the named satellite to listen');
+        assert.equal(server.listen(null), 1, 'told every satellite to listen');
+        assert.equal(server.listen('nope'), 0, 'unknown device reaches nobody');
+        await delay(60);
+        assert.equal(sat.rec.listens, 2);
+        assert.equal(sat.rec.status.at(-1), 'listening');
     });
 });

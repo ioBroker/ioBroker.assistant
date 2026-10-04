@@ -1,3 +1,5 @@
+import type { TriggerDef } from './lib/triggers';
+
 export interface AdapterConfig {
     provider: 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'custom';
     /**
@@ -23,6 +25,31 @@ export interface AdapterConfig {
     /** Per-device read/write override, keyed by the device's primary state id. Absent → coarse toggles. */
     deviceAcl: Record<string, { read: boolean; write: boolean }>;
     systemPrompt: string;
+    /**
+     * Confirm a successful switch command with a short beep on the satellite instead of speaking a
+     * sentence — instant, where a spoken "Okay" costs a TTS round-trip. Queries, errors and text channels
+     * are unaffected: there the answer is the information itself.
+     */
+    confirmWithTone: boolean;
+    /**
+     * Wait for the device to acknowledge a switch command (`ack:true`) before reporting success, and say so
+     * when it never answers. Off by default: adapters that never acknowledge (MQTT, scripts,
+     * `0_userdata`) would otherwise make every command look failed.
+     */
+    verifyWrites: boolean;
+    /**
+     * Optional second speech engine, used when the primary one fails (an outage, an expired key, an empty
+     * quota). Typically a local engine behind a cloud one: `vosk` for speech-to-text, `piper` for
+     * text-to-speech. Empty = no fallback.
+     */
+    sttFallback: '' | 'openai' | 'azure' | 'aws' | 'vosk';
+    ttsFallback: '' | 'openai' | 'azure' | 'aws' | 'piper';
+    /**
+     * Phrase-triggered macros: a spoken or typed phrase runs a list of actions and answers with a fixed
+     * reply. Matched before the rule-based NLU, because a macro the user wrote down must not be
+     * reinterpreted. `actions` has the same shape as a trigger's; the settings table stores it as JSON.
+     */
+    routines: { name?: string; phrases: string; actions?: string; reply?: string }[];
     /** Tier-0: try the built-in rule-based NLU before the LLM (fast, offline, free) for simple commands. */
     useLocalNlu: boolean;
     /**
@@ -35,6 +62,39 @@ export interface AdapterConfig {
     useConversationContext: boolean;
     /** Long-term memory: persist durable facts across sessions and inject them into the LLM prompt. */
     useLongTermMemory: boolean;
+    /**
+     * Proactive triggers (states/clock → announce, write a state, or ask a question and act on the answer).
+     * The settings table stores `when`, `onResponse` and `actions` as JSON text; everything is parsed in
+     * `getTriggerDefs()`, so a trigger written by a script may use the structured form directly.
+     */
+    triggers: (Omit<TriggerDef, 'when' | 'onResponse' | 'actions'> & {
+        when: TriggerDef['when'] | string;
+        onResponse?: TriggerDef['onResponse'] | string;
+        actions?: TriggerDef['actions'] | string;
+    })[];
+    /** Default for a trigger's `rephrase`: have the LLM reword trigger texts before they are spoken. */
+    triggerRephrase: boolean;
+    /**
+     * Named announcement targets: a group of rooms ("upstairs") or a person's own speakers ("Denis"), so
+     * an announcement, a question or a trigger can address them by name. `members` is a comma-separated
+     * list of satellite ids, room names or device names; `kind` is `group` (default) or `person` and only
+     * tells the LLM whether the name is a place or a human.
+     */
+    announceTargets: { name: string; members: string; kind?: string }[];
+    /**
+     * Presence sources: the states that tell whether somebody is at home, named per person. Deliberately
+     * pointed at by the user instead of auto-detected — presence sits in a different place in every
+     * installation (the `residents` adapter, a phone ping, a router client state, a `0_userdata` flag) and
+     * ioBroker has no standard device type for it. `kind` is `person` (default), `guest` or `pet`;
+     * `homeValue` overrides which value means "at home" (empty = the usual forms, see `interpretHome`).
+     */
+    presence: { id: string; name?: string; kind?: string; homeValue?: string }[];
+    /**
+     * Reword system notifications with the LLM before speaking them (default on). Their raw texts are
+     * written for a log viewer, so this is where the feature earns its keep; `direct` severity always
+     * skips it.
+     */
+    notifyRephrase: boolean;
     /**
      * Weather source: the state prefix of a selected weather adapter to answer weather questions from.
      * For Open-Meteo it includes the location device (e.g. `open-meteo-weather.0.Berlin`); for others it is
@@ -75,6 +135,23 @@ export interface AdapterConfig {
     wyomingEnabled: boolean;
     /** TCP port for the Wyoming endpoint (default 10700). */
     wyomingPort: number;
+    /**
+     * Connect out to ESPHome voice satellites (ThirdReality Voice & Music Assistant, HA Voice PE,
+     * linux-voice-assistant). Unlike the other transports the adapter is the *client* here: the device
+     * listens on TCP 6053 and we dial it.
+     */
+    esphomeEnabled: boolean;
+    /** The satellites to connect to. `port` empty → 6053, `password` only if the device has one set. */
+    esphomeDevices: { ip: string; port?: number; password?: string; room?: string }[];
+    /**
+     * Port of the small HTTP server that serves spoken replies to those devices — they fetch the audio
+     * by URL instead of receiving it over their API socket.
+     */
+    esphomeMediaPort: number;
+    /** Host/IP the devices should fetch that audio from ('' → the local address of each device socket). */
+    esphomeMediaHost: string;
+    /** Silence in ms that ends an utterance; these devices have no VAD of their own ('' → 900). */
+    esphomeSilenceMs: number;
     /** Global voice language (ISO-639-1, '' = adapter/system language). Drives STT hint + TTS. */
     voiceLanguage: string;
     /** Dedicated OpenAI key for STT/TTS; empty → reuse the main key when provider === 'openai'. */

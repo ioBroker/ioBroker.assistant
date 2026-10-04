@@ -32,6 +32,7 @@ export type NluActionType =
     | 'color'
     | 'query'
     | 'listByState'
+    | 'categoryQuery'
     | 'timerSet'
     | 'timerQuery'
     | 'timerCancel'
@@ -64,6 +65,9 @@ export interface NluIntent {
     category?: string;
     /** Which state to report on, e.g. 'open'. */
     stateFilter?: string;
+    // ── Category query (action 'categoryQuery'), e.g. "how is the air in the living room" ──
+    /** Device types to read, in order of preference (e.g. ['airQuality']). */
+    types?: string[];
     // ── Timer intents (timerSet/timerQuery/timerCancel) ──
     /** Duration in seconds for `timerSet`. */
     durationSec?: number;
@@ -210,6 +214,48 @@ const COLOR_TYPES = new Set(['rgb', 'rgbSingle', 'rgbwSingle', 'hue', 'cie', 'ct
 const WINDOW_TYPES = new Set(['window', 'windowTilt']);
 /** Words (de/en/ru, stemmed) that name a window. */
 const WINDOW_WORDS = ['fenster', 'window', 'windows', 'окно', 'окна', 'окон'];
+/**
+ * Measurement words (de/en/ru, stemmed) → the `@iobroker/type-detector` device types that answer them.
+ * This is what makes "wie ist die Luft im Wohnzimmer" work without a device being named: the question
+ * is about a *kind* of value, not about one thing. Ported from the Python original's `category_words`
+ * (`C:\iot\Hannah`, `core/hannah/settings_manager.py`), mapped onto our detector types.
+ */
+const CATEGORY_WORDS: { words: string[]; category: string; types: string[] }[] = [
+    // Order matters, most specific first: `wordInText` is suffix-tolerant (it has to be, for German and
+    // Russian inflection), so the bare word "luft" also matches "Luftdruck" and "Luftfeuchtigkeit". The
+    // compound categories therefore have to be tested before the plain-"Luft" one, or they are unreachable.
+    {
+        words: ['luftfeucht', 'feuchtigkeit', 'feucht', 'humidity', 'humid', 'влажност'],
+        category: 'humidity',
+        types: ['humidity'],
+    },
+    {
+        words: ['luftdruck', 'druck', 'pressure', 'давлени'],
+        category: 'pressure',
+        types: ['pressure'],
+    },
+    {
+        words: ['helligkeit', 'hell', 'lux', 'beleuchtungsstaerke', 'brightness', 'illuminance', 'светло', 'яркост'],
+        category: 'illuminance',
+        types: ['illuminance'],
+    },
+    {
+        words: ['luft', 'luftqualitaet', 'luftguete', 'raumluft', 'iaq', 'co2', 'voc', 'air', 'воздух'],
+        category: 'airQuality',
+        types: ['airQuality'],
+    },
+    {
+        // Last: 'warm'/'temperatur' are the words people use most, so a more specific category above wins
+        // when both appear ("wie warm und wie feucht ist es" is answered about the humidity).
+        words: ['temperatur', 'warm', 'kalt', 'grad', 'temperature', 'cold', 'температур', 'тепло', 'холодно'],
+        category: 'temperature',
+        types: ['temperature', 'thermostat'],
+    },
+];
+
+/** Words that ask about every room at once ("wie warm ist es überall"). */
+const EVERYWHERE_WORDS = ['ueberall', 'alle', 'allen', 'everywhere', 'all', 'везде', 'всюду'];
+
 /** Words (de/en/ru, stemmed) that mean "open". */
 const OPEN_WORDS = ['offen', 'geoeffnet', 'geoffnet', 'auf', 'open', 'открыт', 'открыта', 'открыты', 'открытые'];
 
@@ -826,7 +872,8 @@ export class Nlu {
         const roomName = this.findRoom(p.joined);
         const device = this.findDevice(p.joined, roomName);
         if (!device) {
-            return null; // no device → let the LLM handle it
+            // No device named — but the question may still be about a kind of measurement.
+            return this.parseCategoryQuery(p, this.extractFeatures(p));
         }
         let features = this.extractFeatures(p);
         if (inherited && this.namesOnly(p, device, roomName)) {
@@ -1054,6 +1101,39 @@ export class Nlu {
      * "Which windows are open?" (de/en/ru) → an aggregate query over all window devices. Matches when the
      * text mentions a window word AND an "open" word; optionally restricted to a matched room.
      */
+    /**
+     * "How is the air in the living room?", "how warm is it?", "how bright is it everywhere?" — a
+     * question about a kind of measurement rather than about a named device. Returns null unless the
+     * house actually has devices of that kind, so the LLM still gets its chance.
+     *
+     * Only treated as a category query when no device was named: "wie warm ist die Heizung" is about
+     * that thermostat, and the device path answers it better.
+     */
+    private parseCategoryQuery(p: Prepared, features: CommandFeatures): NluIntent | null {
+        if (!features.isQuery) {
+            return null; // a statement, not a question — nothing to report
+        }
+        const match = CATEGORY_WORDS.find(c => c.words.some(w => wordInText(w, p.joined)));
+        if (!match) {
+            return null;
+        }
+        const roomName = this.findRoom(p.joined);
+        const everywhere = EVERYWHERE_WORDS.some(w => wordInText(w, p.joined));
+        const room = everywhere ? '' : roomName;
+        const devices = this.devices.filter(d => match.types.includes(d.type) && (!room || d.room === room));
+        if (!devices.length) {
+            return null; // nothing of that kind here (or not in that room) → let the LLM answer
+        }
+        return {
+            action: 'categoryQuery',
+            category: match.category,
+            types: match.types,
+            devices,
+            room: room || undefined,
+            confidence: 0.8,
+        };
+    }
+
     private parseWindowsOpen(text: string): NluIntent | null {
         if (!WINDOW_WORDS.some(w => wordInText(w, text)) || !OPEN_WORDS.some(w => wordInText(w, text))) {
             return null;

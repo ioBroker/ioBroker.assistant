@@ -78,7 +78,23 @@ export class AzureTts implements TtsEngine {
         private readonly voice: string,
     ) {}
 
-    async synthesize(text: string, lang: string): Promise<TtsResult> {
+    synthesize(text: string, lang: string): Promise<TtsResult> {
+        return this.speak(lang, (synth, resolve, reject) => synth.speakTextAsync(text, resolve, reject));
+    }
+
+    /** Azure speaks SSML natively, so pauses and emphasis survive. */
+    synthesizeSsml(ssml: string, lang: string): Promise<TtsResult> {
+        return this.speak(lang, (synth, resolve, reject) => synth.speakSsmlAsync(ssml, resolve, reject));
+    }
+
+    private async speak(
+        lang: string,
+        run: (
+            synth: sdk.SpeechSynthesizer,
+            resolve: (r: sdk.SpeechSynthesisResult) => void,
+            reject: (e: unknown) => void,
+        ) => void,
+    ): Promise<TtsResult> {
         const speechConfig = sdk.SpeechConfig.fromSubscription(this.key, this.region);
         speechConfig.speechSynthesisOutputFormat = sdk.SpeechSynthesisOutputFormat.Raw24Khz16BitMonoPcm;
         if (this.voice) {
@@ -91,7 +107,7 @@ export class AzureTts implements TtsEngine {
         const synth = new sdk.SpeechSynthesizer(speechConfig, null);
         try {
             const result = await new Promise<sdk.SpeechSynthesisResult>((resolve, reject) => {
-                synth.speakTextAsync(text, resolve, reject);
+                run(synth, resolve, reject);
             });
             if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
                 return { pcm: Buffer.from(result.audioData), sampleRate: 24000 };

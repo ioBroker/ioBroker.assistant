@@ -551,3 +551,87 @@ test('splitCommands: conjunctions and punctuation, but not decimals', () => {
     assert.deepEqual(splitCommands('Rollo auf 50,5 Prozent'), ['Rollo auf 50,5 Prozent']);
     assert.deepEqual(splitCommands('Licht an'), ['Licht an']);
 });
+
+// ── category queries ("how is the air in here", "how warm is it everywhere") ──
+
+const airWz = {
+    name: 'Luftqualität',
+    room: 'Wohnzimmer',
+    type: 'airQuality',
+    controls: { actual: 'x.iaq' },
+    writable: { actual: false },
+    types: { actual: 'number' },
+};
+const tempSz = {
+    name: 'Temperatur Schlafzimmer',
+    room: 'Schlafzimmer',
+    type: 'temperature',
+    controls: { actual: 'x.t2' },
+    writable: { actual: false },
+    types: { actual: 'number' },
+};
+const catNlu = new Nlu(['Wohnzimmer', 'Schlafzimmer'], [light, blind, temp, airWz, tempSz]);
+
+test('a question about a kind of measurement needs no device name', () => {
+    const air = catNlu.parse('Wie ist die Luft im Wohnzimmer?');
+    assert.equal(air.action, 'categoryQuery');
+    assert.equal(air.category, 'airQuality');
+    assert.equal(air.room, 'Wohnzimmer');
+    assert.deepEqual(
+        air.devices.map(d => d.name),
+        ['Luftqualität'],
+    );
+});
+
+test('a room filters the sensors, "everywhere" removes the filter again', () => {
+    const inRoom = catNlu.parse('Wie warm ist es im Schlafzimmer?');
+    assert.equal(inRoom.action, 'categoryQuery');
+    assert.deepEqual(
+        inRoom.devices.map(d => d.room),
+        ['Schlafzimmer'],
+    );
+
+    const all = catNlu.parse('Wie warm ist es überall?');
+    assert.equal(all.action, 'categoryQuery');
+    assert.equal(all.room, undefined);
+    assert.equal(all.devices.length, 2, 'both temperature sensors');
+});
+
+test('a named device still wins over the category', () => {
+    // "Temperatur" is both a category word and the name of a device in the living room.
+    const named = catNlu.parse('Wie ist die Temperatur im Wohnzimmer?');
+    assert.equal(named.action, 'query');
+    assert.equal(named.stateId, 'x.t');
+});
+
+test('a statement is not a category query, and an unknown category falls through', () => {
+    assert.equal(catNlu.parse('Luft'), null, 'no question → nothing to report');
+    assert.equal(catNlu.parse('Wie ist der Luftdruck?'), null, 'no pressure sensor in this house');
+    assert.equal(catNlu.parse('Wie hell ist es?'), null, 'no illuminance sensor either');
+});
+
+test('the more specific category wins when two words appear', () => {
+    // Named neutrally on purpose: a sensor literally called "Feuchte" would be found by the device path
+    // (and answering from it is correct), which is a different code path than the one under test here.
+    const humid = {
+        name: 'Hygrometer',
+        room: 'Bad',
+        type: 'humidity',
+        controls: { actual: 'x.h' },
+        writable: { actual: false },
+        types: { actual: 'number' },
+    };
+    const n = new Nlu(['Bad'], [humid, tempSz]);
+    const q = n.parse('Wie warm und wie feucht ist es?');
+    assert.equal(q.category, 'humidity', 'humidity is listed before temperature on purpose');
+});
+
+test('category queries work in English and Russian too', () => {
+    const en = catNlu.parse('How warm is it everywhere?');
+    assert.equal(en.action, 'categoryQuery');
+    assert.equal(en.category, 'temperature');
+    const ru = catNlu.parse('Какая температура в спальне?');
+    // The room name is German here, so this only has to recognise the category, not the room.
+    assert.equal(ru?.action, 'categoryQuery');
+    assert.equal(ru?.category, 'temperature');
+});

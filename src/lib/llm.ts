@@ -126,20 +126,16 @@ export class LlmAgent {
         this.log.debug(`${label}: ${text.length > max ? `${text.slice(0, max)}…[${text.length}]` : text}`);
     }
 
-    /** Translate a short device/room name into `targetLanguage` (single completion, no tools). */
-    public async translate(text: string, targetLanguage: string): Promise<string> {
-        const trimmed = (text || '').trim();
-        if (!trimmed) {
-            return '';
-        }
-        const prompt =
-            `Translate the following smart-home device or room name into ${targetLanguage}. ` +
-            `Reply with ONLY the translation — no quotes, no punctuation, no explanation.\n\nName: ${trimmed}`;
+    /**
+     * One prompt in, one line out — no tools, no history, no system prompt. The small side jobs
+     * (translate/rephrase/classify) all run through here.
+     */
+    private async complete(prompt: string, maxTokens: number): Promise<string> {
         if (this.provider === 'anthropic') {
             const client = this.anthropic as Anthropic;
             const resp: any = await client.messages.create({
                 model: this.model,
-                max_tokens: 64,
+                max_tokens: maxTokens,
                 messages: [{ role: 'user', content: prompt }],
             });
             return resp.content
@@ -151,10 +147,105 @@ export class LlmAgent {
         const client = this.openai as OpenAI;
         const resp: any = await client.chat.completions.create({
             model: this.model,
-            max_tokens: 64,
+            max_tokens: maxTokens,
             messages: [{ role: 'user', content: prompt }],
         });
         return String(resp.choices[0].message.content || '').trim();
+    }
+
+    /** Translate a short device/room name into `targetLanguage` (single completion, no tools). */
+    public async translate(text: string, targetLanguage: string): Promise<string> {
+        const trimmed = (text || '').trim();
+        if (!trimmed) {
+            return '';
+        }
+        return this.complete(
+            `Translate the following smart-home device or room name into ${targetLanguage}. ` +
+                `Reply with ONLY the translation — no quotes, no punctuation, no explanation.\n\nName: ${trimmed}`,
+            64,
+        );
+    }
+
+    /**
+     * Reword a canned sentence (a trigger's announcement or question) so it sounds spoken rather than
+     * templated, keeping every concrete detail. `persona` is the adapter's system prompt, so the reworded
+     * line still sounds like the same assistant. Returns the input unchanged on any problem — a trigger
+     * must still fire when the model is unavailable.
+     */
+    public async rephrase(text: string, language: string, persona = ''): Promise<string> {
+        const trimmed = (text || '').trim();
+        if (!trimmed) {
+            return '';
+        }
+        try {
+            const result = await this.complete(
+                `${persona ? `${persona.trim()}\n\n` : ''}Reword the following sentence so it sounds natural and ` +
+                    `spoken${language ? `, in ${language}` : ''}. Keep every concrete detail (names, numbers, ` +
+                    `versions, times) and keep it one short sentence. If it is a question, keep it a question. ` +
+                    `Reply with ONLY the sentence.\n\nSentence: ${trimmed}`,
+                200,
+            );
+            return result || trimmed;
+        } catch (e) {
+            this.log.warn(`rephrase failed, using the original text: ${(e as Error).message}`);
+            return trimmed;
+        }
+    }
+
+    /**
+     * Reword an ioBroker system notification into one spoken sentence, in the given `tone` (see
+     * `notifications.toneFor`). Separate from {@link rephrase} because of the hints below: they are
+     * specific to how ioBroker words its notifications, and each one comes from a real text that was
+     * read out wrongly — version numbers mistaken for dates, origin prefixes spelled out letter by
+     * letter, an empty `{}` announced as a problem. Returns the input unchanged on any failure.
+     */
+    public async rewordNotification(text: string, tone: string, language: string, persona = ''): Promise<string> {
+        const trimmed = (text || '').trim();
+        if (!trimmed) {
+            return '';
+        }
+        try {
+            const result = await this.complete(
+                `${persona ? `${persona.trim()}\n\n` : ''}Reword the following system notification into one ` +
+                    `short, natural, spoken sentence${language ? `, in ${language}` : ''}. ` +
+                    `Keep every concrete detail such as adapter names and version numbers. ` +
+                    `Dates like M/D/YYYY or M/D/YYYY, H:MM:SS AM/PM are timestamps — say them as a date or ` +
+                    `a time, never as a version number. Technical prefixes such as ` +
+                    `"system.host.XYZ: adapter.0:" only say where it came from and need not be repeated. ` +
+                    `Empty values such as "onedrive: {}" mean there is nothing wrong there — only mention ` +
+                    `them if it matters. ${tone} Reply with ONLY the sentence.\n\nNotification: ${trimmed}`,
+                300,
+            );
+            return result || trimmed;
+        } catch (e) {
+            this.log.warn(`notification rewording failed, speaking the original: ${(e as Error).message}`);
+            return trimmed;
+        }
+    }
+
+    /**
+     * Does `answer` express `category` ("agreement", "Zustimmung", "refusal", …)? This is the classifier
+     * behind a trigger's response rules, where a spoken "ja, mach das" has to map onto one rule. Decided
+     * by the model because the wording is open-ended; a failure answers `false`, so an unclassifiable
+     * reply falls through to the trigger's fallback rule instead of acting on a guess.
+     */
+    public async classify(answer: string, category: string): Promise<boolean> {
+        const text = (answer || '').trim();
+        const want = (category || '').trim();
+        if (!text || !want) {
+            return false;
+        }
+        try {
+            const verdict = await this.complete(
+                `Does the following reply express "${want}"? Consider the meaning, in any language, ` +
+                    `including short or indirect phrasings. Answer with exactly YES or NO.\n\nReply: ${text}`,
+                8,
+            );
+            return /^\s*(yes|ja|да)\b/i.test(verdict);
+        } catch (e) {
+            this.log.warn(`classify failed ('${want}'): ${(e as Error).message}`);
+            return false;
+        }
     }
 
     /** Lightweight validation of the provider credentials (used by the settings Test button). */

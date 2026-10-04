@@ -36,8 +36,38 @@ import {
 import { LocalLlm, installLocalLlm, isLocalLlmInstalled, isHandoff, DEFAULT_LOCAL_MODEL_URL } from './lib/localLlm';
 import { resolveApiKey, resolveVoiceCredentials } from './lib/credentials';
 import { ConversationStore, type ConversationTurn } from './lib/context';
+import { PendingQuestions, ANY_SOURCE, ASK_TIMEOUT_MS } from './lib/ask';
+import { PresenceTracker, buildPresencePrompt, parsePresenceRows, type PresenceInfo } from './lib/presence';
+import { describeTargets, findTarget, isBroadcast, parseTargetRows, type TargetGroup } from './lib/targets';
+import { matchRoutine, parseRoutineRows, type Routine } from './lib/routines';
+import {
+    bypassesDnd,
+    cleanupNotificationText,
+    flattenNotification,
+    parseSeverity,
+    toneFor,
+    type Severity,
+} from './lib/notifications';
+import {
+    TriggerEngine,
+    effectiveActions,
+    parseTriggerRows,
+    type TriggerAction,
+    type TriggerDef,
+    type TriggerResponseRule,
+    type TriggerStatus,
+} from './lib/triggers';
 import { VoiceServer } from './lib/voice/voiceServer';
 import { WyomingServer } from './lib/voice/wyoming';
+import { EsphomeSatellites, type TimerEvent, type WakeWordConfig } from './lib/voice/esphome';
+import {
+    MEDIA_COMMANDS,
+    type EsphomeEntity,
+    type MediaPlayerValue,
+    type UpdateInfo,
+} from './lib/voice/esphomeEntities';
+import { MediaServer } from './lib/voice/mediaServer';
+import { confirmationTone } from './lib/voice/tone';
 import {
     createSttEngine,
     createTtsEngine,
@@ -57,6 +87,106 @@ import type { AdapterConfig } from './types';
  * so re-reading their whole state tree on every single request would be pure overhead.
  */
 const WEATHER_CTX_TTL = 5 * 60 * 1000;
+
+/**
+ * The replies the assistant speaks verbatim, whatever the question was. They are pre-synthesised into
+ * the TTS cache at startup; everything else is cached on first use.
+ */
+/** How long to wait for a device to confirm a write, and how often to look. */
+const ACK_TIMEOUT_MS = 2000;
+const ACK_POLL_MS = 150;
+
+/**
+ * Did the device end up with the value we asked for? Compared loosely: a dimmer told `30` may report
+ * `30.0`, a switch told `true` may report `1`, and a lamp told 100 % may settle at 99 % — insisting on
+ * strict equality would report a failure for a command that plainly worked.
+ */
+function valuesMatch(actual: unknown, expected: unknown): boolean {
+    if (actual === expected) {
+        return true;
+    }
+    if (typeof expected === 'boolean' || typeof actual === 'boolean') {
+        return Boolean(actual) === Boolean(expected);
+    }
+    const a = Number(actual);
+    const b = Number(expected);
+    if (Number.isFinite(a) && Number.isFinite(b)) {
+        return Math.abs(a - b) <= Math.max(1, Math.abs(b) * 0.02);
+    }
+    return String(actual).trim().toLowerCase() === String(expected).trim().toLowerCase();
+}
+
+/**
+ * ioBroker role for a measurement, derived from its unit — a `value.temperature` shows up with the right
+ * icon and in the right place in vis, where a bare `value` is just a number.
+ */
+function sensorRole(entity: { unit?: string }): string {
+    const unit = (entity.unit || '').trim().toLowerCase();
+    if (unit === '°c' || unit === '°f' || unit === 'k') {
+        return 'value.temperature';
+    }
+    if (unit === '%') {
+        return 'value.humidity'; // the only percentage a voice box reports is its humidity
+    }
+    if (unit === 'lx' || unit === 'lux') {
+        return 'value.brightness';
+    }
+    if (unit === 'hpa' || unit === 'mbar' || unit === 'pa') {
+        return 'value.pressure';
+    }
+    if (unit === 'ppm' || unit === 'ppb') {
+        return 'value.co2';
+    }
+    if (unit === 'db' || unit === 'dba') {
+        return 'value.volume';
+    }
+    return 'value';
+}
+
+/** Heading for a category answer, so "18 °C, 21 °C" says what it is about. */
+const CATEGORY_LABELS: Record<string, { de: string; en: string; ru: string }> = {
+    temperature: { de: 'Temperatur', en: 'Temperature', ru: 'Температура' },
+    humidity: { de: 'Luftfeuchtigkeit', en: 'Humidity', ru: 'Влажность' },
+    illuminance: { de: 'Helligkeit', en: 'Brightness', ru: 'Освещённость' },
+    pressure: { de: 'Luftdruck', en: 'Pressure', ru: 'Давление' },
+    airQuality: { de: 'Luftqualität', en: 'Air quality', ru: 'Качество воздуха' },
+};
+
+/**
+ * Put a word to an air-quality number, because the number alone means nothing when spoken. Only for
+ * the IAQ scale (0–500, unitless or labelled IAQ) — a CO₂ value in ppm is a different scale and is
+ * better left unlabelled than labelled wrongly. Thresholds from the BME680/BSEC IAQ classification,
+ * as used by the Python original.
+ */
+function iaqLabel(value: unknown, unit: string, lang: string): string {
+    const iaq = Number(value);
+    const u = unit.trim().toLowerCase();
+    if (!Number.isFinite(iaq) || (u !== '' && u !== 'iaq')) {
+        return '';
+    }
+    const scale: [number, string, string, string][] = [
+        [50, 'sehr gut', 'excellent', 'отлично'],
+        [100, 'gut', 'good', 'хорошо'],
+        [150, 'mäßig', 'moderate', 'умеренно'],
+        [200, 'schlecht', 'poor', 'плохо'],
+        [300, 'sehr schlecht', 'very poor', 'очень плохо'],
+        [Number.POSITIVE_INFINITY, 'extrem schlecht', 'extremely poor', 'крайне плохо'],
+    ];
+    const row = scale.find(([limit]) => iaq <= limit);
+    if (!row) {
+        return '';
+    }
+    return lang === 'ru' ? row[3] : lang === 'de' ? row[1] : row[2];
+}
+
+/** NLU actions that only switch something; their success is what the confirmation tone replaces. */
+const CONTROL_ACTIONS = new Set(['on', 'off', 'level', 'color']);
+
+const FIXED_REPLIES: Record<'de' | 'en' | 'ru', string[]> = {
+    de: ['Ok.', 'Erledigt.'],
+    en: ['Okay.', 'Done.'],
+    ru: ['Хорошо.', 'Готово.'],
+};
 
 /** A tts value is treated as an audio file (not text) when it looks like an mp3/wav/… URL or path. */
 function isAudioRef(v: string): boolean {
@@ -114,12 +244,24 @@ class Assistant extends Adapter {
     private voice: VoiceServer | null = null;
     /** Wyoming TCP endpoint (only when wyomingEnabled); null otherwise. */
     private wyoming: WyomingServer | null = null;
+    /** ESPHome voice satellites we dial out to (only when esphomeEnabled); null otherwise. */
+    private esphome: EsphomeSatellites | null = null;
+    /** Serves spoken replies to ESPHome satellites over HTTP; null unless those are enabled. */
+    private media: MediaServer | null = null;
     /** Short-term per-source conversation memory (in-memory, TTL) for follow-up questions. */
     private readonly context = new ConversationStore();
+    /** Questions the assistant asked and is waiting for an answer to (`askUser`), keyed by source. */
+    private readonly pending = new PendingQuestions();
     /** Satellite ids whose state objects have already been created (avoid re-creating on every update). */
     private readonly satStatesEnsured = new Set<string>();
     /** Sanitised satellite state-id → real device name (for the per-satellite `tts` announce state). */
     private readonly satDeviceById = new Map<string, string>();
+    /** Satellite ids that already have the wake-word states — only ESPHome devices report any. */
+    private readonly satWakeWordStatesEnsured = new Set<string>();
+    /** Timers already mirrored onto the ESPHome satellites, so we can tell a cancel from an update. */
+    private mirroredTimers = new Map<string, TimerInfo>();
+    /** Per satellite: resolves once its control objects exist, so state writes can wait for them. */
+    private readonly satControlsReady = new Map<string, Promise<void>>();
     /** Native (ioBroker) satellite state-id → sender instance id, so we can push announcements back to it. */
     private readonly nativeSatFrom = new Map<string, string>();
     /** Countdown timers / reminders (roadmap #2); mirrored into `timers.*` states. Null until onReady. */
@@ -130,10 +272,28 @@ class Assistant extends Adapter {
     private alarms: AlarmManager | null = null;
     /** Per-alarm `alarms.items.<id>` channels currently rendered. */
     private readonly alarmObjIds = new Set<string>();
+    /** Proactive triggers (roadmap A2); mirrored into `triggers.*` states. Null until onReady. */
+    private triggers: TriggerEngine | null = null;
+    /** Per-trigger `triggers.items.<id>` channels currently rendered. */
+    private readonly triggerObjIds = new Set<string>();
+    /** Foreign states the loaded triggers watch (exactly what we subscribed to). */
+    private readonly triggerStateIds = new Set<string>();
+    /** Master switch (`triggers.enabled`): false suppresses every trigger's effect. */
+    private triggersEnabled = true;
     /** Long-term memory (roadmap #6); mirrored into `memory.*` states. Null until onReady / when disabled. */
     private memory: MemoryStore | null = null;
     /** Per-memory `memory.items.<id>` channels currently rendered. */
     private readonly memoryObjIds = new Set<string>();
+    /** Phrase-triggered macros from the configuration ("Gute Nacht" → five actions). */
+    private routines: Routine[] = [];
+    /** Named announcement targets (roadmap B2): groups of rooms and people, from the configuration. */
+    private announceTargets: TargetGroup[] = [];
+    /** Who is at home (roadmap B1); mirrored into `presence.*`. Null until onReady. */
+    private presence: PresenceTracker | null = null;
+    /** Satellites currently set to Do-Not-Disturb, by state id (mirrors `satellites.<id>.dnd`). */
+    private readonly dndById = new Map<string, boolean>();
+    /** Global Do-Not-Disturb (`dnd`): suppresses every announcement except priority/alert ones. */
+    private globalDnd = false;
     /** Cached weather context line (see `buildWeatherContext`); `key` = source + language. */
     private weatherCtx: { key: string; ts: number; text: string } | null = null;
     /** Active "ringing" sessions (a timer/alarm looping its sound until stopped or timed out). */
@@ -185,6 +345,10 @@ class Assistant extends Adapter {
             if ((cfg.weatherInstance || '').trim()) {
                 tools.push(this.buildWeatherTool());
             }
+            if (cfg.voiceEnabled) {
+                // Only useful with satellites: without voice there is nothing to speak on.
+                tools.push(this.buildAnnounceTool());
+            }
             this.log.info(`ioBroker tools enabled (${tools.length}): ${tools.map(t => t.name).join(', ')}`);
             if (denied.length) {
                 this.log.debug(`Tools denied by access settings: ${denied.join(', ')}`);
@@ -221,11 +385,31 @@ class Assistant extends Adapter {
         });
         await this.ensureBuiltinSounds();
         this.subscribeStates('stopRinging');
+        // Spoken system notifications + Do-Not-Disturb (per satellite: see ensureSatelliteObjects).
+        this.subscribeStates('notify.text');
+        this.subscribeStates('notify.alert');
+        this.subscribeStates('dnd');
+        this.globalDnd = (await this.getStateAsync('dnd'))?.val === true;
+        if (this.globalDnd) {
+            this.log.info('Do-Not-Disturb is on — only alerts will be announced.');
+        }
         await this.setupTimers();
         await this.setupAlarms();
         if (cfg.useLongTermMemory !== false) {
             await this.setupMemory();
         }
+        this.routines = parseRoutineRows(cfg.routines, { warn: message => this.log.warn(message) });
+        if (this.routines.length) {
+            this.log.info(`Routines: ${this.routines.map(r => r.name).join(', ')}.`);
+        }
+        this.announceTargets = parseTargetRows(cfg.announceTargets);
+        if (this.announceTargets.length) {
+            this.log.info(
+                `Announcement targets: ${this.announceTargets.map(t => `${t.name} (${t.kind})`).join(', ')}.`,
+            );
+        }
+        await this.setupPresence();
+        await this.setupTriggers();
         this.log.info(`Assistant ready (provider=${cfg.provider}, model=${this.agent.model}).`);
 
         if (cfg.useLocalLlm) {
@@ -243,6 +427,10 @@ class Assistant extends Adapter {
 
         if (cfg.wyomingEnabled) {
             await this.startWyoming(apiKey);
+        }
+
+        if (cfg.esphomeEnabled) {
+            await this.startEsphome(apiKey);
         }
     }
 
@@ -282,6 +470,88 @@ class Assistant extends Adapter {
         }
     }
 
+    /**
+     * Connect to the configured ESPHome voice satellites (ThirdReality V&M Assistant, HA Voice PE,
+     * linux-voice-assistant). The adapter is the client here — the devices listen on TCP 6053 — and the
+     * spoken reply is handed over as a URL, so the little media server comes up together with them.
+     */
+    private async startEsphome(mainApiKey: string): Promise<void> {
+        const cfg = this.config;
+        const devices = (cfg.esphomeDevices || []).filter(d => d?.ip?.trim());
+        if (!devices.length) {
+            this.log.warn('ESPHome satellites are enabled, but no device is configured.');
+            return;
+        }
+
+        const creds = await resolveVoiceCredentials(this, cfg, mainApiKey);
+        const ctx = this.voiceContext(cfg, creds);
+        const language = cfg.voiceLanguage || this.language || '';
+        let stt: SttEngine;
+        let tts: TtsEngine;
+        try {
+            stt = createSttEngine(cfg.sttProvider || 'openai', ctx);
+            tts = createTtsEngine(cfg.ttsProvider || 'openai', ctx);
+        } catch (e) {
+            this.log.warn(`ESPHome satellites not started — ${(e as Error).message}. Check the Voice tab settings.`);
+            return;
+        }
+
+        try {
+            const media = new MediaServer({
+                port: cfg.esphomeMediaPort || 8099,
+                bindAddress: cfg.bind || '0.0.0.0',
+                log: this.log,
+            });
+            await media.start();
+            this.media = media;
+        } catch (e) {
+            this.log.error(`ESPHome satellites not started — media server failed: ${(e as Error).message}`);
+            this.media = null;
+            return;
+        }
+
+        this.esphome = new EsphomeSatellites({
+            devices,
+            language,
+            stt,
+            tts,
+            answer: (question, origin) => this.answerVoice(question, origin.device),
+            getHints: () => this.buildSttHints(),
+            media: this.media,
+            mediaHost: (cfg.esphomeMediaHost || '').trim(),
+            silenceMs: cfg.esphomeSilenceMs || 0,
+            log: this.log,
+            onStatus: (device, room, state) => {
+                this.updateSatelliteState(device, room, state).catch(e =>
+                    this.log.debug(`satellite state update failed: ${(e as Error).message}`),
+                );
+            },
+            onWakeWords: (device, room, config) => {
+                this.updateSatelliteWakeWords(device, room, config).catch(e =>
+                    this.log.debug(`satellite wake word update failed: ${(e as Error).message}`),
+                );
+            },
+            onEntities: (device, room, entities) => {
+                this.createSatelliteControls(device, room, entities).catch(e =>
+                    this.log.debug(`satellite control objects failed: ${(e as Error).message}`),
+                );
+            },
+            onEntityState: (device, room, entity) => {
+                this.updateSatelliteControl(device, room, entity).catch(e =>
+                    this.log.debug(`satellite control update failed: ${(e as Error).message}`),
+                );
+            },
+            expectsFollowUp: answer => this.expectsFollowUp(answer),
+        });
+        await this.esphome.start();
+        this.log.info(
+            `ESPHome satellites: ${devices.length} device(s), STT=${cfg.sttProvider || 'openai'}, TTS=${cfg.ttsProvider || 'openai'}.`,
+        );
+        if (!this.voice && !this.wyoming) {
+            this.warmupEngines(stt, tts, language); // nobody warmed the engines up yet
+        }
+    }
+
     /** Build the engine context (creds + local-model settings + data dir) for the STT/TTS factory. */
     private voiceContext(cfg: AdapterConfig, creds: VoiceCredentials): EngineContext {
         return {
@@ -292,6 +562,8 @@ class Assistant extends Adapter {
                 aws: (cfg.awsVoice || '').trim(),
                 piper: (cfg.piperVoice || '').trim(),
             },
+            sttFallback: cfg.sttFallback || '',
+            ttsFallback: cfg.ttsFallback || '',
             dataDir: this.instanceDataDir(),
             log: this.log,
             voskModel: (cfg.voskModel || '').trim(),
@@ -357,8 +629,22 @@ class Assistant extends Adapter {
         }
         if (tts.prepare) {
             this.log.info('Preparing text-to-speech engine (download in background) …');
-            tts.prepare(lang).catch(e => this.log.warn(`TTS warm-up failed: ${(e as Error).message}`));
+            tts.prepare(lang)
+                .then(() => this.warmTtsCache(tts, lang))
+                .catch(e => this.log.warn(`TTS warm-up failed: ${(e as Error).message}`));
+        } else {
+            void this.warmTtsCache(tts, lang);
         }
+    }
+
+    /**
+     * Pre-synthesise the handful of replies the assistant says verbatim, so the first one of the day is
+     * not a cloud round-trip. Everything else lands in the cache on first use anyway — this only covers
+     * the fixed strings, which are the ones that repeat forever.
+     */
+    private async warmTtsCache(tts: TtsEngine, lang: string): Promise<void> {
+        const phrases = FIXED_REPLIES[lang === 'ru' ? 'ru' : lang === 'de' ? 'de' : 'en'];
+        await tts.warm?.(phrases, lang).catch(e => this.log.debug(`TTS cache warm-up: ${(e as Error).message}`));
     }
 
     /**
@@ -544,6 +830,23 @@ class Assistant extends Adapter {
 
     /** Reflect a satellite's status into `satellites.<room>.*` states (created on first sight). */
     private async updateSatelliteState(device: string, room: string, state: SatelliteState | 'offline'): Promise<void> {
+        const id = await this.ensureSatelliteObjects(device, room);
+        const base = `satellites.${id}`;
+        await this.setStateAsync(`${base}.status`, { val: state, ack: true });
+        await this.setStateAsync(`${base}.alive`, { val: state !== 'offline', ack: true });
+        await this.setStateAsync(`${base}.lastSeen`, { val: Date.now(), ack: true });
+        if (room) {
+            await this.setStateAsync(`${base}.room`, { val: room, ack: true });
+        }
+    }
+
+    /**
+     * Create the object tree for one satellite and return its (sanitised) state id, without touching
+     * any value. Callers that only need somewhere to hang a child object use this rather than
+     * {@link updateSatelliteState} — going through that would write `status`, and a wake-word or
+     * settings update arriving mid-announcement would knock the satellite back to `idle`.
+     */
+    private async ensureSatelliteObjects(device: string, room: string): Promise<string> {
         const id = this.satelliteStateId(device, room);
         const roomName = (room || '').replace(/^(enum\.rooms\.|system\.rooms\.)/, '');
         const base = `satellites.${id}`;
@@ -609,16 +912,319 @@ class Assistant extends Adapter {
                 },
                 native: {},
             });
+            await this.setObjectNotExistsAsync(`${base}.dnd`, {
+                type: 'state',
+                common: {
+                    name: 'Do-Not-Disturb: suppress announcements on this satellite (alerts still play)',
+                    type: 'boolean',
+                    role: 'switch.mode.silent',
+                    read: true,
+                    write: true,
+                    def: false,
+                },
+                native: {},
+            });
             this.subscribeStates(`${base}.tts`);
+            this.subscribeStates(`${base}.dnd`);
+            // A satellite that was silenced before the restart stays silenced.
+            const dnd = await this.getStateAsync(`${base}.dnd`);
+            this.dndById.set(id, dnd?.val === true);
             this.satStatesEnsured.add(id);
         }
         // Map the (sanitised) state id back to the real device name for the per-satellite tts state.
         this.satDeviceById.set(id, device);
-        await this.setStateAsync(`${base}.status`, { val: state, ack: true });
-        await this.setStateAsync(`${base}.alive`, { val: state !== 'offline', ack: true });
-        await this.setStateAsync(`${base}.lastSeen`, { val: Date.now(), ack: true });
-        if (room) {
-            await this.setStateAsync(`${base}.room`, { val: room, ack: true });
+        return id;
+    }
+
+    /**
+     * Publish a satellite's wake-word configuration and let it be changed from ioBroker.
+     *
+     * Only ESPHome satellites have this: the wake word runs on the device, and the ESPHome API lets the
+     * controller pick which of the built-in models listen. `wakeWords` is writable and takes a
+     * comma-separated list of ids; the device stores the choice itself, so it survives a restart of the
+     * adapter and is read back from the device rather than mirrored optimistically.
+     */
+    private async updateSatelliteWakeWords(device: string, room: string, config: WakeWordConfig): Promise<void> {
+        const id = await this.ensureSatelliteObjects(device, room);
+        const base = `satellites.${id}`;
+
+        if (!this.satWakeWordStatesEnsured.has(id)) {
+            await this.setObjectNotExistsAsync(`${base}.wakeWords`, {
+                type: 'state',
+                common: {
+                    name: 'Active wake words (comma-separated ids)',
+                    type: 'string',
+                    role: 'text',
+                    read: true,
+                    write: true,
+                    def: '',
+                },
+                native: {},
+            });
+            await this.setObjectNotExistsAsync(`${base}.availableWakeWords`, {
+                type: 'state',
+                common: {
+                    name: 'Wake words this device offers',
+                    type: 'string',
+                    role: 'json',
+                    read: true,
+                    write: false,
+                    def: '[]',
+                },
+                native: {},
+            });
+            this.subscribeStates(`${base}.wakeWords`);
+            this.satWakeWordStatesEnsured.add(id);
+        }
+        await this.setStateAsync(`${base}.wakeWords`, { val: config.active.join(','), ack: true });
+        await this.setStateAsync(`${base}.availableWakeWords`, {
+            val: JSON.stringify({ max: config.max, words: config.available }),
+            ack: true,
+        });
+    }
+
+    /**
+     * Mirror everything an ESPHome satellite exposes besides the voice pipeline into
+     * `satellites.<id>.controls.*` — microphone gain and volume, noise suppression, wake-word and
+     * stop-word sensitivities, the mute and thinking-sound switches, its media player and its firmware
+     * update entity. Which of these exist is up to the device, so the objects are built from what it
+     * announced rather than from a hard-coded list.
+     *
+     * The compound entities get a small folder instead of a single state, because one value cannot
+     * carry them: a media player has a state, a volume and a mute flag, and a firmware entity has two
+     * versions plus progress.
+     */
+    private createSatelliteControls(device: string, room: string, entities: EsphomeEntity[]): Promise<void> {
+        if (!entities.length) {
+            return Promise.resolve();
+        }
+        // Publish the promise *before* awaiting anything: the device starts pushing entity states while
+        // these objects are still being created, and those writes have to wait for it.
+        const satId = this.satelliteStateId(device, room);
+        const task = this.buildSatelliteControls(satId, device, room, entities);
+        this.satControlsReady.set(satId, task);
+        return task;
+    }
+
+    /** The actual object creation behind {@link createSatelliteControls}. */
+    private async buildSatelliteControls(
+        satId: string,
+        device: string,
+        room: string,
+        entities: EsphomeEntity[],
+    ): Promise<void> {
+        await this.ensureSatelliteObjects(device, room); // make sure the parent objects exist
+        const base = `satellites.${satId}.controls`;
+        await this.setObjectNotExistsAsync(base, {
+            type: 'channel',
+            common: { name: 'Device settings' },
+            native: {},
+        });
+
+        for (const entity of entities) {
+            const id = `${base}.${entity.objectId}`;
+            const name = entity.name || entity.objectId;
+            if (entity.kind === 'mediaPlayer') {
+                await this.setObjectNotExistsAsync(id, { type: 'channel', common: { name }, native: {} });
+                await this.ensureState(`${id}.state`, 'Playback state', 'string', 'media.state', false);
+                await this.ensureState(`${id}.volume`, 'Volume (0…1)', 'number', 'level.volume', true);
+                await this.ensureState(
+                    `${id}.command`,
+                    `Command (${Object.keys(MEDIA_COMMANDS).join(', ')})`,
+                    'string',
+                    'text',
+                    true,
+                );
+                await this.ensureState(`${id}.muted`, 'Muted', 'boolean', 'media.mute', false);
+                this.subscribeStates(`${id}.volume`);
+                this.subscribeStates(`${id}.command`);
+            } else if (entity.kind === 'update') {
+                await this.setObjectNotExistsAsync(id, { type: 'channel', common: { name }, native: {} });
+                await this.ensureState(`${id}.currentVersion`, 'Installed version', 'string', 'text', false);
+                await this.ensureState(`${id}.latestVersion`, 'Available version', 'string', 'text', false);
+                await this.ensureState(`${id}.inProgress`, 'Update running', 'boolean', 'indicator', false);
+                await this.ensureState(`${id}.progress`, 'Update progress', 'number', 'value', false);
+                await this.ensureState(`${id}.install`, 'Install the update', 'boolean', 'button', true);
+                this.subscribeStates(`${id}.install`);
+            } else if (entity.kind === 'event') {
+                await this.setObjectNotExistsAsync(id, {
+                    type: 'state',
+                    common: {
+                        name: `${name} (last event)`,
+                        type: 'string',
+                        role: 'text',
+                        read: true,
+                        write: false,
+                        def: '',
+                        ...(entity.eventTypes?.length
+                            ? { states: Object.fromEntries(entity.eventTypes.map(t => [t, t])) }
+                            : {}),
+                    },
+                    native: {},
+                });
+            } else if (entity.kind === 'sensor' || entity.kind === 'binarySensor' || entity.kind === 'textSensor') {
+                // What the box measures about its room (temperature, presence, a status text). Read-only,
+                // so there is nothing to subscribe to — the device pushes the values.
+                const common: ioBroker.StateCommon =
+                    entity.kind === 'sensor'
+                        ? {
+                              name,
+                              type: 'number',
+                              role: sensorRole(entity),
+                              read: true,
+                              write: false,
+                              unit: entity.unit || undefined,
+                          }
+                        : entity.kind === 'binarySensor'
+                          ? { name, type: 'boolean', role: 'indicator', read: true, write: false, def: false }
+                          : { name, type: 'string', role: 'text', read: true, write: false, def: '' };
+                await this.setObjectNotExistsAsync(id, { type: 'state', common, native: {} });
+            } else {
+                const common: ioBroker.StateCommon =
+                    entity.kind === 'switch'
+                        ? { name, type: 'boolean', role: 'switch', read: true, write: true, def: false }
+                        : entity.kind === 'select'
+                          ? {
+                                name,
+                                type: 'string',
+                                role: 'text',
+                                read: true,
+                                write: true,
+                                def: '',
+                                states: Object.fromEntries((entity.options || []).map(o => [o, o])),
+                            }
+                          : {
+                                name,
+                                type: 'number',
+                                role: 'level',
+                                read: true,
+                                write: true,
+                                min: entity.min,
+                                max: entity.max,
+                                step: entity.step,
+                                unit: entity.unit || undefined,
+                            };
+                await this.setObjectNotExistsAsync(id, { type: 'state', common, native: {} });
+                this.subscribeStates(id);
+            }
+        }
+        this.satDeviceById.set(satId, device);
+        // Now that the objects exist, publish the values the device already reported. Anything that
+        // arrived while we were still creating objects was skipped, so this is what fills those in.
+        for (const entity of entities) {
+            if (entity.value !== undefined) {
+                await this.writeSatelliteControl(satId, entity);
+            }
+        }
+        this.log.debug(`Satellite ${device}: ${entities.length} control object(s) under ${base}`);
+    }
+
+    /** Small helper so the control objects above stay readable. */
+    private async ensureState(
+        id: string,
+        name: string,
+        type: ioBroker.CommonType,
+        role: string,
+        write: boolean,
+    ): Promise<void> {
+        await this.setObjectNotExistsAsync(id, {
+            type: 'state',
+            common: { name, type, role, read: true, write },
+            native: {},
+        });
+    }
+
+    /**
+     * A device pushed a new value for one of its entities.
+     *
+     * The device starts reporting states while {@link buildSatelliteControls} is still creating the
+     * objects, so this waits for that to finish. Before the entities have even been announced there is
+     * nothing to wait on and nothing to write into — the value is kept in the registry and published by
+     * the initial sync at the end of the build.
+     */
+    private async updateSatelliteControl(device: string, room: string, entity: EsphomeEntity): Promise<void> {
+        const satId = this.satelliteStateId(device, room);
+        const ready = this.satControlsReady.get(satId);
+        if (!ready) {
+            return;
+        }
+        await ready;
+        await this.writeSatelliteControl(satId, entity);
+    }
+
+    /** Write one entity's current value into its state(s). Always acked — this is the device talking. */
+    private async writeSatelliteControl(satId: string, entity: EsphomeEntity): Promise<void> {
+        const base = `satellites.${satId}.controls.${entity.objectId}`;
+        if (entity.kind === 'mediaPlayer') {
+            const v = entity.value as MediaPlayerValue;
+            await this.setStateAsync(`${base}.state`, { val: v.state, ack: true });
+            await this.setStateAsync(`${base}.volume`, { val: v.volume, ack: true });
+            await this.setStateAsync(`${base}.muted`, { val: v.muted, ack: true });
+        } else if (entity.kind === 'update') {
+            const v = entity.value as UpdateInfo;
+            await this.setStateAsync(`${base}.currentVersion`, { val: v.currentVersion, ack: true });
+            await this.setStateAsync(`${base}.latestVersion`, { val: v.latestVersion, ack: true });
+            await this.setStateAsync(`${base}.inProgress`, { val: v.inProgress, ack: true });
+            await this.setStateAsync(`${base}.progress`, { val: v.progress, ack: true });
+        } else {
+            await this.setStateAsync(base, { val: entity.value as ioBroker.StateValue, ack: true });
+        }
+    }
+
+    /**
+     * Apply a write to any `satellites.<id>.controls.*` state. Like the wake words, nothing is acked
+     * here: the device reports the value it actually took and {@link updateSatelliteControl} writes
+     * that, so a clamped or rejected write never leaves ioBroker showing a value the device ignored.
+     */
+    private setSatelliteControl(satId: string, path: string, value: ioBroker.StateValue): void {
+        const device = this.satDeviceById.get(satId) || satId;
+        if (!this.esphome) {
+            this.log.warn(`Cannot write ${path} on ${device}: ESPHome satellites are not enabled.`);
+            return;
+        }
+        // Compound entities address a leaf: `<objectId>.volume`, `<objectId>.install`, …
+        const [objectId, leaf] = path.split('.');
+        let payload: unknown = value;
+        if (leaf === 'install') {
+            if (!value) {
+                return; // button released
+            }
+            payload = 'install';
+        } else if (leaf === 'volume' || leaf === 'command') {
+            payload = value;
+        } else if (leaf) {
+            return; // read-only leaf of a compound entity
+        }
+        if (!this.esphome.setEntity(device, objectId, payload)) {
+            this.log.warn(`Writing ${objectId} on ${device} was rejected — see the warning above.`);
+        }
+    }
+
+    /**
+     * Apply a write to `satellites.<id>.wakeWords`. The state is *not* acked here: the device echoes its
+     * new configuration back and {@link updateSatelliteWakeWords} writes the acked value, so what ioBroker
+     * shows is always what the device actually does — including when it rejected or trimmed the list.
+     */
+    private async setSatelliteWakeWords(satId: string, value: string): Promise<void> {
+        const device = this.satDeviceById.get(satId) || satId;
+        const ids = value
+            .split(/[,;]/)
+            .map(s => s.trim())
+            .filter(Boolean);
+        if (!this.esphome) {
+            this.log.warn(`Cannot set wake words on ${device}: ESPHome satellites are not enabled.`);
+            return;
+        }
+        if (!this.esphome.setWakeWords(device, ids)) {
+            this.log.warn(`Cannot set wake words: satellite ${device} is not connected.`);
+            // Put the last known value back, so the state does not keep showing a change that never happened.
+            const known = this.esphome.wakeWords(device);
+            if (known) {
+                await this.setStateAsync(`satellites.${satId}.wakeWords`, {
+                    val: known.active.join(','),
+                    ack: true,
+                });
+            }
         }
     }
 
@@ -645,19 +1251,42 @@ class Assistant extends Adapter {
      * the configured TTS engine; a URL/path to an audio file (mp3/wav/…) is decoded with ffmpeg. Delivered
      * to **both** transports: ioBroker-native satellites via a `sendTo(from, 'announce', …)` message and UDP
      * satellites via the UDP server.
+     *
+     * With `opts.listen` the satellite re-opens its microphone afterwards, for the answer to a question
+     * (`askUser`); `opts.priority` plays even on a satellite set to Do-Not-Disturb (an alert does, see
+     * {@link notify}). Returns how many channels the announcement reached — 0 means nobody heard it.
      */
-    private async announceToSatellites(value: string, targetId: string | null): Promise<void> {
+    private async announceToSatellites(
+        value: string,
+        target: string | null,
+        opts: { listen?: boolean; priority?: boolean; onlyWhenHome?: boolean } = {},
+    ): Promise<number> {
+        const listen = opts.listen === true;
         let v = value.trim();
         if (!v) {
-            return;
+            return 0;
+        }
+        // A name may stand for one satellite, a room, or a configured group/person — resolve it before
+        // spending a TTS call on a target that does not exist.
+        const targets = this.resolveTargets(target);
+        if (targets && !targets.length) {
+            this.log.warn(`Announcement not delivered — '${String(target)}' is no known satellite, room or group.`);
+            return 0;
+        }
+        // Checked before the text is synthesised, so talking to an empty house costs neither an LLM nor a
+        // TTS call.
+        if (opts.onlyWhenHome && this.emptyHouse()) {
+            this.log.debug('Announcement held back — nobody is at home.');
+            return 0;
         }
         // A leading "!" marks a priority announcement: strip it and let it bypass a satellite's
         // Do-Not-Disturb (e.g. "!Water leak detected" is played even in DND).
-        const priority = v.startsWith('!');
-        if (priority) {
+        let priority = opts.priority === true;
+        if (v.startsWith('!')) {
+            priority = true;
             v = v.slice(1).trim();
             if (!v) {
-                return;
+                return 0;
             }
         }
         const isAudio = isAudioRef(v);
@@ -672,50 +1301,130 @@ class Assistant extends Adapter {
             }
         } catch (e) {
             this.log.error(`Announcement failed: ${(e as Error).message}`);
-            return;
+            return 0;
         }
 
-        const delivered = await this.deliverPcm(pcm, sampleRate, targetId, priority);
+        let delivered = 0;
+        if (targets === null) {
+            delivered = await this.deliverPcm(pcm, sampleRate, null, priority, listen);
+        } else {
+            // Synthesised once, handed to each member: a group of three speakers is one TTS call.
+            for (const id of targets) {
+                delivered += await this.deliverPcm(pcm, sampleRate, id, priority, listen);
+            }
+        }
         this.log.info(
-            `Announce → ${targetId || 'all satellites'} (${delivered} channel(s)): ${isAudio ? v : `"${v}"`}`,
+            `Announce → ${targets ? targets.join(', ') : 'all satellites'} (${delivered} channel(s)${listen ? ', mic on' : ''}): ${isAudio ? v : `"${v}"`}`,
         );
         if (!delivered) {
             this.log.warn('Announcement not delivered — no satellites registered (native or UDP).');
         }
+        return delivered;
     }
 
     /**
      * Deliver a ready 16-bit-mono-PCM buffer to one satellite (`targetId`) or all (`null`), over both
      * transports (ioBroker-native message bus + UDP). Returns how many channels it reached.
+     *
+     * `listen` asks the satellite to re-open its microphone when the clip has played, so the answer to a
+     * question is captured without a wake word. Each transport has its own way: ESPHome carries it in the
+     * announce request (`start_conversation`), UDP gets a `listen` control message, and a native satellite
+     * receives the flag in the announce message.
      */
     private async deliverPcm(
         pcm: Buffer,
         sampleRate: number,
         targetId: string | null,
         priority: boolean,
+        listen = false,
     ): Promise<number> {
         let delivered = 0;
+        if (this.silenced(targetId, priority)) {
+            this.log.debug(`Announcement suppressed — Do-Not-Disturb (${targetId || 'all satellites'}).`);
+            return 0;
+        }
         // ── ioBroker-native satellites: push over the message bus ───────────────
         const nativeTargets = targetId
             ? this.nativeSatFrom.has(targetId)
                 ? [[targetId, this.nativeSatFrom.get(targetId)!] as const]
                 : []
             : [...this.nativeSatFrom.entries()];
-        for (const [, from] of nativeTargets) {
-            this.sendTo(from, 'announce', { audio: pcm.toString('base64'), sampleRate, format: 'pcm', priority });
+        for (const [satId, from] of nativeTargets) {
+            if (this.silenced(satId, priority)) {
+                continue;
+            }
+            this.sendTo(from, 'announce', {
+                audio: pcm.toString('base64'),
+                sampleRate,
+                format: 'pcm',
+                priority,
+                listen,
+            });
             delivered++;
         }
         // ── UDP satellites (if the UDP server runs and the target isn't a native one) ──
         if (this.voice && !(targetId && this.nativeSatFrom.has(targetId))) {
             const device = targetId ? this.satDeviceById.get(targetId) || targetId : null;
+            // Addressed per device rather than broadcast, so one silenced satellite in the house does not
+            // silence the others — and so the count reflects who actually got it (announce() itself only
+            // warns when nobody is registered, and askUser needs to know whether the question was heard).
+            const allowed = this.voice
+                .devices()
+                .filter(d => (!device || d === device) && !this.isDeviceSilenced(d, priority));
+            if (allowed.length) {
+                try {
+                    await Promise.all(allowed.map(d => this.voice!.announce(d, pcm, sampleRate)));
+                    delivered += allowed.length;
+                    if (listen) {
+                        allowed.forEach(d => this.voice!.listen(d));
+                    }
+                } catch (e) {
+                    this.log.debug(`UDP announce failed: ${(e as Error).message}`);
+                }
+            }
+        }
+        // ── ESPHome satellites: they fetch the clip from the media server by URL ──
+        if (this.esphome && !(targetId && this.nativeSatFrom.has(targetId))) {
+            const device = targetId ? this.satDeviceById.get(targetId) || targetId : null;
+            const allowed = this.esphome
+                .devices()
+                .filter(d => (!device || d === device) && !this.isDeviceSilenced(d, priority));
             try {
-                await this.voice.announce(device, pcm, sampleRate);
-                delivered++;
+                const counts = await Promise.all(allowed.map(d => this.esphome!.announce(d, pcm, sampleRate, listen)));
+                delivered += counts.reduce((sum, n) => sum + n, 0);
             } catch (e) {
-                this.log.debug(`UDP announce failed: ${(e as Error).message}`);
+                this.log.debug(`ESPHome announce failed: ${(e as Error).message}`);
             }
         }
         return delivered;
+    }
+
+    /**
+     * Do-Not-Disturb check by satellite state id (`null` = the broadcast itself). A priority announcement
+     * — an `alert` notification or a text starting with `!` — is never suppressed; that is the whole point
+     * of the flag, and a water leak has to be heard at night.
+     */
+    private silenced(satId: string | null, priority: boolean): boolean {
+        if (priority) {
+            return false;
+        }
+        if (this.globalDnd) {
+            return true;
+        }
+        return satId ? this.dndById.get(satId) === true : false;
+    }
+
+    /** Same check, for a transport that knows its satellites by device name rather than by state id. */
+    private isDeviceSilenced(device: string, priority: boolean): boolean {
+        if (priority) {
+            return false;
+        }
+        for (const [satId, dev] of this.satDeviceById) {
+            if (dev === device) {
+                return this.silenced(satId, priority);
+            }
+        }
+        return this.globalDnd;
     }
 
     /**
@@ -828,7 +1537,9 @@ class Assistant extends Adapter {
                 if (session.stopped) {
                     return;
                 }
-                await this.announceToSatellites(message, target).catch(() => {});
+                // Priority like the jingle above: a timer the user set themselves is not an unsolicited
+                // announcement, and hearing the gong followed by silence would be worse than either.
+                await this.announceToSatellites(message, target, { priority: true }).catch(() => {});
             }
             if (session.stopped) {
                 return;
@@ -886,7 +1597,8 @@ class Assistant extends Adapter {
             this.log.debug(`sound play failed: ${(e as Error).message}`);
         }
         if (announce) {
-            await this.announceToSatellites(text, targetId);
+            // Priority, for the same reason as in startRing: the jingle already bypasses Do-Not-Disturb.
+            await this.announceToSatellites(text, targetId, { priority: true });
         }
     }
 
@@ -934,7 +1646,18 @@ class Assistant extends Adapter {
     }
 
     private async onStateChange(id: string, state: ioBroker.State | null | undefined): Promise<void> {
-        if (!state || state.ack) {
+        if (!state) {
+            return;
+        }
+        // Trigger-watched states are routed first and regardless of `ack`: a device confirms its value with
+        // ack:true, which the filter below drops — and those are exactly the changes a trigger reacts to.
+        if (this.triggerStateIds.has(id)) {
+            await this.triggers?.onStateChange(id, state.val);
+        }
+        // Presence states come from devices too (a phone ping, the residents adapter), so they are
+        // read here for the same reason — and one state may well be watched by both.
+        this.presence?.update(id, state.val ?? null);
+        if (state.ack) {
             return;
         } // ignore our own ack-writes
 
@@ -946,6 +1669,20 @@ class Assistant extends Adapter {
         const satTts = id.match(/\.satellites\.([^.]+)\.tts$/);
         if (satTts) {
             await this.announceToSatellites(String(state.val ?? ''), satTts[1]); // satTts[1] = satellite state id
+            return;
+        }
+
+        // Pick which wake words listen on an ESPHome satellite (comma-separated ids).
+        const satWake = id.match(/\.satellites\.([^.]+)\.wakeWords$/);
+        if (satWake) {
+            await this.setSatelliteWakeWords(satWake[1], String(state.val ?? ''));
+            return;
+        }
+
+        // Device settings: mic gain/volume, noise suppression, sensitivities, media player, firmware.
+        const satControl = id.match(/\.satellites\.([^.]+)\.controls\.(.+)$/);
+        if (satControl) {
+            this.setSatelliteControl(satControl[1], satControl[2], state.val ?? null);
             return;
         }
 
@@ -995,6 +1732,55 @@ class Assistant extends Adapter {
         const alarmEnable = id.match(/\.alarms\.items\.([^.]+)\.enabled$/);
         if (alarmEnable) {
             this.alarms?.setEnabled(alarmEnable[1], !!state.val);
+            return;
+        }
+
+        // System notifications: `notify.text` (severity notify) and `notify.alert` (urgent, ignores DND).
+        if (id.endsWith('.notify.text') || id.endsWith('.notify.alert')) {
+            const alert = id.endsWith('.notify.alert');
+            const text = String(state.val ?? '');
+            await this.setStateAsync(alert ? 'notify.alert' : 'notify.text', { val: '', ack: true });
+            await this.notify(text, alert ? 'alert' : 'notify');
+            return;
+        }
+
+        // Do-Not-Disturb: globally and per satellite.
+        if (id.endsWith('.dnd') && !id.includes('.satellites.')) {
+            this.globalDnd = !!state.val;
+            this.log.info(`Do-Not-Disturb ${this.globalDnd ? 'on' : 'off'} (all satellites).`);
+            await this.setStateAsync('dnd', { val: this.globalDnd, ack: true });
+            return;
+        }
+        const satDnd = id.match(/\.satellites\.([^.]+)\.dnd$/);
+        if (satDnd) {
+            this.dndById.set(satDnd[1], !!state.val);
+            this.log.info(`Do-Not-Disturb ${state.val ? 'on' : 'off'} for satellite '${satDnd[1]}'.`);
+            await this.setStateAsync(`satellites.${satDnd[1]}.dnd`, { val: !!state.val, ack: true });
+            return;
+        }
+
+        // Trigger controls: the master switch, the per-trigger enable switch and its test button.
+        if (id.endsWith('.triggers.enabled')) {
+            this.triggersEnabled = !!state.val;
+            this.log.info(`Triggers ${this.triggersEnabled ? 'enabled' : 'disabled'} via triggers.enabled.`);
+            await this.setStateAsync('triggers.enabled', { val: this.triggersEnabled, ack: true });
+            return;
+        }
+        const triggerEnable = id.match(/\.triggers\.items\.([^.]+)\.enabled$/);
+        if (triggerEnable) {
+            if (this.triggers?.setEnabled(triggerEnable[1], !!state.val)) {
+                this.log.info(`Trigger ${triggerEnable[1]} ${state.val ? 'enabled' : 'disabled'}.`);
+            }
+            return;
+        }
+        const triggerFire = id.match(/\.triggers\.items\.([^.]+)\.fire$/);
+        if (triggerFire) {
+            // Ack the button back to false right away, so it can be pressed again while the trigger runs
+            // (a trigger that asks a question keeps us here for up to a minute).
+            await this.setStateAsync(`triggers.items.${triggerFire[1]}.fire`, { val: false, ack: true });
+            if (state.val && !(await this.triggers?.fireNow(triggerFire[1]))) {
+                this.log.warn(`Trigger ${triggerFire[1]} not found.`);
+            }
             return;
         }
 
@@ -1369,6 +2155,75 @@ class Assistant extends Adapter {
             return;
         }
 
+        // Scripts / settings: which wake words an ESPHome satellite offers and which are listening.
+        // message = { device? } — omitted means every connected one.
+        if (obj.command === 'getWakeWords') {
+            const m = (obj.message || {}) as { device?: string };
+            const devices = m.device ? [m.device] : this.esphome?.devices() || [];
+            const payload = this.esphome
+                ? { devices: devices.map(d => ({ device: d, ...(this.esphome?.wakeWords(d) || {}) })) }
+                : { error: 'ESPHome satellites are not enabled' };
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, payload, obj.callback);
+            }
+            return;
+        }
+
+        // Scripts: choose the active wake words. message = { device, wakeWords: string[] | "a,b" }.
+        if (obj.command === 'setWakeWords') {
+            const m = (obj.message || {}) as { device?: string; wakeWords?: string[] | string };
+            const ids = (Array.isArray(m.wakeWords) ? m.wakeWords : String(m.wakeWords ?? '').split(/[,;]/))
+                .map(s => String(s).trim())
+                .filter(Boolean);
+            let payload: Record<string, unknown>;
+            if (!this.esphome) {
+                payload = { error: 'ESPHome satellites are not enabled' };
+            } else if (!m.device) {
+                payload = { error: 'device is required' };
+            } else if (!this.esphome.setWakeWords(m.device, ids)) {
+                payload = { error: `satellite ${m.device} is not connected` };
+            } else {
+                payload = { ok: true };
+            }
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, payload, obj.callback);
+            }
+            return;
+        }
+
+        // Scripts: everything an ESPHome satellite exposes besides the voice pipeline.
+        // message = { device? }; without a device, every connected one is listed.
+        if (obj.command === 'getControls') {
+            const m = (obj.message || {}) as { device?: string };
+            const devices = m.device ? [m.device] : this.esphome?.devices() || [];
+            const payload = this.esphome
+                ? { devices: devices.map(d => ({ device: d, entities: this.esphome?.entities(d) || [] })) }
+                : { error: 'ESPHome satellites are not enabled' };
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, payload, obj.callback);
+            }
+            return;
+        }
+
+        // Scripts: write one of them. message = { device, control: 'mic_volume', value: 2000 }.
+        if (obj.command === 'setControl') {
+            const m = (obj.message || {}) as { device?: string; control?: string; value?: unknown };
+            let payload: Record<string, unknown>;
+            if (!this.esphome) {
+                payload = { error: 'ESPHome satellites are not enabled' };
+            } else if (!m.device || !m.control) {
+                payload = { error: 'device and control are required' };
+            } else if (!this.esphome.setEntity(m.device, m.control, m.value)) {
+                payload = { error: `${m.control} on ${m.device} rejected the value (see the log)` };
+            } else {
+                payload = { ok: true };
+            }
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, payload, obj.callback);
+            }
+            return;
+        }
+
         // Scripts: silence a ringing timer/alarm.
         if (obj.command === 'stopRinging') {
             const n = this.stopRinging();
@@ -1468,6 +2323,95 @@ class Assistant extends Adapter {
             const devices = await this.getDeviceList(lang);
             if (obj.callback) {
                 this.sendTo(obj.from, obj.command, devices, obj.callback);
+            }
+            return;
+        }
+
+        // A notification routed here by the ioBroker notification-manager.
+        if (obj.command === 'sendNotification') {
+            const result = await this.handleSystemNotification(obj.message);
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
+
+        // Speak a system notification: sendTo('assistant.0', 'notify', { text, severity, target }).
+        if (obj.command === 'notify') {
+            const msg = (obj.message || {}) as {
+                text?: string;
+                severity?: string;
+                target?: string;
+                room?: string;
+                onlyWhenHome?: boolean;
+            };
+            const text = String(msg.text ?? '');
+            let result: { spoken?: number; error?: string };
+            if (!text.trim()) {
+                result = { error: 'no text provided' };
+            } else {
+                const where = (msg.target || msg.room || '').trim();
+                const ids = this.resolveTargets(where);
+                const target = where || null;
+                result =
+                    ids && !ids.length
+                        ? { error: `unknown satellite, room or group '${where}'` }
+                        : {
+                              spoken: await this.notify(
+                                  text,
+                                  parseSeverity(msg.severity),
+                                  target,
+                                  msg.onlyWhenHome === true,
+                              ),
+                          };
+            }
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
+
+        // Trigger management for scripts: list them, run one now, enable/disable one.
+        if (obj.command === 'listTriggers') {
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, { triggers: this.triggers?.list() ?? [] }, obj.callback);
+            }
+            return;
+        }
+        if (obj.command === 'fireTrigger' || obj.command === 'setTriggerEnabled') {
+            const msg = (obj.message || {}) as { id?: string; enabled?: boolean };
+            const tid = String(msg.id ?? '').trim();
+            let result: { ok: boolean; error?: string };
+            if (!tid) {
+                result = { ok: false, error: 'no trigger id provided' };
+            } else if (obj.command === 'fireTrigger') {
+                const ok = (await this.triggers?.fireNow(tid)) === true;
+                result = ok ? { ok } : { ok, error: `unknown trigger '${tid}'` };
+            } else {
+                const ok = this.triggers?.setEnabled(tid, msg.enabled !== false) === true;
+                result = ok ? { ok } : { ok, error: `unknown trigger '${tid}'` };
+            }
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
+
+        // The other direction: ask the user something and hand the answer back to the caller.
+        // sendTo('assistant.0', 'askUser', { question, room|target|source, timeoutMs }, cb)
+        if (obj.command === 'askUser') {
+            const result = await this.askUser(
+                (obj.message || {}) as {
+                    question?: string;
+                    text?: string;
+                    target?: string;
+                    room?: string;
+                    source?: string | string[];
+                    timeoutMs?: number;
+                },
+            );
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
             }
             return;
         }
@@ -1613,6 +2557,25 @@ class Assistant extends Adapter {
             const lang = String(this.config.voiceLanguage || this.language || 'en');
             return lang === 'ru' ? 'Хорошо.' : lang === 'de' ? 'Ok.' : 'Okay.';
         }
+        // An open question from `askUser` claims the next utterance of that source as its answer — before
+        // any tier sees it, because the NLU would read a bare "yes"/"the kitchen" as a command of its own.
+        // We stay silent (empty reply): whoever asked decides what to say about the answer.
+        if (this.pending.has(source)) {
+            const asked = this.pending.question(source);
+            if (this.pending.deliver(source, question)) {
+                this.log.info(`Answer to "${asked}" from source '${source || 'any'}': ${question}`);
+                return '';
+            }
+        }
+        // A routine is a macro the user wrote down, so it wins over everything that interprets: the NLU
+        // would find "Licht" in "Gute Nacht, Licht aus" and do half of it, and the LLM would cost a
+        // round-trip for a decision that has already been made.
+        const routine = matchRoutine(question, this.routines);
+        if (routine) {
+            this.log.info(`Routine '${routine.name}' triggered (source='${source}').`);
+            await this.runRoutine(routine, source);
+            return routine.reply;
+        }
         // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
         if (this.config.useLocalNlu) {
             try {
@@ -1635,7 +2598,10 @@ class Assistant extends Adapter {
         // the thread and the tools) handle follow-ups instead.
         if (this.config.useLocalLlm && this.localLlm && !history.length) {
             try {
-                const ans = await this.localLlm.ask(weather ? `${weather}\n\n${question}` : question);
+                // The local model has no tools: without these lines it would invent the weather and guess
+                // who is at home.
+                const facts = [weather, this.buildPresenceContext()].filter(Boolean).join('\n\n');
+                const ans = await this.localLlm.ask(facts ? `${facts}\n\n${question}` : question);
                 if (ans && !isHandoff(ans)) {
                     this.log.info(`Answered by local LLM (source='${source}').`);
                     return ans;
@@ -1659,7 +2625,7 @@ class Assistant extends Adapter {
         const parts = [this.config.systemPrompt || '', followUp, mem, ctx].filter(Boolean);
         const sys = parts.length ? parts.join('\n\n') : undefined;
         this.log.info(
-            `Cloud LLM [${this.agent.model}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}${weather ? ', weather' : ''}) — running tool loop…`,
+            `Cloud LLM [${this.agent.model}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}${weather ? ', weather' : ''}${this.presence?.configured ? ', presence' : ''}) — running tool loop…`,
         );
         // Prepend the current date/time (and the weather line, if a source is configured) to the user turn —
         // cache-safe, see buildTimeContext. The stored history keeps the untouched question.
@@ -1840,10 +2806,12 @@ class Assistant extends Adapter {
             return null; // nothing matched, or one part cannot run here → let the LLM answer the whole thing
         }
         const answers: string[] = [];
+        let failed = false;
         for (const intent of intents) {
             try {
                 answers.push(await this.executeNluIntent(intent, source));
             } catch (e) {
+                failed = true;
                 // Nothing executed yet → hand the whole utterance to the LLM. Afterwards a state has already
                 // been written and the LLM would repeat it, so report the failed part instead of bailing out.
                 if (!answers.length) {
@@ -1856,7 +2824,21 @@ class Assistant extends Adapter {
         if (intents.length > 1) {
             this.log.debug(`NLU handled a combined command (${intents.length} parts).`);
         }
-        return answers.filter(Boolean).join(' ');
+        const answer = answers.filter(Boolean).join(' ');
+        // A switch command that worked needs no sentence: a beep says the same thing a second earlier.
+        // Only for voice (a chat reads its answer), only for control intents (a query's answer IS the
+        // information), and only when nothing failed (an error has to be spoken).
+        if (
+            this.config.confirmWithTone &&
+            answer &&
+            !failed &&
+            intents.every(i => CONTROL_ACTIONS.has(i.action)) &&
+            (await this.playConfirmationTone(source))
+        ) {
+            this.log.debug(`NLU confirmed with a tone instead of "${answer}".`);
+            return '';
+        }
+        return answer;
     }
 
     /**
@@ -2087,6 +3069,10 @@ class Assistant extends Adapter {
         if (intent.action === 'listByState') {
             return this.executeListByState(intent);
         }
+        // Category query ("how is the air in here") — same idea, but reports measurements.
+        if (intent.action === 'categoryQuery') {
+            return this.executeCategoryQuery(intent);
+        }
         const device = intent.device;
         if (!device) {
             return '';
@@ -2144,6 +3130,13 @@ class Assistant extends Adapter {
             `NLU control ${device.name} (${intent.action}): set_state ${intent.stateId} = ${JSON.stringify(intent.value)}`,
         );
         await mcp.callTool('set_state', { id: intent.stateId, value: intent.value });
+        if (!(await this.writeConfirmed(intent.stateId, intent.value))) {
+            return pick(
+                `${dev}${where} не ответило.`,
+                `${dev}${where} hat nicht reagiert.`,
+                `${dev}${where} did not respond.`,
+            );
+        }
         // Secondary write: also flip the device's on/off switch when setting a level (e.g. dimmer that needs
         // an explicit power-on besides the level). Same device → covered by the write-ACL check above.
         if (intent.also) {
@@ -2223,6 +3216,77 @@ class Assistant extends Adapter {
         return pick(`Открыты: ${names}.`, `Offen: ${names}.`, `Open: ${names}.`);
     }
 
+    /**
+     * Answer a question about a kind of measurement: read every device of that kind (optionally in one
+     * room) and name the values. One device gives a short sentence, several give a list — "wie warm ist
+     * es überall" is one question, not five.
+     *
+     * Air quality additionally gets a word for the number, because an IAQ of 85 means nothing to anyone
+     * (the scale and the wording come from the Python original, `core/hannah/iobroker.py` `_iaq_label`).
+     */
+    private async executeCategoryQuery(intent: NluIntent): Promise<string> {
+        const mcp = this.mcp;
+        if (!mcp) {
+            throw new Error('mcp not ready');
+        }
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const ru = lang === 'ru';
+        const de = lang === 'de';
+        const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
+
+        const acl = this.config.deviceAcl || {};
+        const list = (intent.devices || [])
+            .map(d => {
+                const ids = Object.values(d.controls);
+                return { name: d.name, room: d.room, key: deviceKey(ids), stateId: ids[0] };
+            })
+            .filter(d => d.stateId && acl[d.key]?.read !== false);
+        if (!list.length) {
+            return pick('Нет подходящих датчиков.', 'Keine passenden Sensoren gefunden.', 'No matching sensors found.');
+        }
+
+        let states: { id?: string; value?: unknown }[] = [];
+        try {
+            const res = await mcp.callTool('get_states', { ids: list.map(d => d.stateId) });
+            states =
+                (JSON.parse(res.text) as { data?: { states?: { id?: string; value?: unknown }[] } }).data?.states || [];
+        } catch {
+            states = [];
+        }
+        const valueById = new Map(states.map(st => [st.id, st.value]));
+
+        const parts: string[] = [];
+        for (const device of list) {
+            const value = valueById.get(device.stateId);
+            if (value === undefined || value === null) {
+                continue; // a sensor without a reading adds nothing to a spoken answer
+            }
+            let unit = '';
+            try {
+                const obj = await this.getForeignObjectAsync(device.stateId);
+                unit = (obj?.common as { unit?: string } | undefined)?.unit || '';
+            } catch {
+                /* no unit */
+            }
+            let text = this.describeValue(value, lang, unit);
+            if (intent.category === 'airQuality') {
+                const label = iaqLabel(value, unit, lang);
+                if (label) {
+                    text = `${text} (${label})`;
+                }
+            }
+            // In one room the room name is already given; across rooms it is the useful half.
+            const where = intent.room ? device.name : device.room || device.name;
+            parts.push(`${where}: ${text}`);
+        }
+        if (!parts.length) {
+            return pick('Нет данных.', 'Dazu liegen keine Werte vor.', 'There are no readings for that.');
+        }
+        const where = intent.room ? ` (${intent.room})` : '';
+        const heading = CATEGORY_LABELS[intent.category || '']?.[ru ? 'ru' : de ? 'de' : 'en'] || '';
+        return `${heading}${where}: ${parts.join(', ')}.`;
+    }
+
     /** Human-readable rendering of a state value for NLU query responses (spoken aloud). */
     private describeValue(value: unknown, lang: string, unit = ''): string {
         const ru = lang === 'ru';
@@ -2262,8 +3326,14 @@ class Assistant extends Adapter {
         this.timers = new TimerManager({
             now: () => Date.now(),
             log: this.log,
-            onFire: t => this.onTimerFired(t),
-            onChange: list => void this.renderTimers(list).catch(e => this.log.debug(`renderTimers: ${e}`)),
+            onFire: t => {
+                this.mirrorTimer(t, 'finished');
+                this.onTimerFired(t);
+            },
+            onChange: list => {
+                this.mirrorTimerList(list);
+                void this.renderTimers(list).catch(e => this.log.debug(`renderTimers: ${e}`));
+            },
         });
         // Cancel controls: the global "cancel all" and each per-timer `.cancel` button.
         this.subscribeStates('timers.cancelAll');
@@ -2272,6 +3342,52 @@ class Assistant extends Adapter {
         await this.delObjectAsync('timers.items', { recursive: true }).catch(() => {});
         this.timerObjIds.clear();
         await this.restoreTimers();
+    }
+
+    /**
+     * Push the active timer list to the ESPHome satellites, which show a running timer on their own LED
+     * ring and ring it themselves (feature flag TIMERS). The device keeps its own copy, so it only needs
+     * the transitions: a timer it has not seen is `started`, one that vanished without firing was
+     * `cancelled`, and {@link mirrorTimer} reports `finished` from the fire callback.
+     *
+     * A timer is mirrored to the satellite it was set from, or broadcast when it came from elsewhere
+     * (chat, telegram, a script) — otherwise setting a timer by text would leave every speaker silent.
+     */
+    private mirrorTimerList(list: TimerInfo[]): void {
+        if (!this.esphome) {
+            return;
+        }
+        const live = new Map(list.map(t => [t.id, t]));
+        for (const [id, previous] of this.mirroredTimers) {
+            if (!live.has(id)) {
+                this.mirrorTimer(previous, 'cancelled');
+            }
+        }
+        for (const timer of list) {
+            this.mirrorTimer(timer, this.mirroredTimers.has(timer.id) ? 'updated' : 'started');
+        }
+        this.mirroredTimers = live;
+    }
+
+    /** Send one timer transition to the satellite it belongs to (or all, when its origin is not one). */
+    private mirrorTimer(timer: TimerInfo, type: TimerEvent['type']): void {
+        if (!this.esphome) {
+            return;
+        }
+        const known = this.esphome.devices();
+        const target = known.includes(timer.source) ? timer.source : null;
+        const event: TimerEvent = {
+            type,
+            id: timer.id,
+            name: timer.label || '',
+            totalSeconds: timer.duration,
+            secondsLeft: Math.max(0, Math.round((timer.fireAt - Date.now()) / 1000)),
+            active: type === 'started' || type === 'updated',
+        };
+        this.esphome.timerEvent(target, event);
+        if (type === 'cancelled' || type === 'finished') {
+            this.mirroredTimers.delete(timer.id);
+        }
     }
 
     /** Restore timers persisted in `timers.list` across a restart (future ones rescheduled, expired dropped). */
@@ -2410,6 +3526,166 @@ class Assistant extends Adapter {
             return source;
         }
         return null;
+    }
+
+    /**
+     * Resolve an announcement target to satellite state ids: `null` means every satellite (an empty name
+     * or `all`), an empty array means the name is unknown — the caller decides whether that is an error
+     * (`askUser`) or a warning (an announcement).
+     *
+     * A concrete satellite or room wins over a configured group of the same name, so naming a group after
+     * a room can never make that room's speaker unreachable (the rule comes from the Python original,
+     * `core/main.py:717`).
+     */
+    private resolveTargets(target: string | null | undefined): string[] | null {
+        if (isBroadcast(target)) {
+            return null;
+        }
+        const wanted = String(target).trim();
+        const direct = this.resolveSatelliteId(wanted);
+        if (direct) {
+            return [direct];
+        }
+        const group = findTarget(wanted, this.announceTargets);
+        if (!group) {
+            return [];
+        }
+        const ids = [...new Set(group.members.map(m => this.resolveSatelliteId(m)).filter((id): id is string => !!id))];
+        if (!ids.length) {
+            this.log.warn(`Target '${group.name}' has no known satellite among: ${group.members.join(', ')}`);
+        } else if (ids.length < group.members.length) {
+            this.log.debug(`Target '${group.name}' → ${ids.join(', ')} (some members are not known satellites)`);
+        }
+        return ids;
+    }
+
+    /**
+     * Resolve what a caller named — a satellite state id (`satellites.kitchen`, `kitchen`), a room name or
+     * a device name — to a known satellite state id, or null if we have never seen it. Rooms resolve like
+     * ids because a satellite's state id *is* its sanitised room name (see {@link satelliteStateId}).
+     */
+    private resolveSatelliteId(nameOrId: string): string | null {
+        const raw = (nameOrId || '').trim();
+        if (!raw) {
+            return null;
+        }
+        const bare = raw.replace(`${this.namespace}.`, '').replace(/^satellites\./, '');
+        const id = this.satelliteStateId(bare, '');
+        if (this.satDeviceById.has(id) || this.nativeSatFrom.has(id)) {
+            return id;
+        }
+        // Not an id — maybe the device name behind one.
+        return this.announceTargetForSource(raw);
+    }
+
+    /**
+     * Ask the user something and wait for the answer: speak the question on the target satellite(s), have
+     * them re-open the microphone, and resolve with whatever is said next there — the utterance is routed
+     * to the caller instead of to the NLU/LLM (see {@link PendingQuestions}).
+     *
+     * `target`/`room` pick a satellite (omit both → every satellite, first answer wins). `source` instead
+     * arms a text channel (e.g. `'chat'`, `'telegram:Max'`) without speaking anything: there the caller
+     * sends the question itself and we only claim the reply.
+     *
+     * This is what the proactive triggers (roadmap A2) will use, and it is available to scripts:
+     * `sendTo('assistant.0', 'askUser', { question: 'Fenster schließen?', room: 'Küche' }, cb)`.
+     */
+    private async askUser(msg: {
+        question?: string;
+        text?: string;
+        target?: string;
+        room?: string;
+        source?: string | string[];
+        timeoutMs?: number;
+    }): Promise<{ question?: string; answer?: string; timeout?: boolean; error?: string }> {
+        const question = String(msg.question ?? msg.text ?? '').trim();
+        if (!question) {
+            return { error: 'no question provided' };
+        }
+        const timeoutMs = Math.max(1000, Number(msg.timeoutMs) || ASK_TIMEOUT_MS);
+
+        // Text channel: arm the named sources only — the caller does its own output.
+        const sources = (Array.isArray(msg.source) ? msg.source : msg.source ? [msg.source] : [])
+            .map(s => String(s).trim())
+            .filter(Boolean);
+        if (sources.length) {
+            this.log.info(`askUser (waiting on ${sources.join(', ')}, ${timeoutMs} ms): ${question}`);
+            const answer = await this.pending.ask(sources, question, timeoutMs);
+            return answer === null ? { question, timeout: true } : { question, answer };
+        }
+
+        // Voice: resolve the target before arming, so a typo doesn't leave a question hanging. A group
+        // or a person resolves to several satellites — the question is asked on all of them and the
+        // first answer counts, which is what asking a room full of speakers means.
+        const target = (msg.target || msg.room || '').trim();
+        const targetIds = this.resolveTargets(target);
+        if (targetIds && !targetIds.length) {
+            return { error: `unknown satellite, room or group '${target}'` };
+        }
+        const keys = targetIds ? targetIds.map(id => this.satDeviceById.get(id) || id) : [ANY_SOURCE];
+        this.log.info(
+            `askUser → ${targetIds ? targetIds.join(', ') : 'all satellites'} (${timeoutMs} ms): ${question}`,
+        );
+        if (!(await this.announceToSatellites(question, target || null, { listen: true }))) {
+            return { error: 'question not asked — no satellite reachable' };
+        }
+        // Armed only now, on purpose: the answer cannot arrive before the device has played the question,
+        // so arming earlier would just risk claiming an utterance that was never meant as the answer.
+        const answer = await this.pending.ask(keys, question, timeoutMs);
+        if (answer === null) {
+            this.log.info(`askUser: no answer within ${timeoutMs} ms.`);
+            return { question, timeout: true };
+        }
+        return { question, answer };
+    }
+
+    /**
+     * Wait for the device to confirm a write, if the user asked for that (`verifyWrites`). ioBroker's
+     * convention is that a command is written with `ack:false` and the device echoes the value back with
+     * `ack:true` once it really happened — so without this check the assistant reports success for a
+     * lamp that never answered.
+     *
+     * Polled rather than subscribed: a one-off poll of one state is cheap, while a temporary
+     * subscription would have to be registered, routed through `onStateChange` and torn down again for
+     * every single command. Returns true when it is confirmed — and also when verification is switched
+     * off or impossible, because a check that cannot run must not turn into a false alarm.
+     */
+    private async writeConfirmed(stateId: string | undefined, expected: unknown): Promise<boolean> {
+        if (!this.config.verifyWrites || !stateId) {
+            return true;
+        }
+        const deadline = Date.now() + ACK_TIMEOUT_MS;
+        let last: ioBroker.State | null | undefined;
+        while (Date.now() < deadline) {
+            await this.delay(ACK_POLL_MS);
+            last = await this.getForeignStateAsync(stateId).catch(() => null);
+            if (last?.ack && valuesMatch(last.val, expected)) {
+                this.log.debug(`write to ${stateId} confirmed by the device.`);
+                return true;
+            }
+        }
+        this.log.warn(
+            `No confirmation for ${stateId} within ${ACK_TIMEOUT_MS} ms ` +
+                `(last: ${JSON.stringify(last?.val)}, ack=${String(last?.ack)}). ` +
+                'If this device never acknowledges, switch "Verify device feedback" off.',
+        );
+        return false;
+    }
+
+    /**
+     * Play the confirmation beep on the satellite a command came from. Returns false when there is nowhere
+     * to play it (a text channel, or no satellite reachable) — the caller then speaks the reply instead,
+     * because a confirmation nobody hears is worse than one that costs a TTS call.
+     */
+    private async playConfirmationTone(source: string): Promise<boolean> {
+        const target = this.announceTargetForSource(source);
+        if (!target) {
+            return false; // chat/telegram/unknown origin: there is no speaker to beep on
+        }
+        const { pcm, sampleRate } = confirmationTone();
+        // Priority: this is the answer to something the user just asked for, not an unsolicited noise.
+        const delivered = await this.deliverPcm(pcm, sampleRate, target, true);
+        return delivered > 0;
     }
 
     /** Execute a timer intent (set/query/cancel) from the NLU and return a spoken-style reply. */
@@ -2864,6 +4140,470 @@ class Assistant extends Adapter {
                 },
             },
         ];
+    }
+
+    // ── Announcements by name (roadmap B2) ──────────────────────────────────
+
+    /**
+     * Tool that lets the model speak somewhere instead of answering: "tell Denis dinner is ready", "let
+     * everyone upstairs know". Without it a model can read and switch states but has no way to make a
+     * speaker say something, so the configured groups and people would only be reachable from scripts.
+     *
+     * The configured names go into the description, because the model cannot discover them otherwise.
+     */
+    private buildAnnounceTool(): Tool {
+        const named = describeTargets(this.announceTargets);
+        return {
+            name: 'announce',
+            description:
+                `Speak a message out loud on a voice satellite — use it when the user asks you to tell ` +
+                `somebody something, or to announce something in a room. Not for answering the user: your ` +
+                `normal reply is already spoken. "target" is a room, a satellite name${
+                    named ? `, or one of the configured ${named}` : ''
+                }; leave it out to announce everywhere.`,
+            parameters: {
+                type: 'object',
+                properties: {
+                    text: { type: 'string', description: 'What to say, as one spoken sentence' },
+                    target: { type: 'string', description: 'Room, satellite, group or person (empty = all)' },
+                },
+                required: ['text'],
+                additionalProperties: false,
+            },
+            run: async (args): Promise<string> => {
+                // The arguments come from the model, so a non-string is simply not a text.
+                const text = typeof args.text === 'string' ? args.text.trim() : '';
+                if (!text) {
+                    return JSON.stringify({ ok: false, error: 'no text given' });
+                }
+                const target = typeof args.target === 'string' ? args.target.trim() : '';
+                const spoken = await this.announceToSatellites(text, target || null);
+                return spoken
+                    ? JSON.stringify({ ok: true, data: { spoken } })
+                    : JSON.stringify({
+                          ok: false,
+                          error: target
+                              ? `nothing was played — '${target}' is no known satellite, room or group, or it is offline`
+                              : 'nothing was played — no satellite is reachable',
+                      });
+            },
+        };
+    }
+
+    // ── Presence: who is at home (roadmap B1) ───────────────────────────────
+
+    /**
+     * Build the presence tracker from the configured states, subscribe to them and mirror the result into
+     * `presence.*`. The values are read once up front, because a presence state only reports when it
+     * changes — without that, the assistant would believe nobody is home until the first person moves.
+     */
+    private async setupPresence(): Promise<void> {
+        const entries = parsePresenceRows(this.config.presence);
+        this.presence = new PresenceTracker({
+            entries,
+            log: this.log,
+            onChange: list => void this.renderPresence(list).catch(e => this.log.debug(`renderPresence: ${e}`)),
+            onArrival: who => {
+                this.setStateAsync('presence.lastArrival', { val: who.name, ack: true }).catch(() => {});
+            },
+            onDeparture: who => {
+                this.setStateAsync('presence.lastDeparture', { val: who.name, ack: true }).catch(() => {});
+            },
+        });
+        if (!entries.length) {
+            return;
+        }
+        for (const id of this.presence.stateIds()) {
+            await this.subscribeForeignStatesAsync(id).catch(e =>
+                this.log.warn(`presence: cannot watch '${id}': ${(e as Error).message}`),
+            );
+            const st = await this.getForeignStateAsync(id).catch(() => null);
+            this.presence.update(id, st?.val ?? null);
+        }
+        await this.renderPresence(this.presence.list());
+        this.log.info(
+            `Presence: ${entries.length} source(s) configured, ${this.presence.home().length} at home right now.`,
+        );
+    }
+
+    /** Mirror who is at home into `presence.{anyoneHome,count,list}`. */
+    private async renderPresence(list: PresenceInfo[]): Promise<void> {
+        const home = list.filter(p => p.home === true && p.kind !== 'pet');
+        await this.setStateAsync('presence.anyoneHome', { val: home.length > 0, ack: true });
+        await this.setStateAsync('presence.count', { val: home.length, ack: true });
+        await this.setStateAsync('presence.list', { val: JSON.stringify(list), ack: true });
+    }
+
+    /**
+     * Who is at home, as one line for the user turn — never for the (prompt-cached) system prompt: it
+     * changes with every arrival and would bust the cache, device list included. Empty when no presence
+     * source is configured or nothing is known yet.
+     */
+    private buildPresenceContext(): string {
+        if (!this.presence?.configured) {
+            return '';
+        }
+        return buildPresencePrompt(this.presence.list(), String(this.config.voiceLanguage || this.language || 'en'));
+    }
+
+    /**
+     * Should an announcement that asked to be spoken only to an occupied house be held back? With no
+     * presence source configured the answer is no — "nobody configured" must not read as "nobody home",
+     * or the feature would silence every announcement the moment someone ticks the box.
+     */
+    private emptyHouse(): boolean {
+        return this.presence?.configured === true && !this.presence.anyoneHome();
+    }
+
+    // ── System notifications (roadmap A3) ───────────────────────────────────
+
+    /**
+     * Speak a system notification. The text is cleaned of ioBroker's origin prefixes and — unless the
+     * severity is `direct` or rewording is switched off — reworded by the LLM into one spoken sentence
+     * with a tone matching the severity, because the raw texts are written for a log viewer.
+     *
+     * An `alert` is delivered as a **priority** announcement, so it is heard even on a satellite set to
+     * Do-Not-Disturb; everything else respects DND. Returns how many channels it reached.
+     */
+    private async notify(
+        raw: string,
+        severity: Severity,
+        target: string | null = null,
+        onlyWhenHome = false,
+    ): Promise<number> {
+        const clean = cleanupNotificationText(raw);
+        if (!clean) {
+            return 0;
+        }
+        let text = clean;
+        if (severity !== 'direct' && this.config.notifyRephrase !== false && this.agent) {
+            text = await this.agent.rewordNotification(
+                clean,
+                toneFor(severity),
+                this.config.voiceLanguage || this.language || '',
+                this.config.systemPrompt,
+            );
+        }
+        this.log.info(`Notification (${severity}): ${text}`);
+        this.setStateAsync('notify.last', { val: text, ack: true }).catch(() => {});
+        return this.announceToSatellites(text, target, { priority: bypassesDnd(severity), onlyWhenHome });
+    }
+
+    /**
+     * Handle a notification routed here by the ioBroker notification-manager (`sendNotification` message,
+     * advertised through `common.supportedMessages.notifications`). Answers `{ sent }`, which tells the
+     * manager whether it may mark the notification as handled — so we only claim it when it was actually
+     * spoken somewhere.
+     *
+     * The payload shape belongs to the notification-manager and is parsed defensively
+     * ({@link flattenNotification}): a changed field degrades the spoken sentence, it never throws.
+     */
+    private async handleSystemNotification(message: unknown): Promise<{ sent: boolean }> {
+        const flat = flattenNotification(message, String(this.config.voiceLanguage || this.language || 'en'));
+        if (!flat.text) {
+            this.log.warn('Notification from the notification-manager had nothing to speak.');
+            return { sent: false };
+        }
+        this.log.debug(`Notification (${flat.severity}) from category '${flat.category}': ${flat.text}`);
+        const delivered = await this.notify(flat.text, flat.severity);
+        return { sent: delivered > 0 };
+    }
+
+    // ── Proactive triggers (roadmap A2) ─────────────────────────────────────
+
+    /**
+     * Build the trigger engine from the configured definitions, mirror it into `triggers.*` and subscribe
+     * to exactly the foreign states the conditions reference — nothing broader, because a wildcard
+     * subscription on a busy system would wake this adapter for every state in the house.
+     */
+    private async setupTriggers(): Promise<void> {
+        this.triggers = new TriggerEngine({
+            now: () => Date.now(),
+            log: this.log,
+            getState: async id => {
+                const st = await this.getForeignStateAsync(id).catch(() => null);
+                return st?.val ?? undefined;
+            },
+            execute: def => this.executeTrigger(def),
+            onChange: status => void this.renderTriggers(status).catch(e => this.log.debug(`renderTriggers: ${e}`)),
+        });
+        this.subscribeStates('triggers.enabled');
+        this.subscribeStates('triggers.items.*');
+        // Per-trigger objects are rebuilt from the configuration, so drop whatever a previous run left.
+        await this.delObjectAsync('triggers.items', { recursive: true }).catch(() => {});
+        this.triggerObjIds.clear();
+
+        const master = await this.getStateAsync('triggers.enabled');
+        this.triggersEnabled = master?.val !== false;
+        const persisted = await this.readTriggerStatus();
+        this.triggers.load(this.getTriggerDefs());
+        if (persisted.length) {
+            this.triggers.restore(persisted);
+        }
+        await this.syncTriggerSubscriptions();
+        // Remember the current values before the first change arrives, so a device that re-reports an
+        // unchanged value right after the start does not look like a transition.
+        await this.triggers.prime();
+        const n = this.triggers.list().length;
+        if (n) {
+            this.log.info(
+                `Triggers: ${n} loaded, watching ${this.triggerStateIds.size} state(s)${this.triggersEnabled ? '' : ' — all suppressed by triggers.enabled'}.`,
+            );
+        }
+    }
+
+    /** The configured triggers, with the table's JSON columns parsed (see {@link parseTriggerRows}). */
+    private getTriggerDefs(): TriggerDef[] {
+        return parseTriggerRows(this.config.triggers, {
+            rephraseDefault: this.config.triggerRephrase === true,
+            warn: message => this.log.warn(message),
+        });
+    }
+
+    /** Subscribe to the states the loaded triggers watch, and drop subscriptions nothing watches any more. */
+    private async syncTriggerSubscriptions(): Promise<void> {
+        const wanted = new Set(this.triggers?.stateIds() ?? []);
+        // A presence source may be the same state a trigger watches — dropping the subscription here would
+        // silently stop the presence updates too.
+        const keep = new Set(this.presence?.stateIds() ?? []);
+        for (const id of [...this.triggerStateIds]) {
+            if (!wanted.has(id)) {
+                if (!keep.has(id)) {
+                    await this.unsubscribeForeignStatesAsync(id).catch(() => {});
+                }
+                this.triggerStateIds.delete(id);
+            }
+        }
+        for (const id of wanted) {
+            if (!this.triggerStateIds.has(id)) {
+                await this.subscribeForeignStatesAsync(id).catch(e =>
+                    this.log.warn(`trigger: cannot watch '${id}': ${(e as Error).message}`),
+                );
+                this.triggerStateIds.add(id);
+            }
+        }
+    }
+
+    /** Live status (enabled flag, last fire) persisted in `triggers.list`, so a restart keeps both. */
+    private async readTriggerStatus(): Promise<TriggerStatus[]> {
+        try {
+            const st = await this.getStateAsync('triggers.list');
+            if (typeof st?.val === 'string' && st.val) {
+                const arr = JSON.parse(st.val);
+                return Array.isArray(arr) ? (arr as TriggerStatus[]) : [];
+            }
+        } catch (e) {
+            this.log.debug(`readTriggerStatus failed: ${(e as Error).message}`);
+        }
+        return [];
+    }
+
+    /** Mirror the trigger status into the summary states and the per-trigger `triggers.items.<id>` objects. */
+    private async renderTriggers(status: TriggerStatus[]): Promise<void> {
+        await this.setStateAsync('triggers.count', { val: status.length, ack: true });
+        await this.setStateAsync('triggers.list', { val: JSON.stringify(status), ack: true });
+
+        const wanted = new Set(status.map(t => t.id));
+        for (const id of [...this.triggerObjIds]) {
+            if (!wanted.has(id)) {
+                await this.delObjectAsync(`triggers.items.${id}`, { recursive: true }).catch(() => {});
+                this.triggerObjIds.delete(id);
+            }
+        }
+        if (status.length) {
+            await this.setObjectNotExistsAsync('triggers.items', {
+                type: 'channel',
+                common: { name: 'Triggers' },
+                native: {},
+            });
+        }
+        for (const t of status) {
+            await this.ensureTriggerObject(t);
+        }
+    }
+
+    /** Create (once) and update the `triggers.items.<id>.*` states for a single trigger. */
+    private async ensureTriggerObject(t: TriggerStatus): Promise<void> {
+        const base = `triggers.items.${t.id}`;
+        if (!this.triggerObjIds.has(t.id)) {
+            await this.setObjectNotExistsAsync(base, {
+                type: 'channel',
+                common: { name: t.name || t.id },
+                native: {},
+            });
+            const mk = (sub: string, common: ioBroker.StateCommon): Promise<unknown> =>
+                this.setObjectNotExistsAsync(`${base}.${sub}`, { type: 'state', common, native: {} });
+            await mk('name', { name: 'Name', type: 'string', role: 'text', read: true, write: false });
+            await mk('lastFired', { name: 'Last fired', type: 'number', role: 'value.time', read: true, write: false });
+            await mk('nextFireAt', {
+                name: 'Next scheduled fire (time triggers)',
+                type: 'number',
+                role: 'value.time',
+                read: true,
+                write: false,
+            });
+            await mk('pendingUntil', {
+                name: 'Pending delay runs at (0 = nothing pending)',
+                type: 'number',
+                role: 'value.time',
+                read: true,
+                write: false,
+            });
+            await mk('enabled', {
+                name: 'Enabled',
+                type: 'boolean',
+                role: 'switch.enable',
+                read: true,
+                write: true,
+                def: true,
+            });
+            await mk('fire', {
+                name: 'Run this trigger now (ignores cooldown and delay)',
+                type: 'boolean',
+                role: 'button',
+                read: false,
+                write: true,
+                def: false,
+            });
+            this.triggerObjIds.add(t.id);
+        }
+        await this.setStateAsync(`${base}.name`, { val: t.name, ack: true });
+        await this.setStateAsync(`${base}.lastFired`, { val: t.lastFired, ack: true });
+        await this.setStateAsync(`${base}.nextFireAt`, { val: t.nextFireAt, ack: true });
+        await this.setStateAsync(`${base}.pendingUntil`, { val: t.pendingUntil, ack: true });
+        await this.setStateAsync(`${base}.enabled`, { val: t.enabled, ack: true });
+    }
+
+    /**
+     * Run a trigger: either ask the user and act on the answer, or run its actions. The master switch
+     * (`triggers.enabled`) is checked here rather than in the engine, so the schedule keeps running and
+     * only the visible/audible effect is suppressed.
+     */
+    private async executeTrigger(def: TriggerDef): Promise<void> {
+        if (!this.triggersEnabled) {
+            this.log.debug(`trigger '${def.id}' suppressed — triggers.enabled is off`);
+            return;
+        }
+        this.setStateAsync('triggers.lastFired', { val: def.name || def.id, ack: true }).catch(() => {});
+        if (def.ask) {
+            await this.askTrigger(def);
+            return;
+        }
+        for (const action of effectiveActions(def)) {
+            await this.runTriggerAction(def, action);
+        }
+    }
+
+    /**
+     * Where a trigger speaks or asks. Empty (or Hannah's `all`, which people copy from its examples) means
+     * every satellite; a configured room we do not know is worth a warning, because announcing everywhere
+     * instead of in one room is the kind of surprise that should not stay silent in the log.
+     */
+    private triggerTarget(def: TriggerDef, room: string | undefined): string | null {
+        if (isBroadcast(room)) {
+            return null;
+        }
+        const wanted = String(room).trim();
+        const ids = this.resolveTargets(wanted);
+        if (ids && !ids.length) {
+            this.log.warn(`trigger '${def.id}': '${wanted}' is no known satellite, room or group — using all of them`);
+            return null;
+        }
+        return wanted;
+    }
+
+    /** Ask the trigger's question, then let the first matching response rule decide what happens. */
+    private async askTrigger(def: TriggerDef): Promise<void> {
+        const question = await this.triggerText(def, def.ask || '');
+        const target = this.triggerTarget(def, def.room);
+        const result = await this.askUser({ question, target: target || undefined });
+        if (result.error) {
+            this.log.warn(`trigger '${def.id}': could not ask — ${result.error}`);
+            return;
+        }
+        if (result.timeout || !result.answer) {
+            this.log.info(`trigger '${def.id}': no answer — nothing done`);
+            return;
+        }
+        const rules = def.onResponse || [];
+        let fallback: TriggerResponseRule | undefined;
+        for (const rule of rules) {
+            const want = (rule.match || '').trim();
+            if (!want) {
+                fallback ??= rule; // a rule without a category is the "didn't understand" case
+                continue;
+            }
+            if (!this.agent) {
+                this.log.warn(`trigger '${def.id}': no LLM to match the answer against '${want}'`);
+                break;
+            }
+            if (await this.agent.classify(result.answer, want)) {
+                this.log.info(`trigger '${def.id}': answer matched '${want}'`);
+                await this.runTriggerAction(def, rule);
+                return;
+            }
+        }
+        if (fallback) {
+            await this.runTriggerAction(def, fallback);
+        } else {
+            this.log.info(`trigger '${def.id}': answer "${result.answer}" matched no rule`);
+        }
+    }
+
+    /** Speak a trigger's `say` and/or write its `setState` — shared by the actions and the response rules. */
+    private async runTriggerAction(
+        def: TriggerDef,
+        action: TriggerAction | TriggerResponseRule,
+        fallbackTarget: string | null = null,
+    ): Promise<void> {
+        const say = (action.say || '').trim();
+        if (say) {
+            const room = 'room' in action ? action.room : def.room;
+            // A routine speaks where it was asked for, unless the action names a room of its own.
+            const target = this.triggerTarget(def, room) ?? fallbackTarget;
+            await this.announceToSatellites(await this.triggerText(def, say), target);
+        }
+        const write = action.setState;
+        if (write?.id) {
+            // Deliberately gated: someone who switched device control off does not expect a trigger to
+            // write states behind that setting.
+            if (!this.config.allowWriteStates) {
+                this.log.warn(
+                    `trigger '${def.id}': not writing ${write.id} — device control is disabled in the settings`,
+                );
+                return;
+            }
+            try {
+                await this.setForeignStateAsync(write.id, { val: write.value, ack: false });
+                this.log.info(`trigger '${def.id}': ${write.id} = ${JSON.stringify(write.value)}`);
+            } catch (e) {
+                this.log.warn(`trigger '${def.id}': cannot write ${write.id}: ${(e as Error).message}`);
+            }
+        }
+    }
+
+    /**
+     * Run a routine's actions. They are {@link TriggerAction}s, so this borrows the trigger executor — a
+     * routine really is a trigger whose condition is a spoken phrase. A failing action is logged and the
+     * rest still runs: most of a "good night" is better than none of it.
+     */
+    private async runRoutine(routine: Routine, source: string): Promise<void> {
+        const origin = this.announceTargetForSource(source);
+        for (const action of routine.actions) {
+            try {
+                await this.runTriggerAction({ id: `routine:${routine.name}`, when: [] }, action, origin);
+            } catch (e) {
+                this.log.warn(`Routine '${routine.name}': an action failed — ${(e as Error).message}`);
+            }
+        }
+    }
+
+    /** A trigger's text, optionally reworded by the LLM so a recurring announcement doesn't sound canned. */
+    private async triggerText(def: TriggerDef, text: string): Promise<string> {
+        if (!def.rephrase || !this.agent || !text) {
+            return text;
+        }
+        return this.agent.rephrase(text, this.config.voiceLanguage || this.language || '', this.config.systemPrompt);
     }
 
     // ── Long-term memory (roadmap #6) ───────────────────────────────────────
@@ -3558,6 +5298,12 @@ class Assistant extends Adapter {
             // ignore
         }
         try {
+            // Resolve open questions with null instead of leaving their callers waiting for a timeout.
+            this.pending.cancelAll();
+        } catch {
+            // ignore
+        }
+        try {
             this.timers?.dispose();
         } catch {
             // ignore
@@ -3568,12 +5314,27 @@ class Assistant extends Adapter {
             // ignore
         }
         try {
+            this.triggers?.dispose();
+        } catch {
+            // ignore
+        }
+        try {
             await this.voice?.stop();
         } catch {
             // ignore
         }
         try {
             await this.wyoming?.stop();
+        } catch {
+            // ignore
+        }
+        try {
+            await this.esphome?.stop();
+        } catch {
+            // ignore
+        }
+        try {
+            await this.media?.stop();
         } catch {
             // ignore
         }

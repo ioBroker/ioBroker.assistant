@@ -19,6 +19,247 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Quick Wins aus dem Hannah-Abgleich (alle zehn)** — vier neue Module plus Erweiterungen:
+  - `src/lib/voice/ttsCache.ts` — `CachedTts` umhüllt **jede** TTS-Engine (in `engines.ts.createTtsEngine`,
+    damit Satelliten, Durchsagen, Test-Chat und `tts`-sendTo dasselbe Verhalten haben): Plattencache
+    (Verzeichnis pro Anbieter+Stimme, Sample-Rate im Dateikopf → nie falsche Tonhöhe, Key =
+    sha256(lang+text), nur Texte ≤200 Zeichen — lange Einmal-Antworten füllen sonst die Platte —, LRU-Prune
+    auf 64 MB), `truncateForTts` (400 Zeichen, Schnitt am letzten passenden Satzende; SSML wird nie
+    geschnitten) und SSML-Routing. `TtsEngine` hat dafür optionale `synthesizeSsml`/`warm`-Hooks;
+    `azure.ts` (`speakSsmlAsync`) und `aws.ts` (`TextType:'ssml'`) implementieren SSML nativ, alle anderen
+    bekommen `stripSsml()` statt vorgelesener Tags.
+  - `src/lib/voice/fallback.ts` — `FallbackStt`/`FallbackTts`: eine zweite Engine bei Ausfall (Config
+    `sttFallback`/`ttsFallback`, typisch Vosk/Piper hinter der Cloud). **Fallback außen, Cache innen**,
+    sonst landet die Reserve-Stimme im Cache der Hauptstimme; Preis ist ein fehlgeschlagener Erstversuch pro
+    Äußerung während einer Störung. Jeder Fehler eskaliert (Provider-Fehler zu klassifizieren wäre Raten
+    über drei SDKs). `prepare()` bereitet beide vor, `warm()` nur die primäre.
+  - `src/lib/voice/tone.ts` — `confirmationTone()` (Sinus, 1318 Hz, 300 ms, schneller Attack + exp. Decay,
+    deterministisch). `main.ts.playConfirmationTone()` spielt ihn auf dem Ursprungs-Satelliten statt einer
+    gesprochenen Bestätigung; nur bei Voice-Quelle, nur bei reinen Control-Intents (`CONTROL_ACTIONS`), nur
+    wenn nichts fehlschlug. Config `confirmWithTone`, **Default aus** (ändert vertrautes Verhalten).
+  - `src/lib/routines.ts` — Phrasen-Makros („Gute Nacht" → mehrere Aktionen + feste Antwort). Matching mit
+    **Wortgrenzen** (`licht` darf nicht von „Lichtschalter" ausgelöst werden), Normalisierung inkl.
+    Umlaut-Faltung, **längste** passende Phrase gewinnt. Läuft in `produceAnswer` **vor** Tier 0, weil ein
+    aufgeschriebenes Makro nicht umgedeutet werden darf. Teilt `runTriggerAction` mit den Triggern (eine
+    Routine *ist* ein Trigger mit Phrasen-Bedingung) — dafür hat der Executor einen `fallbackTarget` für
+    „sag es da, wo gefragt wurde". Config-Tabelle `routines`.
+  - **Ack-verifizierte Steuerung** — `main.ts.writeConfirmed()` pollt nach `set_state` alle 150 ms bis 2 s
+    auf `ack:true` (Poll statt temporärer Subscription: billiger als jeden Befehl durch `onStateChange` zu
+    routen). `valuesMatch()` vergleicht tolerant (`true`↔`1`, 30↔30.0, 100 %↔99 %), sonst meldet ein Dimmer
+    Fehlschlag, der getan hat was er sollte. Config `verifyWrites`, **Default aus** — Adapter ohne `ack`
+    (MQTT, Skripte, `0_userdata`) ließen sonst jeden Befehl fehlgeschlagen aussehen.
+  - **Kategorie-Abfragen in der NLU** — neue Action `categoryQuery` + `CATEGORY_WORDS` (de/en/ru) →
+    type-detector-Typen; `main.ts.executeCategoryQuery()` liest alle Sensoren der Art (optional
+    raumgefiltert), `iaqLabel()` gibt der Luftqualitätszahl ein Wort (BME680/BSEC-Skala), `CATEGORY_LABELS`
+    die Überschrift. ⚠️ **Wortliste geht von spezifisch nach allgemein**: `wordInText` stemmt (muss es für
+    de/ru-Flexion), also matcht `luft` auch „Luftdruck"/„Luftfeuchtigkeit" — die Compound-Kategorien stehen
+    deshalb **vor** der `luft`-Kategorie. Ein **genannter Gerätename gewinnt** (Aufruf erst, wenn
+    `findDevice` nichts fand).
+  - **ESPHome-Sensoren** — `esphomeEntities.ts` kennt jetzt `sensor`/`binarySensor`/`textSensor`
+    (read-only, `missing_state` ≠ 0, `accuracyDecimals` als `decimals` an der Entity); `main.ts` legt sie
+    als read-only States unter `satellites.<id>.controls.*` an, Rolle aus der Einheit (`sensorRole()`).
+  - **Warm-Phrasen** ohne neues Config-Feld: `FIXED_REPLIES` (de/en/ru) wird nach `prepare()` in den Cache
+    vorsynthetisiert; alles andere landet beim ersten Gebrauch dort.
+  - Nebenbei: Timer-/Wecker-**Ansage** umgeht DND jetzt auch (der Jingle tat es schon — man hörte den Gong
+    und dann Stille).
+- **Durchsage-Ziele: Gruppen + Personen (Hannah-Port B2)** — `src/lib/targets.ts` (`parseTargetRows`,
+  `findTarget`, `isBroadcast`, `describeTargets`). **Eine** Config-Tabelle `announceTargets`
+  (Name, Mitglieder kommagetrennt, `kind: group|person`) für beides — mechanisch ist Gruppe und Person
+  dasselbe („ein Name steht für eine Menge Satelliten"), `kind` sagt nur dem LLM, ob es ein Ort oder ein
+  Mensch ist. Hannah braucht dafür zwei DB-Tabellen + n:n-Pivot, hat aber auch die Nutzer-Registry.
+  **Keine** `satellites.<id>.group`/`.person`-States: Satelliten werden dynamisch entdeckt, ihre State-Id
+  *ist* der Raumname, und die Zuordnung ist Konfiguration — die Tabelle deckt außerdem alle drei
+  Transporte ab, Spalten in `esphomeDevices` hätten nur ESPHome erfasst.
+  `main.ts.resolveTargets(name)` → `null` (alle) | `string[]` | `[]` (unbekannt; bei `askUser` ein Fehler,
+  bei einer Durchsage eine Warnung). **Reihenfolge von Hannah** (`core/main.py:717`): konkreter
+  Satellit/Raum **vor** Gruppe, sonst macht eine Gruppe mit Raumnamen dessen Lautsprecher unerreichbar.
+  `announceToSatellites` löst jetzt selbst auf (alle Aufrufer übergeben weiter einfach einen Namen),
+  synthetisiert **einmal** und liefert dann pro Mitglied via `deliverPcm`. `askUser` armt mehrere Keys
+  (`PendingQuestions.ask(keys[])` konnte das schon) → Frage an eine Gruppe, erste Antwort gewinnt.
+  **Neues LLM-Tool `announce`** (`buildAnnounceTool`, nur bei `voiceEnabled`): das Modell konnte schalten
+  und lesen, aber keinen Lautsprecher sprechen lassen — „sag Denis, dass das Essen fertig ist" wäre sonst
+  nur aus Skripten gegangen; die konfigurierten Namen stehen per `describeTargets()` in der
+  Tool-Beschreibung. Test: `test/integration/targets.test.js`.
+- **Präsenz „wer ist zuhause" (Hannah-Port B1)** — `src/lib/presence.ts` (`PresenceTracker`,
+  `interpretHome`, `parsePresenceRows`, `buildPresencePrompt` de/en/ru). **Bewusst kein
+  `residentsInstance`-Mapper:** der residents-Adapter hat keinen Typ im `@iobroker/type-detector` (der kennt
+  `motion`/`location`, aber kein `presence`) und Hannahs Kern kennt die State-Ids nicht (die liegen in ihrem
+  Adapter-Submodul) — ein geratenes Layout hätte stillschweigend nie gematcht. Stattdessen **Config-Tabelle
+  `presence`**, in der der Nutzer auf seine eigenen States zeigt (State-Id, Name, Art `person|guest|pet`,
+  optionaler `homeValue`): funktioniert mit residents-Adapter, `ping.0.<handy>.alive`, Router-Client-State
+  oder eigenem Flag gleichermaßen. Numerische Vorgabe `1 = zuhause` folgt Hannahs `HOME_PRESENCE_STATE`
+  (dort global konfigurierbar, hier pro Zeile). Ein **nicht verstandener Wert bleibt „unbekannt"** statt
+  „abwesend" (gleiche Linie wie `unless` bei den Triggern), und der **erste** gelesene Wert feuert nie
+  Ankunft/Abgang — sonst grüßt der Assistent nach jedem Neustart. Pets zählen nicht für `anyoneHome`.
+  `main.ts`: `setupPresence` (eigene `subscribeForeignStates` + einmaliges Lesen, weil Präsenz-States nur
+  bei Änderung melden), `renderPresence`, `buildPresenceContext()` (in den **User-Turn** beider LLM-Tiers,
+  nicht in den gecachten System-Prompt), `emptyHouse()`. States
+  `presence.{anyoneHome,count,list,lastArrival,lastDeparture}`. **Gate:** `announceToSatellites(…,
+  {onlyWhenHome})` — geprüft **vor** der TTS-Synthese — und `notify({onlyWhenHome:true})`; „nichts
+  konfiguriert" heißt dabei **nicht** „niemand da", sonst verstummt alles. Ankunft/Abgang brauchte **keinen
+  neuen Code**: ein Trigger (A2) auf `assistant.0.presence.anyoneHome` ist die Begrüßung, `also` darauf das
+  Gate für jeden Trigger. Routing in `onStateChange` liegt wie bei den Triggern **vor** dem `ack`-Filter.
+  Test: `test/integration/presence.test.js`. Nicht übernommen: Hannahs Mood-Level und das Zurückschreiben
+  der eigenen Präsenz (beides hängt an ihrer Nutzer-Registry).
+- **Gesprochene Systemmeldungen + „Nicht stören" (Hannah-Port A3)** — `src/lib/notifications.ts`
+  (`parseSeverity`/`toneFor`/`bypassesDnd`/`cleanupNotificationText`/`flattenNotification`). Severities sind
+  **ioBrokers eigene** `info|notify|alert` (aus `ioBroker.NotificationCategory`) plus unser `direct`
+  (= wörtlich sprechen, kein LLM). `LlmAgent.rewordNotification()` macht aus dem Log-Text einen gesprochenen
+  Satz im Ton der Severity; der Prompt trägt Hannahs erprobte Hinweise (Versionsnummern vs.
+  `M/D/YYYY`-Zeitstempel, `system.host.X: adapter.0:`-Präfixe weglassen, leeres `{}` ist kein Fehler) —
+  `rephrase` (Trigger) und `rewordNotification` teilen sich nur `complete()`, **nicht** den Prompt.
+  `main.ts.notify()` (+ `handleSystemNotification()` für `sendNotification`), States
+  `notify.{text,alert,last}`; Config `notifyRephrase` (Default **an** — der Text kommt aus einer Maschine,
+  anders als bei Triggern). sendTo `notify` (`{text,severity,target|room}` → `{spoken}`) und
+  `sendNotification`; `io-package.json` meldet `common.supportedMessages.notifications` an, womit der
+  Adapter im **notification-manager** als Ausgabe wählbar ist (gesprochene Systemmeldungen gibt es so noch
+  nicht). ⚠️ Die Payload-Form von `sendNotification` ließ sich hier nicht verifizieren (gehört dem
+  notification-manager, nicht in `@iobroker/types`) — `flattenNotification` parst defensiv und fällt auf
+  Kategorie+Beschreibung zurück; beim ersten echten Lauf prüfen.
+  **DND setzt jetzt der Adapter durch, für alle drei Transporte** (vorher nur der native Satellit selbst):
+  States `dnd` (global) + `satellites.<id>.dnd`, Felder `globalDnd`/`dndById`, Prüfung in `deliverPcm` über
+  `silenced()`/`isDeviceSilenced()`. Deshalb adressiert `deliverPcm` UDP/ESPHome **pro Gerät statt per
+  Broadcast** — sonst schaltet ein stummer Satellit alle anderen mit stumm. `alert` und das `!`-Prefix
+  umgehen DND; Antworten auf eigene Fragen sind nie betroffen.
+  `announceToSatellites(value, targetId, {listen, priority})` — dritter Parameter jetzt Options-Objekt.
+  Test: `test/integration/notifications.test.js`. Nicht übernommen: Hannahs Telegram-Push an Nutzer mit
+  `system_messages=true` (wir haben keine Nutzer-Registry).
+- **Rückfrage-API (Hannah-Port A1)** — `src/lib/ask.ts` (`PendingQuestions`: eine Frage wird für eine oder
+  mehrere **Quellen** scharf gestellt — Gerätename, `chat`, `telegram:<user>`, oder `ANY_SOURCE` bei
+  Broadcast —, die nächste Äußerung dieser Quelle wird als Antwort zugestellt, Timeout → `null`).
+  Abgefangen in `produceAnswer()` **vor** allen Tiers (die NLU würde ein bloßes „ja" sonst als eigenen
+  Befehl lesen) und **nach** dem Stop-Wort-Check. `main.ts.askUser()` + sendTo `askUser`
+  (`{question, room|target|source, timeoutMs}` → `{answer}`/`{timeout}`/`{error}`); Mikro-Öffnen über ein
+  `listen`-Flag durch `announceToSatellites`→`deliverPcm` in **alle drei** Transporte: ESPHome
+  `start_conversation` (eine Nachricht, Gerät spielt + öffnet selbst), UDP neue additive Control-Nachricht
+  `{type:'listen'}` + `VoiceServer.listen()`, native das Flag im `announce`-Message. Scharf gestellt wird
+  **nach** der Durchsage (vorher könnte eine zufällige Äußerung die Frage „beantworten", und antworten kann
+  das Gerät ohnehin erst, wenn es die Frage gespielt hat). Nebenbei gefixt: der UDP-Zweig von `deliverPcm`
+  zählte eine Durchsage auch ohne registrierten Satelliten als zugestellt. Vorbild: Hannah
+  `core/main.py:972` `_ask_fn`/`:990` `_try_answer_pending`. Test: `test/integration/ask.test.js`.
+- **Proaktive Trigger (Hannah-Port A2)** — `src/lib/triggers.ts` (`TriggerEngine` + `parseTriggerRows`).
+  State- und Zeit-Trigger: `when` als Dict **oder** Liste (ODER), `value`/`above`/`below`, `time`+`days`
+  (0=So…6=Sa wie `alarms.ts`), `also`/`unless`, `cooldownSec` (Default 3600), `delay` (`90s`/`30m`/`5h`/`2d`)
+  + `cancelWhen`, `actions` (`say`/`setState`) und **`ask` + `onResponse`** (LLM klassifiziert die Antwort
+  per `LlmAgent.classify()` gegen `match`, erste Treffer-Regel gewinnt, Regel ohne `match` = Fallback).
+  Semantik 1:1 aus Hannah `core/hannah/trigger_engine.py` übernommen, inkl. der teuer erkauften Ecken:
+  Feuern nur beim **Übergang** in die Bedingung, `also` mit unlesbarem State **blockt**, `unless` mit
+  unlesbarem State **blockt nicht**, und der Cooldown wird beim *Start* genommen (sonst stapeln sich
+  Auslösungen während eines langen Delays). **Kein Poll-Loop** (Hannah tickt 1×/min): Zeit-Trigger feuern
+  per eigenem `setTimeout` auf `computeNextFire()` aus `alarms.ts`. Delays laufen **nicht** über den
+  `TimerManager` — ein interner 5-h-Delay hätte sonst als Nutzer-Timer in `timers.count` gestanden.
+  `prime()` liest beim Start alle beobachteten States einmal, sonst feuert ein Gerät, das seinen
+  unveränderten Wert zyklisch wiederholt, nach jedem Adapter-Start. `main.ts`: `setupTriggers`
+  (abonniert per `subscribeForeignStates` **nur** die referenzierten IDs, nie Wildcards),
+  `renderTriggers`/`ensureTriggerObject`, `executeTrigger`/`askTrigger`/`runTriggerAction`/`triggerText`.
+  **Routing in `onStateChange` liegt vor dem `state.ack`-Filter** — Geräte melden mit `ack:true`, genau
+  darauf reagiert ein Trigger (dieselbe Falle wie Hannahs `AgentWatchMore`). **Definition = Config**
+  (jsonConfig-Tab „Trigger", `when`/`onResponse`/`actions` als JSON-Spalten), **Status = States**
+  (`triggers.{count,list,lastFired,enabled}` + `triggers.items.<id>.{name,lastFired,nextFireAt,
+  pendingUntil,enabled,fire}`; `triggers.list` persistiert `enabled`/`lastFired` über Neustarts).
+  `setState` einer Aktion respektiert `allowWriteStates`. sendTo `listTriggers`/`fireTrigger`/
+  `setTriggerEnabled`. Test: `test/integration/triggers.test.js` (29). Offen: No-Code-Editor als Custom
+  Component statt JSON-Spalten.
+- **ESPHome-Sprachsatelliten (4. Transport)** — `src/lib/voice/esphome.ts` (`EsphomeSatellites` +
+  `EsphomeConnection`), `esphomeProto.ts` (Plain-Text-Framing + Message-Registry aus der `api.proto` von
+  `@2colors/esphome-native-api`), `mediaServer.ts`, `vad.ts`. **Umgekehrte Richtung als UDP/Wyoming: der
+  Adapter ist Client** — die Geräte (ThirdReality Voice & Music Assistant, HA Voice PE,
+  linux-voice-assistant) sind Server auf TCP 6053. Zwei Eigenheiten, beide aus den Firmware-Quellen
+  (`linux-voice-assistant-cpp/src/satellite/Satellite.cpp`) verifiziert: (1) **die Geräte haben kein
+  eigenes VAD** und streamen, bis der Server `STT_VAD_END`/`STT_END` schickt → Sprachende-Erkennung liegt
+  bei uns (`vad.ts`, Energie-Gate); (2) **TTS wird als URL geliefert**, nicht als Stream — das Gerät holt
+  sie per HTTP und spielt sie mit mpv → daher `mediaServer.ts` (In-Memory-Clips, Token, TTL). Ansagen
+  laufen über `VoiceAssistantAnnounceRequest{media_id}`; `deliverPcm` hat dafür einen dritten Zweig.
+  Config: `esphomeEnabled`, `esphomeDevices` (Tabelle ip/port/room/password), `esphomeMediaPort`,
+  `esphomeMediaHost`, `esphomeSilenceMs`. **Nicht** die `Connection`/`FrameHelper` des npm-Pakets nutzen:
+  deren id↔type-Tabelle lässt den VoiceAssistant-Bereich (89–92, 106, 115, 119–123) aus und bleibt bei
+  unbekannter id hängen, ohne den Lesepuffer weiterzuschieben. Test: `test/integration/esphome.test.js`
+  (Framing, VAD, Media-Server, kompletter Pipeline-Loopback gegen ein Fake-Gerät).
+  **✅ Gegen echte Hardware verifiziert** (2026-09-26, ThirdReality Voice & Music Assistant
+  `3RSPK-A8E29151F889`, Linux Voice Assistant, ESPHome 2025.9.0, FW 1.02.03, 192.168.1.195):
+  Handshake (`usesPassword:false`, `apiEncryptionSupported:false` → Plain-Text stimmt),
+  `voiceAssistantFeatureFlags:61` = VOICE_ASSISTANT|API_AUDIO|TIMERS|ANNOUNCE|START_CONVERSATION,
+  aktives Wake-Word `okay_nabu` (max. 2). Unsere Registry dekodierte jede Nachricht des Geräts — auch
+  die, die `@2colors` nicht kennt (107 `ListEntitiesEventResponse`, 117 `UpdateStateResponse`, 120/122).
+  Verifiziert: Announce-Pfad (Gerät holt den Clip vom `mediaServer`, `AnnounceFinished{success:true}`),
+  Wake-Word → `VoiceAssistantRequest{start,wake_word_phrase:"okay_nabu"}` → `VoiceAssistantAudio` (16 kHz,
+  ~2,8 s, Peak RMS 20103) → unser `vad.ts` schloss die Äußerung nach 900 ms Stille → Antwort-URL wurde
+  geholt und gespielt. Der Wake-Trigger war dabei ein **Fehlauslöser** (niemand stand vor dem Gerät) —
+  für den Protokollpfad zählt er, ein gezielter Sprechtest mit echtem STT steht noch aus. Auch der Mic-Weg
+  **ohne** Wake-Word ist bestätigt: `VoiceAssistantAnnounceRequest{start_conversation:true}` öffnet das
+  Mikrofon (Feature-Flag 32) — praktisch zum Testen, wenn niemand „Okay Nabu" sagen kann.
+  Reconnect/Keepalive liefen über ~40 min ohne Abriss. **Zwei Mess-Fallen** (beide geprüft, KEIN Bug — nicht erneut hinterherjagen):
+  (1) `MediaPlayerStateResponse{state:2}` kommt ~0,8 s **nach** dem tatsächlichen Playback-Start
+  (mpv-Startup), daher wirkt `state:2`→`AnnounceFinished` bei kurzen Clips wie ein Abbruch — der Versatz
+  ist konstant (1 s⇒239 ms, 3 s⇒2207 ms, 6 s⇒5183 ms, 10 s⇒9194 ms), die Clips laufen vollständig, und
+  16/22,05/24/44,1/48 kHz verhalten sich identisch. (2) Im Pipeline-Pfad meldet die Firmware
+  `AnnounceFinished{success:false}`, obwohl korrekt abgespielt wurde — harmlos, wir gehen unabhängig vom
+  Flag auf `idle`.
+  **Antwort-Stufe real gegengetestet** (Anthropic, `claude-sonnet-5`, Tool-Loop gegen ein Fake-Haus):
+  Frage→Tool→Antwort→Wiedergabe lief dreimal sauber durch, inkl. echtem `set_state`-Schreibzugriff;
+  3,2–4,4 s pro Runde, davon fast alles LLM (`claude-haiku-4-5` war im Vortest 819 ms statt 1786 ms —
+  für Sprache die bessere Wahl). Ungeprüft bleibt nur noch der Lauf mit **echten** STT/TTS-Engines
+  (Anthropic hat keine Speech-API; dafür braucht es OpenAI/Azure/AWS oder lokal Vosk/Piper).
+  **VAD an dieses Gerät angepasst** (aus 4 echten Aufnahmen, `vad.ts` + `esphome.ts`): Das Gerät hört
+  seinen eigenen Wake-Ack-Chirp mit — Vollausschlag, RMS ~19k, geclippt, Abfall bis ~550 ms —, während
+  die Sprache danach nur RMS 358–469 hat. Mit den alten Fixwerten (`startLevel` 700/`endLevel` 400)
+  setzte **immer der Chirp** `sawSpeech`, nie die Stimme: die „nur Stille → verwerfen"-Prüfung war tot
+  und jeder Fehlauslöser ging an die STT-Abrechnung; zugleich lag die halbe echte Sprache unter
+  `endLevel`, was mitten im Satz abschneiden konnte. Jetzt: `skipMs` (ESPHome: **600 ms**, per Sweep
+  als kleinster Wert bestimmt, der Chirp-only verwirft und in allen 4 Aufnahmen die Sprache noch
+  erkennt) hält den Chirp aus der **Analyse** (Audio geht unverändert an STT), und `adaptive: true`
+  leitet die Schwellen aus einem verfolgten Rauschboden ab (Start bei 0 = empfindlich, fällt sofort,
+  steigt nur mit `NOISE_RISE`, und **steigt gar nicht mehr, sobald Sprache erkannt ist** — sonst zieht
+  eine lange Äußerung `endLevel` auf ihr eigenes Niveau und schneidet sich selbst ab). Ergebnis gegen
+  die echten Aufnahmen: Fehlauslöser wird jetzt verworfen, Sprache überall erkannt, Schließzeit nur
+  +30…120 ms, Rauschboden 5–6, Gate 250/150. ⚠️ Beim Ändern dieser Werte immer gegen echte Captures
+  prüfen, nicht nur gegen `micFrame()` — das Fake-Gerät im Test sendet jetzt bewusst erst `chirpMs`
+  Chirp und dann Sprache, weil es sonst die Realität nicht abbildet.
+  **Wake-Words aus ioBroker setzbar** (gegen echte Hardware getestet, Originalzustand wiederhergestellt):
+  `esphome.ts` merkt sich die `VoiceAssistantConfigurationResponse` als `WakeWordConfig`
+  (active/available[{id,phrase,languages}]/max), meldet sie per `onWakeWords` und sendet auf
+  `setWakeWords()` die `VoiceAssistantSetConfiguration` (id 123) — danach **immer** ein
+  `VoiceAssistantConfigurationRequest` als Rücklesung, weil das Gerät eine abgelehnte Liste
+  kommentarlos schluckt statt zu fehlern. Unbekannte ids und alles über `max` werden vorher mit Warnung
+  gefiltert. `main.ts`: States `satellites.<id>.wakeWords` (schreibbar, ids kommagetrennt) und
+  `.availableWakeWords` (read-only JSON); der Schreibpfad **ackt bewusst nicht selbst**, der ack kommt
+  aus der Geräte-Rückmeldung — so zeigt ioBroker nie eine Auswahl, die das Gerät gar nicht übernommen
+  hat. sendTo `getWakeWords`/`setWakeWords`. Nur `okay_nabu` ist auf mehr als Englisch trainiert
+  (en, nl, fr, de, it, es, sv), die übrigen acht sind rein englisch — für de ist die Werkseinstellung
+  also die beste Wahl.
+  **Geräte-Entities komplett angebunden** — neues Modul `src/lib/voice/esphomeEntities.ts`
+  (`EntityRegistry` + tabellengetriebene `KINDS`), **bewusst generisch über die ESPHome-Entity-Liste
+  statt gegen ThirdReality-Objekt-ids**, damit HA Voice PE & Co. ohne Codeänderung funktionieren.
+  Unterstützt switch/number/select/event/update/mediaPlayer; jede Art kennt ihre `ListEntities…Response`,
+  ihre `…StateResponse` und ihre Command-Nachricht (33/51/54/65/118), adressiert über `fixed32 key`.
+  `esphome.ts` schickt jetzt `ListEntitiesRequest` **vor** `SubscribeStatesRequest` (State-Nachrichten zu
+  noch unbekannten Entities werden sonst verworfen) und leert die Registry bei jedem Reconnect (Keys sind
+  nicht stabil über Reboots). Callbacks `onEntities`/`onEntityState`, Methoden `entities()`/`setEntity()`.
+  `main.ts`: States unter `satellites.<id>.controls.*` — Skalare direkt, mediaPlayer und update als
+  Ordner (`.state/.volume/.command/.muted` bzw. `.currentVersion/.latestVersion/.inProgress/.progress/
+  .install`), mit min/max/step/unit bzw. `states` aus der Geräte-Ankündigung. **Kein optimistisches ack**
+  (wie bei den Wake-Words): Zahlen außerhalb des Bereichs werden geklemmt, unbekannte Select-Werte
+  abgelehnt — der ack kommt immer aus der Geräte-Rückmeldung. sendTo `getControls`/`setControl`.
+  Am echten Gerät verifiziert: 12 Entities gefunden, Schreiben/Klemmen (99999→4000)/Case-insensitive
+  Select/Ablehnungen korrekt, alle Originalwerte wiederhergestellt.
+  **GUI (Roadmap #6-Erweiterung)** — `src-admin/src/SatelliteSettingsDialog.tsx`, geöffnet über einen
+  Zahnrad-Knopf pro Zeile in `SatellitesComponent.tsx` (bei offline deaktiviert). **Rendert komplett aus
+  den Objekt-Metadaten** (`min`/`max`/`step` → Slider, `states` → Dropdown, `boolean` → Switch,
+  `role:'button'` → Button, `write:false` → Textanzeige) — kein produktspezifischer Code, andere Geräte
+  bekommen automatisch ihre eigenen Regler. Wake-Words als Chips aus `availableWakeWords` inkl.
+  max-Limit (überzählige werden disabled) und Sprach-Tooltip. `SatellitesComponent` hält jetzt zusätzlich
+  `vals` (alle Roh-Werte unter `satellites.*`) und lädt beim Öffnen die Control-Objekte per
+  `getForeignObjects`. Slider schreibt erst auf `onChangeCommitted` (sonst pro Pixel ein Geräte-Roundtrip).
+  Nach Änderungen hier: `npm run build:gui` **und** `iobroker upload assistant`.
+  **Timer-Spiegelung** — `VoiceAssistantTimerEventResponse` (115) via `EsphomeSatellites.timerEvent()`;
+  `main.ts.mirrorTimerList()` diffed die `onChange`-Liste gegen `mirroredTimers` (neu→started,
+  verschwunden→cancelled, sonst updated), `onFire`→finished. Ziel ist der Ursprungs-Satellit, sonst
+  Broadcast — sonst bliebe ein per Text gesetzter Timer auf allen Lautsprechern stumm. Gegen echte
+  Hardware: started/updated/cancelled akzeptiert, Verbindung bleibt stehen.
+  ⚠️ Beim Testen am Gerät Originalwerte notieren und zurücksetzen — ein aktiviertes zweites Wake-Word
+  hat hier `wake_word_2_sensitivity` von 0,85 auf 0,97 gezogen (wurde zurückgesetzt).
+  `mic_volume` 1600/4000 und `mic_gain` 10/31 hochzudrehen würde den Sprachpegel verbessern, ändert aber
+  nichts am Chirp-Problem.
 - **Timer + Wecker (Roadmap #2)** — `src/lib/timers.ts` (`TimerManager`, Countdown) und `src/lib/alarms.ts`
   (`AlarmManager`, feste Uhrzeit HH:MM + optional Wochentage, One-Shot/wiederkehrend, `enabled`). **Beide
   feuern per eigenem `setTimeout` — KEIN Poll-Loop und KEINE periodischen State-Writes**; States tragen nur
@@ -292,15 +533,28 @@ node --test test/integration/nlu.test.js
      `npm install koffi` + libvosk-Download ins Instanz-Datenverzeichnis, C-API via `lib.func(...)`.
    - **V3** Node-Satellit (2 Repos: Core-Lib `@iobroker/assistant-satellite` + Adapter
      `iobroker.assistant-satellite`), **V4** Wyoming/Politur. Siehe Plan.
+9. **Hannah-Abgleich (2026-10-04)** — Hannah (`C:\iot\Hannah`, Stand v0.51.2, letzter Commit 2026-07-03) gegen
+   diesen Adapter gelegt; die Liste der Übernahme-Kandidaten mit Fundstellen, Priorität und Begründung steht
+   in **`docs/TODO.md`** (nicht im Git). Daraus fertig: **A1 Rückfrage-API**, **A2 Proaktive Trigger** und
+   **A3 Systemmeldungen + DND**, **B1 Präsenz**, **B2 Durchsage-Ziele** und **alle zehn Quick Wins**
+   (siehe Status oben) — damit ist die Liste bis auf den „Später/optional"-Teil abgearbeitet. Dort offen:
+   **Speaker-ID** (Hannahs `voiceid/`-Service, braucht ein Embedding-Modell), **Trust-Level/Nutzerrechte**
+   (unsere ACL ist pro Gerät, nicht pro Person), **BLE-Indoor-Lokalisierung** (nur sinnvoll, wenn das Gerät
+   `esp32_ble_tracker` fährt) und das **Sammelantwort-Muster** für zusammengesetzte Geräte. Außerdem
+   ungebaut: der **No-Code-Editor** für Trigger (heute JSON-Spalten in der Tabelle). Hannahs jüngste Commits
+   (AWS-Transcribe-STT, Anthropic-Provider) sind Dinge, die wir längst haben — dort ist nichts mehr zu holen.
 
 **GUI-Build:** `cd src-admin && npm i && npm run build` (oder `npm run build:gui` vom Repo-Root) →
 `admin/custom/customComponents.js` + `admin/custom/i18n/*.json` (via `copyI18n`-Plugin aus `src/i18n/`).
 `src-admin/node_modules` ist gitignored; `admin/custom/` wird committet (ausgeliefert).
 
-**⚠️ Module-Federation-Versionen exakt pinnen:** `@module-federation/vite` (`1.14.5`) und
-`@module-federation/runtime` (`2.3.3`) in `src-admin/package.json` **ohne `^`** — neuere Versionen (1.16+/2.6+)
-bauen das React-Sharing kaputt (`TypeError: Cannot read properties of null (reading 'useContext')`, die
-Component lädt eine leere React-Instanz). React/MUI/adapter-react-v5 bleiben auf React 18 (Admin ist React 18).
+**⚠️ Module-Federation-Versionen ohne `^` pinnen:** `@module-federation/vite` und
+`@module-federation/runtime` stehen in `src-admin/package.json` bewusst exakt. Hintergrund: ein falsches
+Paar bricht das React-Sharing (`TypeError: Cannot read properties of null (reading 'useContext')` — die
+Component lädt eine leere React-Instanz), und das merkt man erst zur Laufzeit im Admin, nicht im Build.
+**Stand 2026-10-04: `1.22.1` / `2.9.1` auf React 19** (`@iobroker/json-config` 10, MUI 9) — die früher hier
+dokumentierten Werte `1.14.5`/`2.3.3` und „React 18" sind überholt. Nach einem Bump dieser beiden Pakete
+also nicht nur bauen, sondern die Custom-Tabs im Admin wirklich öffnen.
 
 **mcp-server-Tool-Palette (Referenz, `@iobroker/mcp-server`):** lesen: `get_states`, `get_logs`,
 `history_query`, `system_info`, `search_objects`, `list_devices`, `list_instances`, `list_hosts`,

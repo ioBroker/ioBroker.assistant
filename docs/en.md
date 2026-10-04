@@ -13,6 +13,9 @@ Optionally it works with **satellites** (microphone + speaker boxes in each room
 
 - **Answer questions** — general knowledge and about your home: *"Is a window still open?"*, *"How warm
   is it in the living room?"*, *"How much did the heating pump consume today?"*
+- **Answer by category, offline** — *"How is the air in here?"*, *"How warm is it everywhere?"*,
+  *"How bright is it?"* are answered from every sensor of that kind, without naming a device and
+  without the cloud.
 - **Control devices** — *"Turn off the living-room light"*, *"Set the blinds to 50 %"*, *"Make the
   kitchen warm white"*.
 - **Text or voice** — write to a state / use the built-in test chat, or talk to a satellite.
@@ -112,6 +115,65 @@ Other weather adapters can be selected too — they are then read best-effort as
 
 ---
 
+### Who is at home
+
+Tell the assistant which states say whether somebody is at home — one row per person in the **Presence**
+table on the Settings tab. Any state works, because presence sits in a different place in every house:
+
+| Column | Meaning |
+|---|---|
+| **State id** | e.g. `residents.0.denis.presence`, `ping.0.phone-denis.alive`, `0_userdata.0.anna_home`. |
+| **Name** | How the assistant refers to the person (defaults to the last part of the state id). |
+| **Kind** | `person` (default), `guest`, or `pet` — a pet never makes the house count as occupied. |
+| **Home value** | Leave empty for the usual forms (`true`, `1`, `home`, `anwesend`), or enter the exact value that means at home. |
+
+A value that is none of the known forms leaves that person's presence **unknown** rather than "away" — the
+assistant will not claim somebody is out when it cannot tell.
+
+What it is used for:
+
+- **The assistant knows who is around.** It can answer "Who is at home?" or "Is Anna here?", and it has
+  the information at hand when a request depends on it ("switch off everything"). The line goes into every
+  question, so it is never stale.
+- **Announcements to an empty house can be held back** — opt in per announcement:
+  `sendTo('assistant.0', 'notify', { text: 'The washing machine is done', onlyWhenHome: true })`. With no
+  presence configured nothing is ever held back.
+- **Triggers** can use it like any other state, which is also how you greet somebody:
+
+```json
+{ "state": "assistant.0.presence.anyoneHome", "value": true }
+```
+
+…with `Say: Welcome home!`, or per person on their own presence state. Add
+`"also": { "state": "assistant.0.presence.anyoneHome", "value": true }` to a trigger that should only run
+while somebody is there.
+
+States: **`presence.anyoneHome`** (somebody human is in), **`presence.count`**, **`presence.list`** (JSON
+per person), **`presence.lastArrival`** / **`presence.lastDeparture`** (who it was).
+
+---
+
+### Routines (a phrase that does several things)
+
+A routine is a macro you wrote down: a phrase, a list of actions, one reply. Fill the **Routines** table
+on the Settings tab:
+
+| Column | Example |
+|---|---|
+| **Name** | `Good night` |
+| **Phrases** | `good night, I am going to bed` — comma separated |
+| **Actions (JSON)** | `[{"setState":{"id":"hm-rpc.0.ABC.1.STATE","value":false}},{"say":"Sleep well"}]` |
+| **Reply** | `Good night!` (empty = say nothing) |
+
+The phrase is found anywhere in the sentence ("could you do good night please"), and case, punctuation and
+umlauts do not matter (`Büro` = `buero`). Only whole words count, so a routine on `light` is not triggered
+by "light switch". If two routines match, the **longer** phrase wins.
+
+Routines are checked **before** the offline rule engine and before the LLM. That is the point: in "Good
+night, and the light off too" the rule engine would find "light" and do only that half, and the LLM would
+cost a round-trip for a decision you already made. Actions use the same shape as a trigger's, so a routine
+is really a trigger whose condition is a phrase — including `{"say":…,"room":…}` to speak somewhere.
+
 ---
 
 ## 5. Permissions & per-device access
@@ -141,20 +203,121 @@ speech recognition/synthesis available; **it does not open any network port**. T
 - Provider keys (separate from the LLM key; a *Speech credential mode* mirrors manual/manager). Voices and
   local models load into dropdowns.
 
-### Two kinds of satellites / transports
+### Kinds of satellites / transports
 
-|                       | **ioBroker-native satellite** (recommended)        | **UDP satellite** (ESP / Hannah)              |
-|-----------------------|----------------------------------------------------|-----------------------------------------------|
-| Adapter               | `ioBroker.assistant-satellite` on the device       | ESP firmware, or the same adapter in UDP mode |
-| Transport             | Audio over the ioBroker **message bus** (`sendTo`) | Raw audio **UDP stream** (Hannah protocol)    |
-| Port on the assistant | **none**                                           | UDP port (enable *Run the UDP voice server*)  |
-| STT/TTS               | central, in the assistant                          | central, in the assistant                     |
-| Best for              | Raspberry Pi / PC satellites                       | ESP32 devices, existing Hannah satellites     |
+|                       | **ioBroker-native satellite** (recommended)        | **UDP satellite** (ESP / Hannah)              | **ESPHome satellite** (ThirdReality, HA Voice PE)                       |
+|-----------------------|----------------------------------------------------|-----------------------------------------------|-------------------------------------------------------------------------|
+| Adapter               | `ioBroker.assistant-satellite` on the device       | ESP firmware, or the same adapter in UDP mode | none — the device's stock firmware                                      |
+| Transport             | Audio over the ioBroker **message bus** (`sendTo`) | Raw audio **UDP stream** (Hannah protocol)    | ESPHome native API over **TCP 6053**; the adapter dials the device      |
+| Port on the assistant | **none**                                           | UDP port (enable *Run the UDP voice server*)  | none inbound — but an HTTP **media server** the device fetches replies from |
+| STT/TTS               | central, in the assistant                          | central, in the assistant                     | central, in the assistant                                               |
+| Best for              | Raspberry Pi / PC satellites                       | ESP32 devices, existing Hannah satellites     | ready-made voice speakers you do not want to flash                      |
 
 - For **ioBroker-native** satellites you need nothing extra on the assistant beyond *Enable voice*.
 - For **ESP/UDP** satellites, additionally enable **Run the UDP voice server** (opens the UDP port).
-- **Wyoming**: optionally enable the **Wyoming TCP endpoint** so **Home Assistant Voice PE**,
-  `wyoming-satellite` and **ESPHome** voice devices can stream to the assistant (default port 10700).
+- For **ESPHome** satellites enable **Also drive ESPHome voice satellites** — see below.
+- **Wyoming**: optionally enable the **Wyoming TCP endpoint** so `wyoming-satellite` and other
+  Rhasspy-style clients can stream to the assistant (default port 10700). Note that ESPHome voice
+  devices — **including the Home Assistant Voice PE** — do *not* speak Wyoming; use the ESPHome
+  transport for those.
+
+### ESPHome voice satellites (ThirdReality, HA Voice PE)
+
+Ready-made voice speakers running the **ESPHome voice assistant** — the ThirdReality *Voice & Music
+Assistant*, the *Home Assistant Voice PE*, or any box running `linux-voice-assistant` — work the other
+way round from every other transport: they do not connect to a server, they **are** one, listening on
+**TCP 6053**. So the adapter dials *them*, the way Home Assistant would.
+
+Nothing has to be installed or flashed on the device and no ESPHome tooling is involved — "ESPHome
+native API" is simply the protocol the stock firmware already speaks.
+
+1. Enable **Also drive ESPHome voice satellites** on the Voice tab.
+2. Add one row per device: **address** (e.g. `192.168.1.195`), **port** (empty = 6053), **room**, and a
+   **password** only if the device really has an API password set.
+3. Save. The adapter connects, logs the device name and its active wake word, and the satellite shows up
+   under `assistant.0.satellites.*` like any other.
+
+Wake word, echo cancellation and playback stay on the device; the adapter does speech recognition, the
+answer and speech synthesis. Announcements (`tts.text`, `satellites.<id>.tts`, timers, alarms) reach
+these devices too.
+
+Two things work differently here:
+
+- **The adapter decides when you stopped talking.** These devices stream until the server tells them to
+  stop, so end-of-speech detection runs in the adapter. Tune **End of speech after (ms of silence)**
+  (default 900) if replies cut you off or the assistant waits too long.
+- **The spoken reply is fetched, not pushed.** The device plays a URL, so the adapter runs a small HTTP
+  server (**Media server port**, default `8099`) serving each clip for a couple of minutes. It must be
+  reachable **from the device**; the address is taken from each device connection automatically and only
+  needs setting by hand behind NAT, Docker or a VLAN.
+
+#### Wake words
+
+The wake word runs **on the device**, but which of its built-in models listen can be set from here. Each
+satellite gets two states:
+
+| State | |
+|---|---|
+| `satellites.<id>.availableWakeWords` | read-only JSON: every model the firmware ships, with the spoken phrase, the languages it was trained on, and how many may listen at once |
+| `satellites.<id>.wakeWords` | writable, comma-separated ids, e.g. `okay_nabu,hey_jarvis` |
+
+Write the ids you want and the device switches over; the value is read back from the device, so what you
+see is what it actually does. Unknown ids are dropped with a warning and a list longer than the device
+allows is trimmed, rather than the whole write being silently ignored. The device stores the choice
+itself, so it survives a restart of the adapter.
+
+From a script:
+
+```js
+sendTo('assistant.0', 'getWakeWords', {}, r => log(JSON.stringify(r)));
+sendTo('assistant.0', 'setWakeWords', { device: '3RSPK-…', wakeWords: ['okay_nabu'] });
+```
+
+A ThirdReality speaker ships nine models with `okay_nabu` active and two slots. Worth knowing before you
+switch: **`okay_nabu` is the only one trained on anything but English** (en, nl, fr, de, it, es, sv), so
+on a German setup the factory default is also the best choice.
+
+#### Device settings
+
+The **Satellites** tab in the instance settings has a gear button on each row that opens the device's
+settings — wake words as clickable chips (hover one to see the languages it was trained on) and a
+control for every knob the device offers. The button is disabled while a satellite is offline, because
+the settings live on the device.
+
+The same values are also plain states under `satellites.<id>.controls.*`, built from what the device
+announces — so a Home Assistant Voice PE gets its own set without any change here. Whatever the box
+**measures** about its room (a temperature, a presence detection, a status text) appears there too, as
+read-only states with the right unit and role. A ThirdReality
+speaker offers twelve:
+
+| Control | |
+|---|---|
+| `mic_gain`, `mic_volume` | microphone gain (0–31) and volume (1–4000) |
+| `mic_noise` | noise suppression: Off / Low / Medium / High / Max |
+| `wake_word_1_sensitivity`, `wake_word_2_sensitivity` | one per wake-word slot, 0–1 |
+| `stop_word_sensitivity` | how readily the stop word interrupts a reply, 0–1 |
+| `continue_conversation_delay` | how long the mic stays open for a follow-up, 0–10 s |
+| `mute`, `thinking_sound` | microphone mute and the "thinking" sound |
+| `<media player>.{state,volume,command,muted}` | `command` takes play, pause, stop, mute, unmute, toggle, volume_up, volume_down, turn_on, turn_off |
+| `<firmware>.{currentVersion,latestVersion,inProgress,progress,install}` | `install` is a button |
+
+Writes are not acknowledged optimistically: the device reports back what it actually took, and that is
+what the state shows. A number outside the device's range is clamped to it rather than rejected, and a
+value a `select` does not offer is refused with a warning naming the valid options.
+
+```js
+sendTo('assistant.0', 'getControls', {}, r => log(JSON.stringify(r)));
+sendTo('assistant.0', 'setControl', { device: '3RSPK-…', control: 'mic_volume', value: 2400 });
+```
+
+If the assistant hears you too quietly — the log line after each utterance prints the peak level and the
+noise floor — `mic_volume` and `mic_gain` are the two to raise.
+
+#### Timers on the device
+
+Satellites that report the ESPHome *timers* feature get the assistant's countdown timers pushed to them,
+so they can show one on their own LED ring and ring it themselves. A timer set by voice is mirrored to
+the satellite it was set from; one set from chat, Telegram or a script is broadcast to all of them.
 
 ### What runs where
 
@@ -218,22 +381,240 @@ Make a satellite speak without a question:
 
 Text is synthesised with the configured TTS engine; an audio file is decoded and played as-is.
 
-### Volume, mute, Do-Not-Disturb (per satellite)
+### Speech engines: cost, latency and what happens when the cloud is down
 
-An ioBroker-native satellite exposes these writable states (they drive the speaker's ALSA mixer, so they
-apply to answers, announcements and the beep alike):
+Four settings that mostly pay for themselves:
+
+- **Speech-to-text / text-to-speech fallback** (Voice tab) — a second engine, used when the first one
+  fails: an outage, an expired key, an empty quota. With `Vosk (local)` and `Piper (local)` behind a cloud
+  provider, the house keeps listening and answering without the internet. The hand-over is in the log.
+- **The spoken text is cached on disk.** The assistant says the same short things over and over ("Okay.",
+  "Timer finished"), and synthesising them again costs a cloud round-trip and half a second of latency for
+  audio that is identical. Short texts (up to 200 characters) are therefore kept under the instance's data
+  directory, keyed by text, language, provider and voice — change the voice and nothing stale is served.
+  Long one-off answers are not cached, and the cache prunes itself back to 64 MB.
+- **Confirm switch commands with a beep** (Settings tab) — a successful switch command answers with a
+  short tone instead of a sentence. Instant, where speaking costs a text-to-speech call. Questions,
+  errors and the text channels are unaffected, as are timers and alarms.
+- **Verify device feedback** (Settings tab) — after a switch command, wait up to 2 seconds for the device
+  to acknowledge the value (`ack:true`) and say "did not respond" if it never does. Leave this **off** for
+  devices that never acknowledge (MQTT, scripts, `0_userdata`): every command would look failed.
+
+Two things happen without any setting: an answer longer than 400 characters is **cut at the last sentence
+that fits** (a spoken paragraph is a minute nobody can interrupt), and an announcement written as
+**SSML** (`<speak>…</speak>`) is spoken as SSML by Azure and Polly — pauses and emphasis included — while
+the other engines get the text without the markup instead of reading the tags out loud.
+
+### Groups and people as targets
+
+Give a set of satellites a name in the **Announcement targets** table on the Voice tab, and anything that
+announces can address it: a group of rooms, or the speakers that belong to one person.
+
+| Column | Example |
+|---|---|
+| **Name** | `Upstairs`, `Denis` |
+| **Satellites, rooms or devices** | `bathroom_upstairs, bedroom` — comma separated |
+| **Kind** | empty or `group`, or `person` |
+
+Then it works everywhere a target is accepted — the per-satellite `tts` state, `notify`, a trigger's
+**Room** column, and `askUser` (a question goes to every member and the first answer counts):
+
+```js
+sendTo('assistant.0', 'notify', { text: 'Dinner is ready', target: 'Denis' });
+sendTo('assistant.0', 'askUser', { question: 'Shall I close the blinds?', room: 'Upstairs' }, cb);
+```
+
+And by voice, because the assistant has an **`announce`** tool: *"Tell Denis that dinner is ready"* reaches
+his speakers, *"let everyone upstairs know the washing machine is done"* reaches that group. The configured
+names are part of the tool description, so the model knows them.
+
+A real satellite or room of the same name always wins over a group, so naming a group after a room can
+never make that room's speaker unreachable. `all` (or no target at all) means every satellite. The text is
+synthesised **once** for a whole group, not per speaker.
+
+### Volume, mute, Do-Not-Disturb
+
+Do-Not-Disturb is enforced by the assistant itself, so it works for **every** kind of satellite:
+
+- **`assistant.0.dnd`** — suppress announcements on all satellites.
+- **`assistant.0.satellites.<id>.dnd`** — suppress them on one satellite.
+
+Replies to your own questions always play, and so do timers and alarms you set yourself: DND stops
+announcements nobody asked for, not things you requested.
+
+An ioBroker-native satellite additionally has its own set of writable states, which drive the speaker's
+ALSA mixer and therefore apply to answers, announcements and the beep alike:
 
 - **`assistant-satellite.<n>.volume`** — 0–100 %.
 - **`assistant-satellite.<n>.mute`** — silence the speaker.
-- **`assistant-satellite.<n>.dnd`** — Do-Not-Disturb: **announcements are suppressed** (replies to your
-  own questions still play).
+- **`assistant-satellite.<n>.dnd`** — the satellite's own Do-Not-Disturb.
 
 **Priority announcements:** if the announcement text starts with **`!`**, the `!` is stripped and the
 announcement plays **even when Do-Not-Disturb is on** — e.g. `!Water leak in the basement`.
 
+### Spoken system notifications
+
+ioBroker's notifications are written for a log viewer: `system.host.pi: admin.0: …`, version numbers,
+`M/D/YYYY` timestamps. Read out verbatim they are unlistenable, so the assistant strips the origin
+prefixes and has the LLM turn the text into **one spoken sentence** whose tone follows the severity
+(**Reword system notifications** on the Settings tab, on by default; one small LLM call per notification,
+and the original text is spoken if it fails).
+
+| Severity | Tone | Do-Not-Disturb |
+|---|---|---|
+| `alert` | clear and urgent | **ignored** — an alert is always heard |
+| `notify` (default) | casual and direct | respected |
+| `info` | mentioned in passing | respected |
+| `direct` | not reworded at all, spoken as given | respected |
+
+From a state:
+
+- **`assistant.0.notify.text`** — write a notification (severity `notify`).
+- **`assistant.0.notify.alert`** — write an urgent one (ignores Do-Not-Disturb).
+- **`assistant.0.notify.last`** — read what was last spoken.
+
+From a script, with the severity and an optional room:
+
+```js
+sendTo('assistant.0', 'notify', { text: 'Backup finished', severity: 'info' });
+sendTo('assistant.0', 'notify', { text: 'Water leak in the basement', severity: 'alert', room: 'Kitchen' }, res =>
+    log(`spoken on ${res.spoken} channel(s)`),
+);
+```
+
+**ioBroker notification manager:** the assistant registers as a notification handler
+(`supportedMessages.notifications`), so you can pick it in the *notification-manager* adapter as the
+output for any notification category — host problems, failed updates, disk space. Those then arrive here
+with their own severity and are spoken the same way.
+
+### Asking back: let the assistant ask *you* something
+
+The other direction of a conversation: a script asks a question through a satellite, the satellite speaks
+it and **re-opens its microphone without a wake word**, and the answer comes back to the script.
+
+```js
+sendTo('assistant.0', 'askUser', { question: 'The fryer is still on. Shall I switch it off?', room: 'Kitchen' }, res => {
+    if (res.timeout) { log('nobody answered'); return; }
+    log(`answer: ${res.answer}`);            // the spoken reply, verbatim
+});
+```
+
+| Field       | Meaning                                                                                        |
+|-------------|------------------------------------------------------------------------------------------------|
+| `question`  | What to ask (required).                                                                        |
+| `room`      | Ask on the satellite in that room.                                                             |
+| `target`    | Ask on one satellite, by state id (`satellites.kitchen`, `kitchen`) or device name.            |
+| *(neither)* | Ask on **all** satellites — the first answer wins.                                             |
+| `source`    | Arm a text channel instead (`chat`, `telegram:Max`): nothing is spoken, the next message there counts as the answer. |
+| `timeoutMs` | How long to wait, default `60000`.                                                             |
+
+The reply is `{ answer: '…' }`, or `{ timeout: true }` if nobody said anything in time, or
+`{ error: '…' }` when the question could not be asked (unknown room, no satellite reachable).
+
+While a question is open, the next thing said on that satellite is **not** interpreted as a command — a
+bare "yes" goes to your script instead of to the rule engine. The assistant itself stays silent about it,
+so your script decides what to say next (write to `satellites.<id>.tts`). A newer question replaces an
+older one for the same satellite, and the timeout always releases it.
+
+**Microphone support:** ESPHome satellites open the mic by themselves (the question is sent with
+`start_conversation`). ioBroker-native and UDP satellites are told to listen; whether they can depends on
+their firmware — if not, the answer still works, it just needs the wake word first.
+
 ---
 
-## 10. Troubleshooting
+## 10. Proactive triggers
+
+A trigger lets the assistant speak **first**. It watches states or the clock and then says something,
+writes a state, or - the interesting one - **asks you a question and acts on your answer**. Configure them
+on the **Triggers** tab, one row per trigger.
+
+### The fields
+
+| Column | Meaning |
+|---|---|
+| **Id** | Short unique id; also the name of its `triggers.items.<id>` states. |
+| **Name** | Free label for the log and the states. |
+| **When (JSON)** | The condition - see below. |
+| **Room** | Where to speak / whom to ask. Empty = all satellites. |
+| **Say** | What to announce. |
+| **Ask** | Ask this instead, and decide by the answer (needs response rules). |
+| **Response rules (JSON)** | What to do with the answer - see below. |
+| **Extra actions (JSON)** | More than one thing to do, e.g. say *and* switch. |
+| **Delay** | Wait before acting: `90s`, `30m`, `5h`, `2d`. |
+| **Cooldown (s)** | Minimum gap between two firings. Default 3600, `0` = none. |
+
+### Conditions
+
+```json
+{ "state": "javascript.0.window.living", "value": true }
+{ "state": "hm-rpc.0.ABC.1.TEMPERATURE", "below": 12 }
+{ "time": "23:00", "days": [1, 2, 3, 4, 5] }
+```
+
+A state condition fires on the **transition into** the condition - a device repeating the same value
+changes nothing. Without `value`/`above`/`below` every change counts. A time condition fires at that
+wall-clock time, on the given weekdays (0 = Sunday ... 6 = Saturday; omit for daily).
+
+Use a **list** for alternatives (any one is enough), and refine a condition with `also` (must hold too)
+and `unless` (blocks while it holds):
+
+```json
+[
+  {
+    "state": "javascript.0.window.living",
+    "value": true,
+    "also": { "state": "hm-rpc.0.ABC.1.TEMPERATURE", "below": 12 },
+    "unless": { "state": "0_userdata.0.away", "value": true }
+  },
+  { "time": "22:30" }
+]
+```
+
+`also` accepts a list (all must hold) or `{"op":"or","conditions":[...]}`. A state that cannot be read
+makes `also` fail (we will not claim a condition holds when we cannot check it) but does **not** make
+`unless` block (a lock that fires by accident is worse than one that waits).
+
+### Asking instead of announcing
+
+```text
+Ask:            The fryer has been on for 5 hours. Shall I switch it off?
+When (JSON):    {"state":"shelly.0.fryer.Relay0.Switch","value":true}
+Delay:          5h
+Response rules: [{"match":"agreement","say":"Okay, I will switch it off.",
+                  "setState":{"id":"shelly.0.fryer.Relay0.Switch","value":false}},
+                 {"match":"refusal","say":"Fine, I will leave it on."},
+                 {"say":"Sorry, I did not get that."}]
+```
+
+The question is spoken on the satellite and its microphone re-opens without a wake word (see section 9).
+The answer is classified by the LLM against each rule's `match` - any wording in any language, so "yes, go
+ahead" matches `agreement`. The **first** matching rule runs; a rule **without** `match` is the fallback
+for an answer that fits none. If nobody answers within a minute, nothing happens.
+
+Add `"cancelWhen"` to abort a pending delay - for the example above
+`{"state":"shelly.0.fryer.Relay0.Switch","value":false}`, so switching the fryer off yourself cancels the
+question.
+
+### Control at runtime
+
+- **`triggers.enabled`** - master switch; while it is off, no trigger speaks or writes.
+- **`triggers.items.<id>.enabled`** - switch one trigger off (survives a restart).
+- **`triggers.items.<id>.fire`** - run it now, ignoring cooldown and delay. The way to test one.
+- **`triggers.items.<id>.{lastFired,nextFireAt,pendingUntil}`** - when it last ran, when it next runs, and
+  when a pending delay is due.
+- From a script: `sendTo('assistant.0', 'listTriggers', {}, cb)`, `fireTrigger` / `setTriggerEnabled` with
+  `{ id, enabled }`.
+
+**Writing states** follows the assistant's own permission: a trigger only writes if **device control** is
+allowed on the Devices tab. Announcements are unaffected.
+
+With **Let the LLM reword trigger texts** the model rephrases a trigger's text before it is spoken, so a
+daily announcement does not sound like a recording. It costs one small LLM call; if it fails the original
+text is used.
+
+---
+
+## 11. Troubleshooting
 
 - **No microphone audio / `arecord: capture slave is not defined` / `Device or resource busy`** — the mic
   device is wrong. Set it to a real capture device like `plughw:2,0` (from `arecord -l`), not `default`.
@@ -244,10 +625,17 @@ announcement plays **even when Do-Not-Disturb is on** — e.g. `!Water leak in t
 - **Satellite can't reach the assistant** — make sure the assistant instance is **running**; for
   ioBroker-native transport nothing else is needed, for UDP check the port/host.
 - **Voice tab options hidden** — enable **Enable voice (STT/TTS)** first.
+- **ESPHome satellite stays offline** — the adapter dials the device, so the *device* must be reachable
+  on TCP 6053 (`nc -vz <ip> 6053`). Check the address, and that no other controller (a Home Assistant
+  instance, for example) already holds the device's voice-assistant subscription.
+- **ESPHome satellite hears you but stays silent** — it fetches the reply over HTTP, so the **media
+  server** has to be reachable *from the device*. Check the firewall on the ioBroker machine for the
+  media server port (default `8099`), and set **Media server address for the devices** by hand if the
+  device reaches this machine under a different address.
 
 ---
 
-## 11. States overview
+## 12. States overview
 
 | State                                              | Meaning                                                        |
 |----------------------------------------------------|----------------------------------------------------------------|
@@ -256,3 +644,9 @@ announcement plays **even when Do-Not-Disturb is on** — e.g. `!Water leak in t
 | `text.querySource`                                 | origin of the last request (`''`, `chat`, or a satellite name) |
 | `tts.text`                                         | announce to **all** satellites (text or audio path)            |
 | `satellites.<id>.{status,room,alive,lastSeen,tts}` | per-satellite state + announce                                 |
+| `triggers.enabled` / `triggers.count` / `triggers.list` | proactive triggers: master switch, number loaded, live status (JSON) |
+| `triggers.items.<id>.{enabled,fire,lastFired,nextFireAt}` | per-trigger switch, test button and timing |
+| `notify.text` / `notify.alert` / `notify.last` | speak a system notification / an urgent one / what was spoken |
+| `dnd` / `satellites.<id>.dnd` | Do-Not-Disturb, globally or per satellite (alerts still play) |
+| `presence.anyoneHome` / `presence.count` / `presence.list` | who is at home, from the configured presence states |
+| `presence.lastArrival` / `presence.lastDeparture` | who came home / left last |

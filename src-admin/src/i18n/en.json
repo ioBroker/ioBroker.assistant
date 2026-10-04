@@ -1,7 +1,10 @@
 {
+    "custom_assistant_%s of %s active": "%s of %s active",
     "custom_assistant_Announcement": "Announcement",
     "custom_assistant_Clear chat": "Clear chat",
+    "custom_assistant_Close": "Close",
     "custom_assistant_Device cache cleared.": "Device cache cleared.",
+    "custom_assistant_Device settings": "Device settings",
     "custom_assistant_Hide disabled": "Hide disabled",
     "custom_assistant_Host": "Host",
     "custom_assistant_Last seen": "Last seen",
@@ -19,6 +22,7 @@
     "custom_assistant_Satellites": "Satellites",
     "custom_assistant_Save the configuration (the instance will restart) before chatting.": "Save the configuration (the instance will restart) before chatting.",
     "custom_assistant_Send announcement": "Send announcement",
+    "custom_assistant_Settings for %s": "Settings for %s",
     "custom_assistant_Speak": "Speak",
     "custom_assistant_Speak on all satellites": "Speak on all satellites",
     "custom_assistant_Start the assistant instance to chat.": "Start the assistant instance to chat.",
@@ -28,9 +32,11 @@
     "custom_assistant_Stop reading answers aloud": "Stop reading answers aloud",
     "custom_assistant_Test chat": "Test chat",
     "custom_assistant_Thinking…": "Thinking…",
+    "custom_assistant_This satellite exposes no settings.": "This satellite exposes no settings.",
     "custom_assistant_Translate all missing (%s)": "Translate all missing (%s)",
     "custom_assistant_Translate name into %s": "Translate name into %s",
     "custom_assistant_Type a message…": "Type a message…",
+    "custom_assistant_Wake words": "Wake words",
     "custom_assistant_auto": "auto",
     "custom_assistant_change it on the Voice tab": "change it on the Voice tab",
     "custom_assistant_device": "Device",
@@ -54,5 +60,6 @@
     "custom_assistant_sat_processing": "processing",
     "custom_assistant_sat_speaking": "speaking",
     "custom_assistant_type": "Type",
+    "custom_assistant_wake_word_hint": "The wake word runs on the device. Hover a word to see which languages it was trained on — most are English only.",
     "custom_assistant_write": "Write"
 }

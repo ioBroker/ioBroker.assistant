@@ -13,9 +13,11 @@ import {
     Tooltip,
     Typography,
 } from '@mui/material';
-import { Campaign as AnnounceIcon, Circle as DotIcon } from '@mui/icons-material';
+import { Campaign as AnnounceIcon, Circle as DotIcon, Settings as SettingsIcon } from '@mui/icons-material';
 import { ConfigGeneric, type ConfigGenericProps, type ConfigGenericState } from '@iobroker/json-config';
 import { I18n } from '@iobroker/gui-components';
+
+import SatelliteSettingsDialog from './SatelliteSettingsDialog';
 
 // Register this component's translations into the shared admin I18n (custom components don't auto-load them).
 const translations: Record<string, Record<string, string>> = {};
@@ -42,6 +44,13 @@ interface SatellitesState extends ConfigGenericState {
     sats: Record<string, SatRow>;
     /** per-satellite (and '__all__') announcement composer text. */
     speak: Record<string, string>;
+    /** Every state under `satellites.`, as `<satId>` → `<prop>` → value; feeds the settings dialog. */
+    vals: Record<string, Record<string, ioBroker.StateValue>>;
+    /** Satellite whose settings dialog is open, or null. */
+    settingsFor: string | null;
+    /** Control objects of that satellite, loaded when the dialog opens. */
+    settingsObjects: Record<string, ioBroker.StateObject>;
+    settingsLoading: boolean;
 }
 
 /** Status chip colour per satellite state. */
@@ -65,7 +74,15 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
 
     constructor(props: ConfigGenericProps) {
         super(props);
-        this.state = { ...this.state, sats: {}, speak: {} };
+        this.state = {
+            ...this.state,
+            sats: {},
+            speak: {},
+            vals: {},
+            settingsFor: null,
+            settingsObjects: {},
+            settingsLoading: false,
+        };
     }
 
     private get instanceId(): string {
@@ -82,10 +99,12 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                 ioBroker.State | null | undefined
             >;
             const sats: Record<string, SatRow> = {};
+            const vals: Record<string, Record<string, ioBroker.StateValue>> = {};
             for (const [id, st] of Object.entries(states || {})) {
                 this.applyToMap(sats, id, st);
+                this.applyToVals(vals, id, st);
             }
-            this.setState({ sats });
+            this.setState({ sats, vals });
         } catch {
             /* states may not exist yet */
         }
@@ -130,6 +149,19 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
         map[p.satId] = row;
     }
 
+    /** Keep the raw value of every satellite state — the settings dialog renders from these. */
+    private applyToVals(
+        map: Record<string, Record<string, ioBroker.StateValue>>,
+        fullId: string,
+        st: ioBroker.State | null | undefined,
+    ): void {
+        const p = this.parse(fullId);
+        if (!p) {
+            return;
+        }
+        map[p.satId] = { ...(map[p.satId] || {}), [p.prop]: st?.val ?? null };
+    }
+
     private onState = (id: string, st: ioBroker.State | null | undefined): void => {
         this.setState(prev => {
             const sats = { ...prev.sats };
@@ -139,9 +171,43 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                 sats[p.satId] = { ...sats[p.satId] };
             }
             this.applyToMap(sats, id, st);
-            return { sats };
+            const vals = { ...prev.vals };
+            this.applyToVals(vals, id, st);
+            return { sats, vals };
         });
     };
+
+    /**
+     * Open the settings dialog for one satellite. The controls are rendered from their object
+     * definitions (min/max/step, the `states` list, the type), so they are fetched here rather than
+     * guessed — which is what keeps the dialog working for devices with a different set of knobs.
+     */
+    private async openSettings(satId: string): Promise<void> {
+        this.setState({ settingsFor: satId, settingsObjects: {}, settingsLoading: true });
+        const prefix = `${this.instanceId}.satellites.${satId}.`;
+        try {
+            const objs = (await this.props.oContext.socket.getForeignObjects(`${prefix}controls.*`, 'state')) as Record<
+                string,
+                ioBroker.StateObject
+            >;
+            const byProp: Record<string, ioBroker.StateObject> = {};
+            for (const [id, obj] of Object.entries(objs || {})) {
+                if (obj?.common) {
+                    byProp[id.slice(prefix.length)] = obj;
+                }
+            }
+            this.setState({ settingsObjects: byProp, settingsLoading: false });
+        } catch {
+            this.setState({ settingsLoading: false });
+        }
+    }
+
+    /** Write one setting. Not acked — the adapter acks with whatever the device really took. */
+    private writeSetting(satId: string, prop: string, value: ioBroker.StateValue): void {
+        this.props.oContext.socket
+            .setState(`${this.instanceId}.satellites.${satId}.${prop}`, { val: value, ack: false })
+            .catch(() => {});
+    }
 
     /** Push the composer text to one satellite (or all) by writing the corresponding tts state. */
     private announce(satId: string): void {
@@ -238,6 +304,7 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                                 <TableCell>{I18n.t('custom_assistant_Status')}</TableCell>
                                 <TableCell>{I18n.t('custom_assistant_Last seen')}</TableCell>
                                 <TableCell>{I18n.t('custom_assistant_Announcement')}</TableCell>
+                                <TableCell />
                             </TableRow>
                         </TableHead>
                         <TableBody>
@@ -282,12 +349,40 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                                         <TableCell>
                                             {this.renderComposer(id, I18n.t('custom_assistant_Type a message…'))}
                                         </TableCell>
+                                        <TableCell sx={{ width: 40 }}>
+                                            <Tooltip title={I18n.t('custom_assistant_Device settings')}>
+                                                <span>
+                                                    <IconButton
+                                                        size="small"
+                                                        // The settings live on the device, so there is
+                                                        // nothing to show or change while it is away.
+                                                        disabled={!s.alive}
+                                                        onClick={() => void this.openSettings(id)}
+                                                    >
+                                                        <SettingsIcon />
+                                                    </IconButton>
+                                                </span>
+                                            </Tooltip>
+                                        </TableCell>
                                     </TableRow>
                                 );
                             })}
                         </TableBody>
                     </Table>
                 )}
+
+                {this.state.settingsFor ? (
+                    <SatelliteSettingsDialog
+                        instanceId={this.instanceId}
+                        satId={this.state.settingsFor}
+                        room={this.state.sats[this.state.settingsFor]?.room || ''}
+                        values={this.state.vals[this.state.settingsFor] || {}}
+                        objects={this.state.settingsObjects}
+                        loading={this.state.settingsLoading}
+                        onWrite={(prop, value) => this.writeSetting(this.state.settingsFor as string, prop, value)}
+                        onClose={() => this.setState({ settingsFor: null, settingsObjects: {} })}
+                    />
+                ) : null}
             </Box>
         );
     }

@@ -26,13 +26,20 @@ export type SatToServer =
 /** Satellite lifecycle/status as reflected to the satellite (drives its LED) and to ioBroker states. */
 export type SatelliteState = 'idle' | 'listening' | 'processing' | 'speaking';
 
-/** Control messages sent by the server to a satellite. */
+/**
+ * Control messages sent by the server to a satellite.
+ *
+ * `listen` re-opens the microphone without a wake word, for the answer to a question the assistant just
+ * asked (see `PendingQuestions`). It is additive: a satellite built before this message existed ignores
+ * the unknown type and simply waits for its wake word instead.
+ */
 export type ServerToSat =
     | { type: 'registered'; ok: boolean }
     | { type: 'heartbeat_ack' }
     | { type: 'reregister' }
     | { type: 'tts_end'; sample_rate: number }
-    | { type: 'status'; state: SatelliteState };
+    | { type: 'status'; state: SatelliteState }
+    | { type: 'listen' };
 
 /** Prefix a control JSON message with the CONTROL type byte. */
 export function encodeControl(msg: ServerToSat): Buffer {

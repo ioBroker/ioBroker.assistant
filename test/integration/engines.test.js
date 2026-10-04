@@ -34,11 +34,36 @@ test('STT factory: constructs / throws per provider', () => {
 
 test('TTS factory: constructs / throws per provider', () => {
     const withKey = ctx({ creds: { ...ctx().creds, openaiKey: 'sk-x', azureKey: 'a', azureRegion: 'r', aws: { accessKeyId: 'A', secretAccessKey: 'S', region: 'eu' } } });
-    assert.equal(createTtsEngine('openai', withKey).constructor.name, 'OpenAiTts');
-    assert.equal(createTtsEngine('azure', withKey).constructor.name, 'AzureTts');
-    assert.equal(createTtsEngine('aws', withKey).constructor.name, 'AwsTts');
-    assert.equal(createTtsEngine('piper', withKey).constructor.name, 'PiperTts');
+    // Every engine comes wrapped in the shared cache/length/SSML layer, so the provider is internal.
+    for (const provider of ['openai', 'azure', 'aws', 'piper']) {
+        const engine = createTtsEngine(provider, withKey);
+        assert.equal(engine.constructor.name, 'CachedTts', provider);
+        assert.equal(typeof engine.synthesize, 'function');
+        assert.equal(typeof engine.warm, 'function', 'the cache can be warmed');
+    }
     assert.throws(() => createTtsEngine('vosk', withKey), /not text-to-speech/);
+});
+
+test('a configured fallback wraps the pair; an unusable one is dropped with a warning', () => {
+    const base = ctx({ creds: { ...ctx().creds, openaiKey: 'sk-x' } });
+    const warnings = [];
+    const withFallback = { ...base, ttsFallback: 'piper', log: { ...base.log, warn: m => warnings.push(m) } };
+    assert.equal(createTtsEngine('openai', withFallback).constructor.name, 'FallbackTts');
+
+    // Same provider as the primary → nothing to fall back to.
+    assert.equal(createTtsEngine('piper', { ...base, ttsFallback: 'piper' }).constructor.name, 'CachedTts');
+
+    // A fallback that cannot be built (no credentials) must not take the primary down.
+    const broken = { ...base, ttsFallback: 'azure', log: { ...base.log, warn: m => warnings.push(m) } };
+    assert.equal(createTtsEngine('openai', broken).constructor.name, 'CachedTts');
+    assert.match(warnings.join('\n'), /fallback 'azure' unavailable/);
+});
+
+test('STT factory wraps a pair too, and keeps the bare engine without a fallback', () => {
+    const withKey = ctx({ creds: { ...ctx().creds, openaiKey: 'sk-x' } });
+    assert.equal(createSttEngine('openai', withKey).constructor.name, 'OpenAiStt');
+    assert.equal(createSttEngine('openai', { ...withKey, sttFallback: 'vosk' }).constructor.name, 'FallbackStt');
+    assert.equal(createSttEngine('openai', { ...withKey, sttFallback: 'openai' }).constructor.name, 'OpenAiStt');
 });
 
 test('listVoices: OpenAI returns the fixed set; Piper returns per-language defaults', async () => {

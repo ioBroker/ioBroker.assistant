@@ -9,6 +9,10 @@ import { AzureStt, AzureTts, listAzureVoices } from './azure';
 import { AwsStt, AwsTts, listPollyVoices, type AwsCreds } from './aws';
 import { VoskStt, listVoskModels } from './vosk';
 import { PiperTts, listPiperVoices } from './piper';
+import * as path from 'node:path';
+
+import { CachedTts } from './ttsCache';
+import { FallbackStt, FallbackTts, type NamedEngine } from './fallback';
 import { isoToLocale } from './lang';
 import type { VoiceLogger } from './download';
 
@@ -34,6 +38,9 @@ export interface VoiceNames {
 export interface EngineContext {
     creds: VoiceCredentials;
     voices: VoiceNames;
+    /** Optional second engine, used when the primary one fails ('' = none). */
+    sttFallback?: SpeechProvider | '';
+    ttsFallback?: SpeechProvider | '';
     /** Writable instance data dir (for the local engines' downloads). */
     dataDir: string;
     log: VoiceLogger;
@@ -64,6 +71,20 @@ function requireOpenAi(creds: VoiceCredentials): void {
 }
 
 export function createSttEngine(provider: SpeechProvider, ctx: EngineContext): SttEngine {
+    const primary: NamedEngine<SttEngine> = { name: provider, engine: buildSttEngine(provider, ctx) };
+    const fallback = ctx.sttFallback && ctx.sttFallback !== provider ? ctx.sttFallback : '';
+    if (!fallback) {
+        return primary.engine;
+    }
+    try {
+        return new FallbackStt([primary, { name: fallback, engine: buildSttEngine(fallback, ctx) }], ctx.log);
+    } catch (e) {
+        ctx.log.warn(`Speech-to-text fallback '${fallback}' unavailable: ${(e as Error).message}`);
+        return primary.engine;
+    }
+}
+
+function buildSttEngine(provider: SpeechProvider, ctx: EngineContext): SttEngine {
     switch (provider) {
         case 'azure':
             requireAzure(ctx.creds);
@@ -82,6 +103,40 @@ export function createSttEngine(provider: SpeechProvider, ctx: EngineContext): S
 }
 
 export function createTtsEngine(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
+    // Each engine gets the shared behaviour (disk cache, length limit, SSML) and its own cache directory,
+    // so a fallback engine's voice can never be served later while the primary one is healthy again.
+    const primary: NamedEngine<TtsEngine> = { name: provider, engine: cachedTts(provider, ctx) };
+    const fallback = ctx.ttsFallback && ctx.ttsFallback !== provider ? ctx.ttsFallback : '';
+    if (!fallback) {
+        return primary.engine;
+    }
+    try {
+        return new FallbackTts([primary, { name: fallback, engine: cachedTts(fallback, ctx) }], ctx.log);
+    } catch (e) {
+        // A fallback that cannot even be built (missing key, wrong provider) must not take the main one down.
+        ctx.log.warn(`Text-to-speech fallback '${fallback}' unavailable: ${(e as Error).message}`);
+        return primary.engine;
+    }
+}
+
+/**
+ * One provider binding plus the shared cache/length/SSML layer. One cache directory per provider+voice —
+ * a voice change must not serve audio in the old voice.
+ */
+function cachedTts(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
+    const voice =
+        provider === 'azure'
+            ? ctx.voices.azure
+            : provider === 'aws'
+              ? ctx.voices.aws
+              : provider === 'piper'
+                ? ctx.voices.piper
+                : ctx.voices.openai;
+    const dir = path.join(ctx.dataDir, 'ttscache', `${provider}-${(voice || 'default').replace(/[^\w.-]/g, '_')}`);
+    return new CachedTts(buildTtsEngine(provider, ctx), { dir, log: ctx.log });
+}
+
+function buildTtsEngine(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
     switch (provider) {
         case 'azure':
             requireAzure(ctx.creds);

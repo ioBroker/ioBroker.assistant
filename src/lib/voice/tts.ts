@@ -12,8 +12,18 @@ export interface TtsResult {
 
 export interface TtsEngine {
     synthesize(text: string, lang: string): Promise<TtsResult>;
+    /**
+     * Speak SSML (`<speak>…</speak>`) — only implemented by engines that understand it (Azure, Polly).
+     * Callers go through `CachedTts`, which strips the markup for the engines that do not.
+     */
+    synthesizeSsml?(ssml: string, lang: string): Promise<TtsResult>;
     /** Optional warm-up (install/download engine + voice for `lang`) so the first request isn't slow. */
     prepare?(lang: string): Promise<void>;
+    /**
+     * Pre-synthesise phrases into whatever cache this engine has, returning how many were added.
+     * Implemented by `CachedTts`; absent on a bare provider binding.
+     */
+    warm?(phrases: string[], lang: string): Promise<number>;
 }
 
 /** OpenAI TTS voice ids. */

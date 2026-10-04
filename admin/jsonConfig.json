@@ -103,6 +103,15 @@
                     "sm": 6,
                     "md": 4
                 },
+                "confirmWithTone": {
+                    "type": "checkbox",
+                    "label": "Confirm switch commands with a beep",
+                    "help": "A successful switch command is confirmed by a short tone on the satellite instead of a spoken sentence - instant, where speaking costs a text-to-speech call. Questions, errors and the text channels are unaffected.",
+                    "default": false,
+                    "hidden": "!data.useLocalNlu",
+                    "sm": 6,
+                    "md": 4
+                },
                 "nluAliases": {
                     "type": "table",
                     "label": "Synonym dictionary",
@@ -114,6 +123,20 @@
                         { "type": "text", "attr": "from", "title": "Said or typed", "width": "40%" },
                         { "type": "text", "attr": "to", "title": "Canonical term", "width": "40%" },
                         { "type": "text", "attr": "language", "title": "Language (empty = all)", "width": "20%" }
+                    ]
+                },
+                "routines": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "Routines",
+                    "help": "A phrase that runs a list of actions: \"Gute Nacht\" switches off five things and answers once. Phrases: several separated by commas (matched anywhere in the sentence, upper/lower case and umlauts do not matter). Actions as JSON, same shape as a trigger: [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Reply: what the assistant answers (leave empty to stay silent). Matched before the offline rule engine and before the LLM, so a routine is never reinterpreted.",
+                    "sm": 12,
+                    "md": 12,
+                    "items": [
+                        { "type": "text", "attr": "name", "title": "Name", "width": "15%" },
+                        { "type": "text", "attr": "phrases", "title": "Phrases (comma separated)", "width": "30%" },
+                        { "type": "text", "attr": "actions", "title": "Actions (JSON)", "width": "35%" },
+                        { "type": "text", "attr": "reply", "title": "Reply", "width": "20%" }
                     ]
                 },
                 "useConversationContext": {
@@ -141,6 +164,20 @@
                     "sm": 12,
                     "md": 6
                 },
+                "presence": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "Presence",
+                    "help": "Which states tell the assistant who is at home - one row per person. Any state works: the residents adapter, a phone ping like ping.0.phone-denis.alive, a router client state or your own flag. Kind: empty or person, guest, pet (a pet never makes the house occupied). Home value: leave empty for the usual forms (true, 1, \"home\", \"anwesend\"), or enter the exact value that means at home. Used to tell the LLM who is around, to hold back announcements to an empty house (notify with onlyWhenHome) and as a trigger source via presence.anyoneHome.",
+                    "sm": 12,
+                    "md": 12,
+                    "items": [
+                        { "type": "text", "attr": "id", "title": "State id", "width": "45%" },
+                        { "type": "text", "attr": "name", "title": "Name", "width": "25%" },
+                        { "type": "text", "attr": "kind", "title": "Kind (person/guest/pet)", "width": "15%" },
+                        { "type": "text", "attr": "homeValue", "title": "Home value (empty = auto)", "width": "15%" }
+                    ]
+                },
                 "timerAnnounce": {
                     "newLine": true,
                     "type": "checkbox",
@@ -154,6 +191,15 @@
                     "type": "checkbox",
                     "label": "Announce when an alarm goes off",
                     "help": "Speak an announcement when an alarm at a fixed clock time fires. Alarms are always mirrored into the alarms.* states for scripts and visualization.",
+                    "default": true,
+                    "sm": 6,
+                    "md": 4
+                },
+                "notifyRephrase": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Reword system notifications",
+                    "help": "Spoken system notifications (notify.text / the ioBroker notification manager) are reworded by the LLM into one natural sentence first - their raw texts are written for a log viewer. Costs one small LLM call per notification; the original text is spoken if it fails. Urgent ones (notify.alert) are announced even when Do-Not-Disturb is on.",
                     "default": true,
                     "sm": 6,
                     "md": 4
@@ -292,6 +338,15 @@
                     "sm": 6,
                     "md": 3
                 },
+                "verifyWrites": {
+                    "type": "checkbox",
+                    "label": "Verify device feedback",
+                    "help": "After a switch command, wait up to 2 seconds for the device to acknowledge the new value (ack:true) and report \"did not respond\" if it never does. Leave this off for devices that never acknowledge (MQTT, scripts, 0_userdata) - every command would look failed.",
+                    "default": false,
+                    "hidden": "!data.allowWriteStates",
+                    "sm": 6,
+                    "md": 4
+                },
                 "allowHistory": {
                     "type": "checkbox",
                     "label": "Allow reading history",
@@ -359,6 +414,49 @@
                     "guiApi": 2,
                     "bundlerType": "module",
                     "sm": 12
+                }
+            }
+        },
+        "_triggers": {
+            "type": "panel",
+            "label": "Triggers",
+            "items": {
+                "_triggersHeader": {
+                    "type": "header",
+                    "text": "Proactive triggers",
+                    "size": 2
+                },
+                "_triggersHint": {
+                    "type": "staticText",
+                    "text": "A trigger watches states or the clock and then speaks, writes a state, or asks you a question and acts on your answer. Switch single triggers off at runtime with triggers.items.<id>.enabled, test one with its fire button, and all of them with triggers.enabled.",
+                    "sm": 12
+                },
+                "triggers": {
+                    "type": "table",
+                    "label": "Triggers",
+                    "help": "Condition as JSON: {\"state\":\"javascript.0.window\",\"value\":true} or {\"time\":\"23:00\",\"days\":[1,2,3,4,5]}; add \"also\"/\"unless\" for extra or blocking conditions, or use a list for alternatives. Say = announcement, Ask = question (needs response rules, JSON: [{\"match\":\"agreement\",\"say\":\"Okay\",\"setState\":{\"id\":\"...\",\"value\":false}}]). Extra actions as JSON: [{\"setState\":{\"id\":\"...\",\"value\":false}}]. Delay waits before acting (90s/30m/5h), cooldown is the minimum gap between two firings in seconds (default 3600).",
+                    "sm": 12,
+                    "md": 12,
+                    "items": [
+                        { "type": "text", "attr": "id", "title": "Id", "width": "8%" },
+                        { "type": "text", "attr": "name", "title": "Name", "width": "12%" },
+                        { "type": "text", "attr": "when", "title": "When (JSON)", "width": "20%" },
+                        { "type": "text", "attr": "room", "title": "Room", "width": "8%" },
+                        { "type": "text", "attr": "say", "title": "Say", "width": "14%" },
+                        { "type": "text", "attr": "ask", "title": "Ask", "width": "14%" },
+                        { "type": "text", "attr": "onResponse", "title": "Response rules (JSON)", "width": "10%" },
+                        { "type": "text", "attr": "actions", "title": "Extra actions (JSON)", "width": "8%" },
+                        { "type": "text", "attr": "delay", "title": "Delay", "width": "3%" },
+                        { "type": "number", "attr": "cooldownSec", "title": "Cooldown (s)", "width": "3%", "min": 0 }
+                    ]
+                },
+                "triggerRephrase": {
+                    "type": "checkbox",
+                    "label": "Let the LLM reword trigger texts",
+                    "help": "Before a trigger speaks, the model rewords its text so repeated announcements do not sound canned. Costs one small LLM call per announcement; the original text is used if it fails.",
+                    "default": false,
+                    "sm": 12,
+                    "md": 6
                 }
             }
         },
@@ -432,6 +530,72 @@
                     "sm": 4,
                     "md": 3
                 },
+                "esphomeEnabled": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Also drive ESPHome voice satellites",
+                    "help": "ThirdReality Voice & Music Assistant, Home Assistant Voice PE, linux-voice-assistant. These devices listen on TCP 6053 and the adapter dials them, so no port is opened for the audio itself — only the media server below, which they fetch the spoken reply from.",
+                    "default": false,
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 12,
+                    "md": 6
+                },
+                "esphomeDevices": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "ESPHome satellites",
+                    "help": "One row per device. Port empty = 6053. The room is what the assistant treats the satellite as being in. Leave the password empty unless the device really has an API password set — table values are stored unencrypted.",
+                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
+                    "sm": 12,
+                    "md": 12,
+                    "items": [
+                        { "type": "text", "attr": "ip", "title": "Address (IP or host name)", "width": "30%" },
+                        {
+                            "type": "number",
+                            "attr": "port",
+                            "title": "Port",
+                            "width": "15%",
+                            "min": 1,
+                            "max": 65535,
+                            "default": 6053
+                        },
+                        { "type": "text", "attr": "room", "title": "Room", "width": "30%" },
+                        { "type": "text", "attr": "password", "title": "API password (usually empty)", "width": "25%" }
+                    ]
+                },
+                "esphomeMediaPort": {
+                    "newLine": true,
+                    "type": "number",
+                    "label": "Media server port",
+                    "help": "ESPHome satellites do not get the reply over their API socket — they fetch it as a URL. This is the port that small HTTP server listens on.",
+                    "default": 8099,
+                    "min": 1,
+                    "max": 65535,
+                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
+                    "sm": 6,
+                    "md": 3
+                },
+                "esphomeMediaHost": {
+                    "type": "ip",
+                    "freeSolo": true,
+                    "label": "Media server address for the devices",
+                    "help": "Host the satellites should fetch the audio from. Empty = use the address of each device connection automatically; set it only if the devices reach this machine under a different address (NAT, Docker, VLAN).",
+                    "default": "",
+                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
+                    "sm": 6,
+                    "md": 4
+                },
+                "esphomeSilenceMs": {
+                    "type": "number",
+                    "label": "End of speech after (ms of silence)",
+                    "help": "These devices stream until the server stops them, so the adapter decides when you stopped talking. Raise it if replies cut you off, lower it if the assistant waits too long.",
+                    "default": 900,
+                    "min": 200,
+                    "max": 5000,
+                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
+                    "sm": 6,
+                    "md": 3
+                },
                 "voiceLanguage": {
                     "newLine": true,
                     "type": "select",
@@ -455,6 +619,25 @@
                     "hidden": "!data.voiceEnabled",
                     "sm": 6,
                     "md": 3
+                },
+                "announceTargets": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "Announcement targets (groups and people)",
+                    "help": "Give a set of satellites a name, so an announcement, a question or a trigger can address it: a group of rooms (\"Upstairs\") or the speakers that belong to one person (\"Denis\", so \"tell Denis dinner is ready\" reaches them). Members: satellite ids, room names or device names, separated by commas. Kind: empty or group, or person. A real satellite or room of the same name always wins, so a group can never make a speaker unreachable.",
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 12,
+                    "md": 12,
+                    "items": [
+                        { "type": "text", "attr": "name", "title": "Name", "width": "25%" },
+                        {
+                            "type": "text",
+                            "attr": "members",
+                            "title": "Satellites, rooms or devices (comma separated)",
+                            "width": "60%"
+                        },
+                        { "type": "text", "attr": "kind", "title": "Kind (group/person)", "width": "15%" }
+                    ]
                 },
                 "sttProvider": {
                     "newLine": true,
@@ -481,6 +664,39 @@
                         { "label": "Piper (local)", "value": "piper" }
                     ],
                     "default": "openai",
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 6,
+                    "md": 3
+                },
+                "sttFallback": {
+                    "newLine": true,
+                    "type": "select",
+                    "label": "Speech-to-text fallback",
+                    "help": "Used when the provider above fails (outage, expired key, empty quota). A local engine keeps voice working without the internet.",
+                    "options": [
+                        { "label": "None", "value": "" },
+                        { "label": "OpenAI (Whisper)", "value": "openai" },
+                        { "label": "Azure Speech", "value": "azure" },
+                        { "label": "AWS Transcribe", "value": "aws" },
+                        { "label": "Vosk (local)", "value": "vosk" }
+                    ],
+                    "default": "",
+                    "hidden": "!data.voiceEnabled",
+                    "sm": 6,
+                    "md": 3
+                },
+                "ttsFallback": {
+                    "type": "select",
+                    "label": "Text-to-speech fallback",
+                    "help": "Used when the provider above fails. Piper keeps the assistant speaking without the internet.",
+                    "options": [
+                        { "label": "None", "value": "" },
+                        { "label": "OpenAI", "value": "openai" },
+                        { "label": "Azure Speech", "value": "azure" },
+                        { "label": "AWS Polly", "value": "aws" },
+                        { "label": "Piper (local)", "value": "piper" }
+                    ],
+                    "default": "",
                     "hidden": "!data.voiceEnabled",
                     "sm": 6,
                     "md": 3

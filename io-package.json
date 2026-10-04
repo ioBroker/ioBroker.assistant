@@ -116,7 +116,11 @@
         "tar"
       ]
     },
-    "messagebox": true
+    "messagebox": true,
+    "supportedMessages": {
+      "custom": true,
+      "notifications": true
+    }
   },
   "native": {
     "provider": "openai",
@@ -137,10 +141,18 @@
     "deviceAcl": {},
     "systemPrompt": "Du bist ein Sprach-Assistent für ioBroker. Deine Antworten werden vorgelesen: schreibe reinen Fließtext, KEIN Markdown, keine Sternchen, keine Aufzählungen, keine Emojis, und fasse dich kurz. Beantworte Fragen über Geräte, Räume und Sensoren ausschließlich mit den verfügbaren Tools. Rufe immer zuerst ein Tool auf, bevor du etwas über ioBroker sagst, und behaupte nie, dass etwas nicht existiert, ohne es per Tool geprüft zu haben. Erfinde keine Werte.",
     "useLocalNlu": true,
+    "routines": [],
+    "confirmWithTone": false,
+    "verifyWrites": false,
     "nluAliases": [],
     "useConversationContext": true,
     "useLongTermMemory": true,
+    "triggers": [],
+    "triggerRephrase": false,
+    "notifyRephrase": true,
     "weatherInstance": "",
+    "presence": [],
+    "announceTargets": [],
     "timerAnnounce": true,
     "alarmAnnounce": true,
     "timerSound": "sounds/timer.wav",
@@ -154,6 +166,11 @@
     "bind": "0.0.0.0",
     "wyomingEnabled": false,
     "wyomingPort": 10700,
+    "esphomeEnabled": false,
+    "esphomeDevices": [],
+    "esphomeMediaPort": 8099,
+    "esphomeMediaHost": "",
+    "esphomeSilenceMs": 900,
     "voiceLanguage": "",
     "voiceApiKey": "",
     "ttsVoice": "alloy",
@@ -161,6 +178,8 @@
     "ttsModel": "",
     "sttProvider": "openai",
     "ttsProvider": "openai",
+    "sttFallback": "",
+    "ttsFallback": "",
     "azureSpeechKey": "",
     "azureSpeechRegion": "",
     "azureVoice": "",
@@ -497,6 +516,199 @@
         "type": "boolean",
         "role": "button",
         "read": false,
+        "write": true,
+        "def": false
+      },
+      "native": {}
+    },
+    {
+      "_id": "triggers",
+      "type": "channel",
+      "common": {
+        "name": "Proactive triggers"
+      },
+      "native": {}
+    },
+    {
+      "_id": "triggers.count",
+      "type": "state",
+      "common": {
+        "name": "Number of loaded triggers",
+        "type": "number",
+        "role": "value",
+        "read": true,
+        "write": false,
+        "def": 0
+      },
+      "native": {}
+    },
+    {
+      "_id": "triggers.list",
+      "type": "state",
+      "common": {
+        "name": "Triggers with their live status (JSON)",
+        "type": "string",
+        "role": "json",
+        "read": true,
+        "write": false,
+        "def": "[]"
+      },
+      "native": {}
+    },
+    {
+      "_id": "triggers.lastFired",
+      "type": "state",
+      "common": {
+        "name": "Trigger that fired last",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "triggers.enabled",
+      "type": "state",
+      "common": {
+        "name": "Master switch for all triggers",
+        "type": "boolean",
+        "role": "switch.enable",
+        "read": true,
+        "write": true,
+        "def": true
+      },
+      "native": {}
+    },
+    {
+      "_id": "presence",
+      "type": "channel",
+      "common": {
+        "name": "Who is at home"
+      },
+      "native": {}
+    },
+    {
+      "_id": "presence.anyoneHome",
+      "type": "state",
+      "common": {
+        "name": "Somebody is at home (pets do not count)",
+        "type": "boolean",
+        "role": "indicator",
+        "read": true,
+        "write": false,
+        "def": false
+      },
+      "native": {}
+    },
+    {
+      "_id": "presence.count",
+      "type": "state",
+      "common": {
+        "name": "How many people are at home",
+        "type": "number",
+        "role": "value",
+        "read": true,
+        "write": false,
+        "def": 0
+      },
+      "native": {}
+    },
+    {
+      "_id": "presence.list",
+      "type": "state",
+      "common": {
+        "name": "Presence per person (JSON)",
+        "type": "string",
+        "role": "json",
+        "read": true,
+        "write": false,
+        "def": "[]"
+      },
+      "native": {}
+    },
+    {
+      "_id": "presence.lastArrival",
+      "type": "state",
+      "common": {
+        "name": "Who came home last",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "presence.lastDeparture",
+      "type": "state",
+      "common": {
+        "name": "Who left last",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "notify",
+      "type": "channel",
+      "common": {
+        "name": "Spoken system notifications"
+      },
+      "native": {}
+    },
+    {
+      "_id": "notify.text",
+      "type": "state",
+      "common": {
+        "name": "Speak a system notification (normal priority)",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": true,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "notify.alert",
+      "type": "state",
+      "common": {
+        "name": "Speak an urgent notification (ignores Do-Not-Disturb)",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": true,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "notify.last",
+      "type": "state",
+      "common": {
+        "name": "Last notification as it was spoken",
+        "type": "string",
+        "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "dnd",
+      "type": "state",
+      "common": {
+        "name": "Do-Not-Disturb: suppress announcements on all satellites (alerts still play)",
+        "type": "boolean",
+        "role": "switch.mode.silent",
+        "read": true,
         "write": true,
         "def": false
       },

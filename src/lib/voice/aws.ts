@@ -111,12 +111,22 @@ export class AwsTts implements TtsEngine {
         });
     }
 
-    async synthesize(text: string, lang: string): Promise<TtsResult> {
+    synthesize(text: string, lang: string): Promise<TtsResult> {
+        return this.speak(text, lang, 'text');
+    }
+
+    /** Polly speaks SSML natively (`TextType: 'ssml'`), so pauses and emphasis survive. */
+    synthesizeSsml(ssml: string, lang: string): Promise<TtsResult> {
+        return this.speak(ssml, lang, 'ssml');
+    }
+
+    private async speak(text: string, lang: string, textType: 'text' | 'ssml'): Promise<TtsResult> {
         const iso = (lang || 'en').split('-')[0].toLowerCase();
         const voice = this.voice || DEFAULT_POLLY_VOICE[iso] || 'Joanna';
         const resp = await this.client.send(
             new SynthesizeSpeechCommand({
                 Text: text,
+                TextType: textType,
                 OutputFormat: 'pcm', // 16-bit signed 1-channel little-endian
                 SampleRate: '16000',
                 VoiceId: voice as VoiceId,

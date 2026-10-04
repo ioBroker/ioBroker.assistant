@@ -231,6 +231,20 @@ export class VoiceServer {
         );
     }
 
+    /**
+     * Re-open the microphone on one satellite (by device name) or all of them, so the user can answer a
+     * question the assistant just asked without saying the wake word again. Returns how many satellites
+     * were told to listen — whether they can is up to their firmware (the message is additive).
+     */
+    listen(device: string | null): number {
+        const targets = [...this.sats.values()].filter(s => !device || s.device === device);
+        for (const sat of targets) {
+            void this.send(encodeControl({ type: 'listen' }), sat);
+            this.setStatus(sat, 'listening');
+        }
+        return targets.length;
+    }
+
     /** Device names of the currently registered satellites. */
     devices(): string[] {
         return [...this.sats.values()].map(s => s.device);
