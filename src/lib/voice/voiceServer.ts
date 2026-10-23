@@ -38,7 +38,7 @@ export interface VoiceServerOptions {
     stt: SttEngine;
     tts: TtsEngine;
     /** Produce the assistant reply for a transcribed utterance. */
-    answer: (question: string, ctx: { device: string; room: string }) => Promise<string>;
+    answer: (question: string, ctx: { device: string; room: string; sttMs: number }) => Promise<string>;
     /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
     getHints?: () => string[] | Promise<string[]>;
     log: ioBroker.Logger;
@@ -171,14 +171,16 @@ export class VoiceServer {
         this.setStatus(sat, 'processing');
         try {
             const hints = this.opts.getHints ? await this.opts.getHints() : undefined;
+            const sttStart = Date.now();
             const text = await this.opts.stt.transcribe(pcm, AUDIO_SAMPLE_RATE, this.opts.language, hints);
+            const sttMs = Date.now() - sttStart;
             this.opts.log.info(`Voice Q (${sat.device}): ${text || '(empty)'}`);
             if (!text) {
                 this.setStatus(sat, 'idle');
                 return;
             }
 
-            const answer = (await this.opts.answer(text, { device: sat.device, room: sat.room })).trim();
+            const answer = (await this.opts.answer(text, { device: sat.device, room: sat.room, sttMs })).trim();
             this.opts.log.info(`Voice A (${sat.device}): ${answer}`);
             if (!answer) {
                 this.setStatus(sat, 'idle');

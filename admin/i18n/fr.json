@@ -182,5 +182,7 @@
   "e.g. westeurope": "par exemple, l'Europe de l'Ouest",
   "None (local only)": "Aucun (local uniquement)",
   "Without an LLM provider only the local tiers answer: the rule-based commands, routines, timers and alarms, and the local model if enabled. Anything else gets a short \"I can't do that\" reply.": "Sans fournisseur LLM, seuls les niveaux locaux répondent : les commandes à base de règles, les routines, les minuteurs et alarmes, ainsi que le modèle local s'il est activé. Tout le reste reçoit une courte réponse « Je ne peux pas faire ça ».",
-  "Chat": "Chat"
+  "Chat": "Chat",
+  "Chat history (hours)": "Chat history (hours)",
+  "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.": "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing."
 }

@@ -22,7 +22,8 @@ export interface WyomingServerOptions {
     language: string;
     stt: SttEngine;
     tts: TtsEngine;
-    answer: (question: string) => Promise<string>;
+    /** `sttMs`: how long recognition took (for the journal). */
+    answer: (question: string, sttMs: number) => Promise<string>;
     /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
     getHints?: () => string[] | Promise<string[]>;
     log: ioBroker.Logger;
@@ -209,13 +210,15 @@ class WyomingConnection {
         }
         try {
             const hints = this.opts.getHints ? await this.opts.getHints() : undefined;
+            const sttStart = Date.now();
             const text = await this.opts.stt.transcribe(pcm, this.audioRate, this.lang, hints);
+            const sttMs = Date.now() - sttStart;
             this.opts.log.info(`Wyoming Q: ${text || '(empty)'}`);
             this.write('transcript', { text });
             if (!text) {
                 return;
             }
-            const answer = (await this.opts.answer(text)).trim();
+            const answer = (await this.opts.answer(text, sttMs)).trim();
             this.opts.log.info(`Wyoming A: ${answer}`);
             if (answer) {
                 await this.speak(answer);

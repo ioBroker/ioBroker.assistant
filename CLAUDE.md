@@ -19,6 +19,26 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Gesprächs-Journal im Chat-Tab** — `src/lib/journal.ts` (`Journal`): ein Eintrag pro beantworteter
+  Anfrage **aus jeder Quelle** (Chat, Skript, `text.request`, Telegram, ESPHome/UDP/nativ/Wyoming) mit
+  Satellit, Raum, **Wake-Word** (`''` = Mikro ohne Wake-Word wieder geöffnet), STT-Dauer, **Stufe**
+  (`stop|askReply|routine|nlu|localLlm|cloud|none` + `detail` = NLU-Actions/Routine/Modell), Tool-Calls
+  (Args, gekürztes Ergebnis, ms) und gelesenen/geschriebenen **State-IDs**. Zuordnung per
+  **`AsyncLocalStorage`** — `answer()` öffnet den Eintrag (`journal.run`), `produceAnswer` setzt die Stufe
+  per `journal.note`, die MCP-Verbindung ist in `journalMcp()` umhüllt (`get_states`/`set_state(s)` →
+  `stateAccess`), jedes LLM-Tool in `journalTool()`; außerhalb eines Requests (Trigger) wird nichts
+  aufgezeichnet. Wake-Word/STT-Zeit liefern die Transporte über ihren `answer`-Callback (`esphome.ts`
+  merkt sich die Phrase in `Capture.wakeWord`; native `voice`-sendTo nimmt optional `wakeWord`). Live:
+  State `journal.last` (JSON) wird beim Start **und** Ende jeder Anfrage (und bei jedem Tool-Call)
+  geschrieben, der Chat abonniert ihn. Persistenz `journal.json` im Instanz-Datenverzeichnis (5 s
+  debounced + `flush` in `onUnload`), Retention Config `journalHours` (Default 24, max 168, **0 = aus**
+  → Datei wird gelöscht, Chat fällt auf den alten lokalen Test-Chat zurück), Hardcap 3000 Einträge.
+  sendTo `getJournal` (`{since?}` → `{enabled, entries}`) / `clearJournal`; `ask` antwortet zusätzlich
+  mit `journaled`, damit der Chat seinen eigenen Austausch nicht doppelt zeigt.
+  `ChatComponent.tsx`: Zeitleiste aus Journal + lokalen Hinweisen, Herkunfts-Chips über der Frage,
+  Detailblock unter der Antwort (Stufe farbig, Modell, Dauer, 🔧 Tools, 📖 gelesen, ✏️ geschrieben;
+  ein-/ausblendbar, gemerkt in `localStorage`), Quellen-Filter, Löschen mit Bestätigung.
+  Test: `test/integration/journal.test.js`.
 - **Belegte Ports an js-controller 8 melden** — `common.declareUsedResources: true` + `main.ts.declarePort()`
   nach jedem erfolgreichen Server-Start: UDP-Satelliten (`udpPort`, family 4), Wyoming (`tcpPort`),
   ESPHome-Media-Server (`tcpPort`, tatsächlich gebundener Port). **Ohne das Flag** leitet der Controller aus

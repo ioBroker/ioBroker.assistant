@@ -182,5 +182,7 @@
   "e.g. westeurope": "例如：西欧",
   "None (local only)": "无（仅本地）",
   "Without an LLM provider only the local tiers answer: the rule-based commands, routines, timers and alarms, and the local model if enabled. Anything else gets a short \"I can't do that\" reply.": "没有 LLM 提供商时，只有本地层级会作答：基于规则的命令、例程、定时器和闹钟，以及已启用的本地模型。其他请求只会得到一句简短的“我做不到”。",
-  "Chat": "聊天"
+  "Chat": "聊天",
+  "Chat history (hours)": "Chat history (hours)",
+  "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.": "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing."
 }

@@ -111,7 +111,10 @@ export interface EsphomeSatellitesOptions {
     stt: SttEngine;
     tts: TtsEngine;
     /** Produce the assistant reply for a transcribed utterance. */
-    answer: (question: string, ctx: { device: string; room: string }) => Promise<string>;
+    answer: (
+        question: string,
+        ctx: { device: string; room: string; wakeWord: string; sttMs: number },
+    ) => Promise<string>;
     /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
     getHints?: () => string[] | Promise<string[]>;
     /** Where spoken replies are published for the device to fetch. */
@@ -270,6 +273,8 @@ interface Capture {
     chunks: Buffer[];
     detector: SpeechDetector;
     conversationId: string;
+    /** Wake word that opened this capture; '' when the mic was re-opened for a follow-up/question. */
+    wakeWord: string;
     timer: NodeJS.Timeout;
     closed: boolean;
 }
@@ -672,6 +677,7 @@ class EsphomeConnection {
                 adaptive: true,
             }),
             conversationId: request.getConversationId(),
+            wakeWord: phrase || '',
             timer,
             closed: false,
         };
@@ -734,7 +740,9 @@ class EsphomeConnection {
         this.status('processing');
         try {
             const hints = this.opts.getHints ? await this.opts.getHints() : undefined;
+            const sttStart = Date.now();
             const text = (await this.opts.stt.transcribe(pcm, MIC_SAMPLE_RATE, this.opts.language, hints)).trim();
+            const sttMs = Date.now() - sttStart;
             this.event(EVENT.STT_END, { text });
             if (!text) {
                 this.event(EVENT.RUN_END);
@@ -743,7 +751,14 @@ class EsphomeConnection {
             }
 
             this.event(EVENT.INTENT_START);
-            const answer = (await this.opts.answer(text, { device: this.deviceName, room: this.room })).trim();
+            const answer = (
+                await this.opts.answer(text, {
+                    device: this.deviceName,
+                    room: this.room,
+                    wakeWord: capture.wakeWord,
+                    sttMs,
+                })
+            ).trim();
             const followUp = !!answer && this.opts.expectsFollowUp?.(answer) === true;
             this.event(EVENT.INTENT_END, followUp ? { continue_conversation: '1' } : undefined);
 

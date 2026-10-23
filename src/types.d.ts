@@ -116,6 +116,8 @@ export interface AdapterConfig {
     useLocalLlm: boolean;
     /** Direct URL of the GGUF model for the local LLM ('' → built-in default, Qwen2.5-1.5B). */
     localLlmModelUrl: string;
+    /** Hours of conversation history the admin chat shows (journal); 0 = do not record. */
+    journalHours: number;
 
     // ── Voice / satellites (V1: cloud STT/TTS via OpenAI) ───────────────────────
     /** Start the UDP voice server for satellites (Hannah-compatible protocol). */

@@ -186,6 +186,7 @@
     "ringSeconds": 60,
     "useLocalLlm": false,
     "localLlmModelUrl": "",
+    "journalHours": 24,
     "voiceEnabled": false,
     "udpServerEnabled": false,
     "port": 7775,
@@ -283,6 +284,27 @@
         "name": "Assistant answer",
         "type": "string",
         "role": "text",
+        "read": true,
+        "write": false,
+        "def": ""
+      },
+      "native": {}
+    },
+    {
+      "_id": "journal",
+      "type": "channel",
+      "common": {
+        "name": "Conversation journal"
+      },
+      "native": {}
+    },
+    {
+      "_id": "journal.last",
+      "type": "state",
+      "common": {
+        "name": "Latest journal entry (JSON; written when a request starts and when it is answered)",
+        "type": "string",
+        "role": "json",
         "read": true,
         "write": false,
         "def": ""

@@ -182,5 +182,7 @@
   "e.g. westeurope": "например, Западная Европа",
   "None (local only)": "Нет (только локально)",
   "Without an LLM provider only the local tiers answer: the rule-based commands, routines, timers and alarms, and the local model if enabled. Anything else gets a short \"I can't do that\" reply.": "Без LLM-провайдера отвечают только локальные уровни: команды на основе правил, рутины, таймеры и будильники, а также локальная модель, если она включена. На всё остальное будет короткий ответ «Этого я не умею».",
-  "Chat": "Чат"
+  "Chat": "Чат",
+  "Chat history (hours)": "История чата (часы)",
+  "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.": "Как долго вкладка «Чат» показывает прошлые запросы из всех источников (сателлиты, Telegram, скрипты) с wake word, уровнем обработки, инструментами и ID состояний. 0 = ничего не записывать."
 }

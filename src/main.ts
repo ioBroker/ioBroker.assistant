@@ -33,6 +33,7 @@ import {
     type WeatherReport,
     type StateValues,
 } from './lib/weather';
+import { Journal, type JournalOrigin } from './lib/journal';
 import { LocalLlm, installLocalLlm, isLocalLlmInstalled, isHandoff, DEFAULT_LOCAL_MODEL_URL } from './lib/localLlm';
 import { resolveApiKey, resolveVoiceCredentials } from './lib/credentials';
 import { ConversationStore, type ConversationTurn } from './lib/context';
@@ -233,6 +234,8 @@ class Assistant extends Adapter {
     /** Set once `onReady` initialised the pipeline — with or without a cloud {@link agent}. */
     private ready = false;
     private mcp: InProcessMcp | null = null;
+    /** Who asked what and how it was answered (admin chat); null until `onReady` read the config. */
+    private journal: Journal | null = null;
     /** Short-TTL cache for the expensive device/room/function listings; invalidated on enum changes. */
     private listCache: ListCache | null = null;
     /** Cache of a `<base>.SET` level state id → its writable boolean sibling switch (`<base>.ON_SET`/`.ON`), or ''. */
@@ -322,6 +325,7 @@ class Assistant extends Adapter {
         const provider = cfg.provider || 'openai';
         const localOnly = provider === 'none';
         const apiKey = localOnly ? '' : effectiveApiKey(cfg.provider, await resolveApiKey(this, cfg));
+        await this.setupJournal();
 
         if (!localOnly && !apiKey) {
             this.log.warn(
@@ -334,12 +338,14 @@ class Assistant extends Adapter {
         }
 
         try {
-            this.mcp = await createInProcessMcp({
-                adapter: this,
-                language: this.language,
-                allowSetState: cfg.allowWriteStates,
-                allowObjectChange: cfg.allowObjectChange,
-            });
+            this.mcp = this.journalMcp(
+                await createInProcessMcp({
+                    adapter: this,
+                    language: this.language,
+                    allowSetState: cfg.allowWriteStates,
+                    allowObjectChange: cfg.allowObjectChange,
+                }),
+            );
             this.listCache = new ListCache();
             const { tools, denied } = await buildMcpTools(this.mcp, cfg, this.listCache, (id, fb) =>
                 this.resolveDeviceName(id, fb),
@@ -373,7 +379,7 @@ class Assistant extends Adapter {
                     baseUrl: prov.baseUrl,
                     systemPrompt: cfg.systemPrompt || '',
                     maxTokens: cfg.maxTokens || 1024,
-                    tools,
+                    tools: tools.map(t => this.journalTool(t)),
                     log: this.log,
                 });
             }
@@ -470,7 +476,7 @@ class Assistant extends Adapter {
                 language,
                 stt,
                 tts,
-                answer: question => this.answer(question, 'wyoming'),
+                answer: (question, sttMs) => this.answer(question, 'wyoming', { transport: 'wyoming', sttMs }),
                 getHints: () => this.buildSttHints(),
                 log: this.log,
             });
@@ -531,7 +537,13 @@ class Assistant extends Adapter {
             language,
             stt,
             tts,
-            answer: (question, origin) => this.answerVoice(question, origin.device),
+            answer: (question, origin) =>
+                this.answerVoice(question, origin.device, {
+                    transport: 'esphome',
+                    room: origin.room,
+                    wakeWord: origin.wakeWord,
+                    sttMs: origin.sttMs,
+                }),
             getHints: () => this.buildSttHints(),
             media: this.media,
             mediaHost: (cfg.esphomeMediaHost || '').trim(),
@@ -617,7 +629,8 @@ class Assistant extends Adapter {
                 language,
                 stt,
                 tts,
-                answer: (question, ctx) => this.answerVoice(question, ctx.device),
+                answer: (question, ctx) =>
+                    this.answerVoice(question, ctx.device, { transport: 'udp', room: ctx.room, sttMs: ctx.sttMs }),
                 getHints: () => this.buildSttHints(),
                 log: this.log,
                 onStatus: (device, room, state) => {
@@ -670,11 +683,11 @@ class Assistant extends Adapter {
      * not re-trigger onStateChange). The state writes must not block the spoken reply, so they are
      * fire-and-forget.
      */
-    private async answerVoice(question: string, source: string): Promise<string> {
+    private async answerVoice(question: string, source: string, origin: JournalOrigin = {}): Promise<string> {
         this.setStateAsync('text.request', { val: question, ack: true }).catch(() => {});
         this.setQuerySource(source);
         this.log.info(`Voice Q (${source}): ${question}`);
-        const answer = await this.answer(question, source);
+        const answer = await this.answer(question, source, { satellite: source, ...origin });
         this.log.info(`Voice A (${source}): ${answer}`);
         this.setStateAsync('text.response', { val: answer, ack: true }).catch(() => {});
         return answer;
@@ -731,6 +744,8 @@ class Assistant extends Adapter {
         source?: string;
         room?: string;
         language?: string;
+        /** Wake word the satellite detected (journal only). */
+        wakeWord?: string;
     }): Promise<{
         text?: string;
         answer?: string;
@@ -761,11 +776,17 @@ class Assistant extends Adapter {
                 pcm = pcm.subarray(44);
             }
             const language = msg.language || engines.language;
+            const sttStart = Date.now();
             const text = (await engines.stt.transcribe(pcm, rate, language, await this.buildSttHints())).trim();
             if (!text) {
                 return { text: '', answer: '' };
             }
-            const answer = await this.answerVoice(text, source);
+            const answer = await this.answerVoice(text, source, {
+                transport: 'native',
+                room,
+                wakeWord: typeof msg.wakeWord === 'string' ? msg.wakeWord : undefined,
+                sttMs: Date.now() - sttStart,
+            });
             if (!answer) {
                 return { text, answer: '' };
             }
@@ -2438,6 +2459,25 @@ class Assistant extends Adapter {
             return;
         }
 
+        // Admin chat: the journal of the last hours (message = { since?: ms }), and wiping it.
+        if (obj.command === 'getJournal') {
+            const since = Number((obj.message as { since?: number } | undefined)?.since) || 0;
+            const result = this.journal?.enabled
+                ? { enabled: true, entries: this.journal.list(since) }
+                : { enabled: false, entries: [] };
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
+        if (obj.command === 'clearJournal') {
+            this.journal?.clear();
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, { ok: true }, obj.callback);
+            }
+            return;
+        }
+
         if (obj.command !== 'ask') {
             return;
         }
@@ -2461,12 +2501,18 @@ class Assistant extends Adapter {
             this.log.info(`A: ${answer}`);
             this.setStateAsync('text.response', { val: answer, ack: true }).catch(() => {});
             if (obj.callback) {
-                this.sendTo(obj.from, obj.command, { answer }, obj.callback);
+                // `journaled`: the admin chat gets this exchange from the journal and must not add it twice.
+                this.sendTo(obj.from, obj.command, { answer, journaled: !!this.journal?.enabled }, obj.callback);
             }
         } catch (e) {
             this.log.error(`Assistant error: ${(e as Error).message}`);
             if (obj.callback) {
-                this.sendTo(obj.from, obj.command, { error: (e as Error).message }, obj.callback);
+                this.sendTo(
+                    obj.from,
+                    obj.command,
+                    { error: (e as Error).message, journaled: !!this.journal?.enabled },
+                    obj.callback,
+                );
             }
         }
     }
@@ -2480,7 +2526,13 @@ class Assistant extends Adapter {
      * is applied to the cloud LLM tier; every completed exchange (whichever tier answered) is recorded so
      * later turns have the full thread.
      */
-    private async answer(question: string, source = ''): Promise<string> {
+    private answer(question: string, source = '', origin: JournalOrigin = {}): Promise<string> {
+        return this.journal
+            ? this.journal.run(question, source, origin, () => this.answerTracked(question, source))
+            : this.answerTracked(question, source);
+    }
+
+    private async answerTracked(question: string, source: string): Promise<string> {
         const useCtx = this.config.useConversationContext !== false;
         const history = useCtx ? this.context.get(source) : [];
         const raw = await this.produceAnswer(question, history, source);
@@ -2488,6 +2540,9 @@ class Assistant extends Adapter {
         // (see followUpHint). Strip it here so it's neither stored, shown nor spoken, and expose it as the
         // follow-up flag. Single-user voice → a shared field is race-free enough (read right after await).
         this.lastFollowUp = /\[\[LISTEN\]\]/i.test(raw);
+        if (this.lastFollowUp) {
+            this.journal?.note({ followUp: true });
+        }
         const result = raw.replace(/\s*\[\[LISTEN\]\]\s*/gi, ' ').trim();
         if (useCtx && result) {
             this.context.add(source, question, result);
@@ -2576,6 +2631,7 @@ class Assistant extends Adapter {
         if (this.rings.length && isStopCommand(question)) {
             const n = this.stopRinging();
             this.log.info(`Ring stopped by voice (${n} session(s)).`);
+            this.journal?.note({ tier: 'stop' });
             const lang = String(this.config.voiceLanguage || this.language || 'en');
             return lang === 'ru' ? 'Хорошо.' : lang === 'de' ? 'Ok.' : 'Okay.';
         }
@@ -2586,6 +2642,7 @@ class Assistant extends Adapter {
             const asked = this.pending.question(source);
             if (this.pending.deliver(source, question)) {
                 this.log.info(`Answer to "${asked}" from source '${source || 'any'}': ${question}`);
+                this.journal?.note({ tier: 'askReply', detail: asked || undefined });
                 return '';
             }
         }
@@ -2595,6 +2652,7 @@ class Assistant extends Adapter {
         const routine = matchRoutine(question, this.routines);
         if (routine) {
             this.log.info(`Routine '${routine.name}' triggered (source='${source}').`);
+            this.journal?.note({ tier: 'routine', detail: routine.name });
             await this.runRoutine(routine, source);
             return routine.reply;
         }
@@ -2627,6 +2685,7 @@ class Assistant extends Adapter {
                 const ans = await this.localLlm.ask(facts ? `${facts}\n\n${question}` : question);
                 if (ans && !isHandoff(ans)) {
                     this.log.info(`Answered by local LLM (source='${source}').`);
+                    this.journal?.note({ tier: 'localLlm', detail: this.localLlmName() });
                     return ans;
                 }
                 this.log.debug('Local LLM handed off to the cloud LLM.');
@@ -2642,6 +2701,7 @@ class Assistant extends Adapter {
             // Provider "none": no tier further down. Say so instead of failing — over voice an error is
             // read out as a technical message.
             this.log.info(`No local tier could answer and no LLM provider is configured (source='${source}').`);
+            this.journal?.note({ tier: 'none' });
             return this.localOnlyFallback();
         }
         const ctx = await this.buildDeviceContext();
@@ -2656,6 +2716,7 @@ class Assistant extends Adapter {
         // Prepend the current date/time (and the weather line, if a source is configured) to the user turn —
         // cache-safe, see buildTimeContext. The stored history keeps the untouched question.
         const questionForLlm = [this.buildTimeContext(), weather, question].filter(Boolean).join('\n\n');
+        this.journal?.note({ tier: 'cloud', detail: `${this.config.provider || 'openai'} · ${this.agent.model || 'auto'}` });
         return this.agent.ask(questionForLlm, sys, history);
     }
 
@@ -2738,6 +2799,83 @@ class Assistant extends Adapter {
         api.registerUsedResource(type, data).catch(e =>
             this.log.debug(`could not register ${type} ${port}: ${(e as Error).message}`),
         );
+    }
+
+    /**
+     * Open the conversation journal (shown in the admin chat). Every new or finished entry is mirrored to
+     * `journal.last` as JSON — the chat subscribes to it, which is what makes the view live.
+     */
+    private async setupJournal(): Promise<void> {
+        const hours = Math.max(0, Math.min(168, Number(this.config.journalHours ?? 24) || 0));
+        const file = path.join(this.instanceDataDir(), 'journal.json');
+        // Also in io-package `instanceObjects`; created here for instances that predate it.
+        await this.setObjectNotExistsAsync('journal', {
+            type: 'channel',
+            common: { name: 'Conversation journal' },
+            native: {},
+        });
+        await this.setObjectNotExistsAsync('journal.last', {
+            type: 'state',
+            common: {
+                name: 'Latest journal entry (JSON; written when a request starts and when it is answered)',
+                type: 'string',
+                role: 'json',
+                read: true,
+                write: false,
+                def: '',
+            },
+            native: {},
+        });
+        this.journal = new Journal({
+            hours,
+            file,
+            log: this.log,
+            onChange: entry => {
+                this.setStateAsync('journal.last', { val: JSON.stringify(entry), ack: true }).catch(() => {});
+            },
+        });
+        if (hours) {
+            await this.journal.load();
+        } else {
+            // Switched off: do not keep what was recorded while it was on.
+            await fs.promises.rm(file, { force: true }).catch(() => {});
+        }
+    }
+
+    /** Wrap the MCP connection so every state the pipeline reads or writes lands in the journal entry. */
+    private journalMcp(mcp: InProcessMcp): InProcessMcp {
+        return {
+            listTools: () => mcp.listTools(),
+            callTool: (name, args) => {
+                this.journal?.stateAccess(name, args);
+                return mcp.callTool(name, args);
+            },
+            close: () => mcp.close(),
+        };
+    }
+
+    /** Wrap an LLM tool so its calls (arguments, result, duration) land in the journal entry. */
+    private journalTool(tool: Tool): Tool {
+        return {
+            ...tool,
+            run: async args => {
+                const start = Date.now();
+                try {
+                    const result = await tool.run(args);
+                    this.journal?.tool(tool.name, args, Date.now() - start, result);
+                    return result;
+                } catch (e) {
+                    this.journal?.tool(tool.name, args, Date.now() - start, undefined, (e as Error).message);
+                    throw e;
+                }
+            },
+        };
+    }
+
+    /** Short name of the local model for the journal ("qwen2.5-1.5b-instruct-q4_k_m"). */
+    private localLlmName(): string {
+        const url = (this.config.localLlmModelUrl || '').trim() || DEFAULT_LOCAL_MODEL_URL;
+        return (url.split(/[/\\]/).pop() || url).replace(/\?.*$/, '').replace(/\.gguf$/i, '');
     }
 
     /** Writable per-instance data dir via the adapter-core function (with a fallback for old runtimes). */
@@ -2874,6 +3012,7 @@ class Assistant extends Adapter {
         if (!intents.length || !intents.every(i => this.canExecuteNlu(i, devices.length))) {
             return null; // nothing matched, or one part cannot run here → let the LLM answer the whole thing
         }
+        this.journal?.note({ tier: 'nlu', detail: intents.map(i => i.action).join(' + ') });
         const answers: string[] = [];
         let failed = false;
         for (const intent of intents) {
@@ -4644,6 +4783,7 @@ class Assistant extends Adapter {
             }
             try {
                 await this.setForeignStateAsync(write.id, { val: write.value, ack: false });
+                this.journal?.stateAccess('set_state', { id: write.id, value: write.value });
                 this.log.info(`trigger '${def.id}': ${write.id} = ${JSON.stringify(write.value)}`);
             } catch (e) {
                 this.log.warn(`trigger '${def.id}': cannot write ${write.id}: ${(e as Error).message}`);
@@ -5421,6 +5561,11 @@ class Assistant extends Adapter {
         }
         try {
             await this.localLlm?.dispose();
+        } catch {
+            // ignore
+        }
+        try {
+            await this.journal?.flush();
         } catch {
             // ignore
         }
