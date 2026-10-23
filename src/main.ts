@@ -2716,7 +2716,10 @@ class Assistant extends Adapter {
         // Prepend the current date/time (and the weather line, if a source is configured) to the user turn —
         // cache-safe, see buildTimeContext. The stored history keeps the untouched question.
         const questionForLlm = [this.buildTimeContext(), weather, question].filter(Boolean).join('\n\n');
-        this.journal?.note({ tier: 'cloud', detail: `${this.config.provider || 'openai'} · ${this.agent.model || 'auto'}` });
+        this.journal?.note({
+            tier: 'cloud',
+            detail: `${this.config.provider || 'openai'} · ${this.agent.model || 'auto'}`,
+        });
         return this.agent.ask(questionForLlm, sys, history);
     }
 

@@ -156,12 +156,7 @@ export class Journal {
      * Run `fn` as one journalled request. The entry is published once when the request starts (so the
      * chat shows the question while the answer is still being worked out) and once when it is finished.
      */
-    async run(
-        question: string,
-        source: string,
-        origin: JournalOrigin,
-        fn: () => Promise<string>,
-    ): Promise<string> {
+    async run(question: string, source: string, origin: JournalOrigin, fn: () => Promise<string>): Promise<string> {
         if (!this.enabled) {
             return fn();
         }
