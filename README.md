@@ -182,7 +182,7 @@ each one shows up under `assistant.0.satellites.*` like any other.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.1.0 (2026-10-25)
 * (@GermanBluefox) YouTube on the TV: "play the channel Sailing OceanAir" finds the channel, video or playlist on YouTube (no API key needed), switches the TV on if it is off and plays it over the youtube-remote adapter. The players are set in a table in the settings; the first one is used when no player is named. Pause, skip, volume and "what is playing" work too
 
 ### 1.0.3 (2026-10-23)
