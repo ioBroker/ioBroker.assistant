@@ -184,5 +184,11 @@
   "Without an LLM provider only the local tiers answer: the rule-based commands, routines, timers and alarms, and the local model if enabled. Anything else gets a short \"I can't do that\" reply.": "没有 LLM 提供商时，只有本地层级会作答：基于规则的命令、例程、定时器和闹钟，以及已启用的本地模型。其他请求只会得到一句简短的“我做不到”。",
   "Chat": "聊天",
   "Chat history (hours)": "Chat history (hours)",
-  "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.": "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing."
+  "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.": "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.",
+  "YouTube players": "YouTube 播放器",
+  "Player": "播放器",
+  "TV power (optional)": "电视电源（可选）",
+  "Start delay (s)": "启动延迟（秒）",
+  "Name": "名称",
+  "TVs and devices of the youtube-remote adapter the assistant may play on, e.g. \"play the channel Sailing OceanAir\". The first row is the default when no player is named; a request from a satellite in the room of a row goes to that row. Player: the youtube-remote instance - it finds its paired TV itself, also after the TV was paired again; with several TVs in one instance pick one of them. Power: optional state that switches the TV on (e.g. samsungtv.0.<tv>.control.power) - if it is off, the TV is switched on first and the video starts after the start delay. A power button (toggle) is never pressed, because it would switch a running TV off. Needs \"Allow writing states\".": "助手可以在其上播放的 youtube-remote 适配器的电视和设备，例如“播放频道 Sailing OceanAir”。未指定播放器时使用第一行；来自某行所在房间卫星的请求发送到该行。播放器：youtube-remote 实例——它会自行找到已配对的电视，重新配对后也一样；一个实例中有多台电视时，选择其中一台。电源：可选的开启电视的状态（例如 samsungtv.0.<tv>.control.power）——如果电视关闭，会先开机，视频在启动延迟后开始。电源按钮（切换键）永远不会被按下，因为它会关闭正在运行的电视。需要“允许写入状态”。"
 }

@@ -168,6 +168,38 @@ per person), **`presence.lastArrival`** / **`presence.lastDeparture`** (who it w
 
 ---
 
+### YouTube on the TV
+
+With the [youtube-remote](https://github.com/ioBroker/ioBroker.youtube-remote) adapter the assistant plays
+YouTube on your TV: *"play the channel Sailing OceanAir"*, *"spiele das Video … im Schlafzimmer ab"*,
+*"pause YouTube"*, *"what is playing on the TV?"*. Fill the **YouTube players** table on the Settings tab:
+
+| Column | Example |
+|---|---|
+| **Name** | `TV` — how you call it |
+| **Player** | `youtube-remote.0` — the instance; it finds its paired TV itself, also after pairing again (several TVs in one instance: pick one of them in the list) |
+| **TV power** | `samsungtv.0.samsung-the-frame-55.control.power` — optional |
+| **Room** | `Living room` — a request from a satellite in this room goes to this player |
+| **Start delay** | `8` — seconds the TV needs after power-on before YouTube takes a command |
+
+The **first row is the default** when you name no player (and the request does not come from a room that has
+one). Then the assistant:
+
+1. **searches YouTube** for the channel, video or playlist. If you do not say which ("play Sailing Ocean Air on
+   YouTube"), a channel of that name wins — spelled as the speech recognition heard it, a letter off does not
+   matter —, otherwise videos are searched. The search needs no API key, it uses the same interface
+   as the YouTube web page. A channel plays its newest uploads.
+2. **checks the TV**: if the power state is off, it switches it on, answers right away ("switching the TV
+   on, then …") and starts playing once the TV reports on plus the start delay — sent a second time if the
+   freshly booted app missed the first.
+3. **plays** by writing the found id to the player's `youtube` state and waits until youtube-remote confirms.
+
+A power state that is a **button** (a toggle key) is never pressed — it would switch a running TV off; use a
+state with role `switch.power` that reports whether the TV is on. Simple phrasings ("spiele den Kanal X
+(auf dem Fernseher) ab", "play the channel X", "включи канал X") are understood without the LLM; everything
+else (pause, skip, volume, status, "the other one") goes through the LLM tools `play_youtube` and
+`youtube_player`. Needs **Allow writing states**.
+
 ### Routines (a phrase that does several things)
 
 A routine is a macro you wrote down: a phrase, a list of actions, one reply. Fill the **Routines** table
@@ -811,6 +843,7 @@ Everything the assistant can do is reachable from a script. The reply always arr
 | `saveMemory` / `forgetMemory` / `listMemories` | `{ text, key? }` / `{ id? or text? }` / `{}` | §11 |
 | `listTriggers` / `fireTrigger` / `setTriggerEnabled` | `{}` / `{ id }` / `{ id, enabled }` | §10 |
 | `getWeather` | `{ when? }` | the weather from your weather adapter (§4) |
+| `playYouTube` | `{ query, kind?: 'channel'/'video'/'playlist', player? }` | `{ ok, text, title?, id? }` — search, switch the TV on, play (§4) |
 | `getWakeWords` / `setWakeWords` | `{}` / `{ device, wakeWords }` | §6 |
 | `getControls` / `setControl` | `{}` / `{ device, control, value }` | §6 |
 | `getDevices` / `setDeviceName` / `translateName` | `{ language? }` / `{ stateId, name, language }` / … | the device list the assistant sees, and its names (§5) |

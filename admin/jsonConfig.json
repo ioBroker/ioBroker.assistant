@@ -260,6 +260,38 @@
                         { "type": "text", "attr": "homeValue", "title": "Home value (empty = auto)", "width": "15%" }
                     ]
                 },
+                "youtubePlayers": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "YouTube players",
+                    "help": "TVs and devices of the youtube-remote adapter the assistant may play on, e.g. \"play the channel Sailing OceanAir\". The first row is the default when no player is named; a request from a satellite in the room of a row goes to that row. Player: the youtube-remote instance - it finds its paired TV itself, also after the TV was paired again; with several TVs in one instance pick one of them. Power: optional state that switches the TV on (e.g. samsungtv.0.<tv>.control.power) - if it is off, the TV is switched on first and the video starts after the start delay. A power button (toggle) is never pressed, because it would switch a running TV off. Needs \"Allow writing states\".",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
+                    "items": [
+                        { "type": "text", "attr": "name", "title": "Name", "width": "20%" },
+                        {
+                            "type": "selectSendTo",
+                            "attr": "id",
+                            "title": "Player",
+                            "command": "getYouTubeInstances",
+                            "width": "30%"
+                        },
+                        { "type": "objectId", "attr": "power", "title": "TV power (optional)", "width": "30%" },
+                        { "type": "text", "attr": "room", "title": "Room", "width": "12%" },
+                        {
+                            "type": "number",
+                            "attr": "delay",
+                            "title": "Start delay (s)",
+                            "width": "8%",
+                            "min": 0,
+                            "max": 120,
+                            "default": 8
+                        }
+                    ]
+                },
                 "timerAnnounce": {
                     "newLine": true,
                     "type": "checkbox",

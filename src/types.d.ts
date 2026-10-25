@@ -91,6 +91,14 @@ export interface AdapterConfig {
      */
     presence: { id: string; name?: string; kind?: string; homeValue?: string }[];
     /**
+     * YouTube players (youtube-remote devices) the assistant may play on; the first row is the default.
+     * `id` is the device (`youtube-remote.0.<device>`) or its `youtube` state, `power` an optional state that
+     * switches the TV on (`switch.power`, e.g. `samsungtv.0.<tv>.control.power`) — checked before playing.
+     * `room` sends a request from that room's satellite to this player; `delay` is the TV's boot time in
+     * seconds between "power on" and the play command (default 8).
+     */
+    youtubePlayers: { name?: string; id: string; power?: string; room?: string; delay?: number | string }[];
+    /**
      * Reword system notifications with the LLM before speaking them (default on). Their raw texts are
      * written for a log viewer, so this is where the feature earns its keep; `direct` severity always
      * skips it.

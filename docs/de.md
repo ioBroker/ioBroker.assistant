@@ -174,6 +174,40 @@ Person), **`presence.lastArrival`** / **`presence.lastDeparture`** (wer es war).
 
 ---
 
+### YouTube auf dem Fernseher
+
+Mit dem Adapter [youtube-remote](https://github.com/ioBroker/ioBroker.youtube-remote) spielt der Assistent
+YouTube auf dem Fernseher ab: *„spiele den Kanal Sailing OceanAir ab"*, *„spiel das Video … im Schlafzimmer"*,
+*„pausiere YouTube"*, *„was läuft gerade auf dem Fernseher?"*. Dazu die Tabelle **YouTube-Player** im Tab
+Einstellungen füllen:
+
+| Spalte | Beispiel |
+|---|---|
+| **Name** | `Fernseher` — so, wie du ihn nennst |
+| **Player** | `youtube-remote.0` — die Instanz; sie findet ihren gekoppelten Fernseher selbst, auch nach erneutem Koppeln (mehrere Fernseher in einer Instanz: einen davon in der Liste wählen) |
+| **Fernseher einschalten** | `samsungtv.0.samsung-the-frame-55.control.power` — optional |
+| **Raum** | `Wohnzimmer` — eine Anfrage von einem Satelliten in diesem Raum geht an diesen Player |
+| **Startverzögerung** | `8` — Sekunden, die der Fernseher nach dem Einschalten braucht, bis YouTube Befehle annimmt |
+
+**Die erste Zeile ist der Standard**, wenn kein Player genannt wird (und die Anfrage nicht aus einem Raum mit
+eigenem Player kommt). Dann:
+
+1. **sucht** der Assistent den Kanal, das Video oder die Playlist auf YouTube. Sagst du nicht, was es ist
+   („spiele Sailing Ocean Air auf YouTube"), gewinnt ein Kanal dieses Namens — so geschrieben, wie die
+   Spracherkennung ihn gehört hat, ein Buchstabe daneben stört nicht —, sonst werden Videos gesucht. Die Suche braucht
+   keinen API-Key, sie nutzt dieselbe Schnittstelle wie die YouTube-Webseite. Ein Kanal spielt seine neuesten Uploads.
+2. **prüft** er den Fernseher: ist der Power-State aus, schaltet er ihn ein, antwortet sofort („ich schalte
+   den Fernseher ein und spiele dann …") und startet die Wiedergabe, sobald der Fernseher „an" meldet, plus
+   Startverzögerung — ein zweites Mal, falls die frisch gestartete App den ersten Befehl verpasst.
+3. **spielt** er ab, indem er die gefundene ID in den `youtube`-State des Players schreibt, und wartet auf die
+   Bestätigung von youtube-remote.
+
+Ein Power-State, der eine **Taste** ist (Umschalter), wird nie gedrückt — er würde einen laufenden Fernseher
+ausschalten; nimm einen State mit Rolle `switch.power`, der meldet, ob der Fernseher an ist. Einfache Sätze
+(„spiele den Kanal X (auf dem Fernseher) ab", „play the channel X", „включи канал X") versteht er ohne LLM;
+alles andere (Pause, weiter, Lautstärke, Status, „nimm den anderen") läuft über die LLM-Tools `play_youtube`
+und `youtube_player`. Benötigt **Schreiben von States erlauben**.
+
 ### Routinen (eine Phrase, die mehreres tut)
 
 Eine Routine ist ein Makro, das du aufgeschrieben hast: eine Phrase, eine Liste von Aktionen, eine
@@ -831,6 +865,7 @@ Alles, was der Assistent kann, ist aus einem Skript erreichbar. Die Antwort komm
 | `saveMemory` / `forgetMemory` / `listMemories`       | `{ text, key? }` / `{ id? oder text? }` / `{}`                           | §11                                                                          |
 | `listTriggers` / `fireTrigger` / `setTriggerEnabled` | `{}` / `{ id }` / `{ id, enabled }`                                      | §10                                                                          |
 | `getWeather`                                         | `{ when? }`                                                              | das Wetter aus deinem Wetter-Adapter (§4)                                    |
+| `playYouTube` | `{ query, kind?: 'channel'/'video'/'playlist', player? }` | `{ ok, text, title?, id? }` — suchen, Fernseher einschalten, abspielen (§4) |
 | `getWakeWords` / `setWakeWords`                      | `{}` / `{ device, wakeWords }`                                           | §6                                                                           |
 | `getControls` / `setControl`                         | `{}` / `{ device, control, value }`                                      | §6                                                                           |
 | `getDevices` / `setDeviceName` / `translateName`     | `{ language? }` / `{ stateId, name, language }` / …                      | die Geräteliste, die der Assistent sieht, und ihre Namen (§5)                |

@@ -191,6 +191,7 @@
     "notifyRephrase": true,
     "weatherInstance": "",
     "presence": [],
+    "youtubePlayers": [],
     "announceTargets": [],
     "timerAnnounce": true,
     "alarmAnnounce": true,

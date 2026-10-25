@@ -1,6 +1,7 @@
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { spawn } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
     Adapter,
@@ -41,6 +42,23 @@ import { PendingQuestions, ANY_SOURCE, ASK_TIMEOUT_MS } from './lib/ask';
 import { PresenceTracker, buildPresencePrompt, parsePresenceRows, type PresenceInfo } from './lib/presence';
 import { describeTargets, findTarget, isBroadcast, parseTargetRows, type TargetGroup } from './lib/targets';
 import { matchRoutine, parseRoutineRows, type Routine } from './lib/routines';
+import {
+    directYouTubeTarget,
+    findPlayer,
+    isNamedChannel,
+    isPowerOn,
+    parsePlayerRows,
+    pickDevice,
+    parseYouTubeCommand,
+    pickBest,
+    searchYouTube,
+    spokenTitle,
+    type YouTubeDevice,
+    type YouTubeHit,
+    type YouTubeKind,
+    type YouTubePlayer,
+    youtubeReply,
+} from './lib/youtube';
 import {
     bypassesDnd,
     cleanupNotificationText,
@@ -96,6 +114,22 @@ const WEATHER_CTX_TTL = 5 * 60 * 1000;
 /** How long to wait for a device to confirm a write, and how often to look. */
 const ACK_TIMEOUT_MS = 2000;
 const ACK_POLL_MS = 150;
+/** How long a TV may take to report "on" after it was switched on for YouTube. */
+const TV_POWER_TIMEOUT_MS = 30_000;
+/** How long youtube-remote may take to acknowledge a play command (it goes through Google's lounge). */
+const YOUTUBE_ACK_TIMEOUT_MS = 8000;
+/** Pause before the play command is repeated once on a TV that just booted. */
+const YOUTUBE_RETRY_MS = 5000;
+
+/** Outcome of {@link Assistant.playYouTube}: the reply to speak plus what was found. */
+interface YouTubePlayResult {
+    ok: boolean;
+    text: string;
+    player?: string;
+    hit?: YouTubeHit;
+    alternatives?: YouTubeHit[];
+    poweringOn?: boolean;
+}
 
 /**
  * Did the device end up with the value we asked for? Compared loosely: a dimmer told `30` may report
@@ -294,6 +328,13 @@ class Assistant extends Adapter {
     private routines: Routine[] = [];
     /** Named announcement targets (roadmap B2): groups of rooms and people, from the configuration. */
     private announceTargets: TargetGroup[] = [];
+    /** YouTube players from the configuration; the first one is the default. */
+    private youtubePlayers: YouTubePlayer[] = [];
+    /**
+     * Where the request being answered came from, for the LLM tools: a tool only gets the model's
+     * arguments, but "play X" from the bedroom satellite should go to the bedroom TV.
+     */
+    private readonly requestOrigin = new AsyncLocalStorage<{ source: string; room: string }>();
     /** Who is at home (roadmap B1); mirrored into `presence.*`. Null until onReady. */
     private presence: PresenceTracker | null = null;
     /** Satellites currently set to Do-Not-Disturb, by state id (mirrors `satellites.<id>.dnd`). */
@@ -361,6 +402,18 @@ class Assistant extends Adapter {
             if (cfg.voiceEnabled) {
                 // Only useful with satellites: without voice there is nothing to speak on.
                 tools.push(this.buildAnnounceTool());
+            }
+            this.youtubePlayers = parsePlayerRows(cfg.youtubePlayers);
+            if (this.youtubePlayers.length) {
+                // Before the tools are built: their descriptions carry the player names, which an instance
+                // row only gets from its device.
+                for (const player of this.youtubePlayers) {
+                    if (!(await this.resolveYouTubePlayer(player))) {
+                        this.log.warn(`YouTube: ${player.instance} has no paired TV yet — pair one in its settings.`);
+                    }
+                }
+                tools.push(...this.buildYouTubeTools());
+                this.log.info(`YouTube players: ${this.youtubePlayers.map(p => p.name).join(', ')}.`);
             }
             this.log.info(`ioBroker tools enabled (${tools.length}): ${tools.map(t => t.name).join(', ')}`);
             if (denied.length) {
@@ -2193,6 +2246,29 @@ class Assistant extends Adapter {
             return;
         }
 
+        // Scripts: find and play something on a configured YouTube player, the TV switched on first.
+        // message = { query, kind?: 'channel'|'video'|'playlist', player? } → { ok, text, title?, id?, player? }
+        // Settings: the "Player" column of the YouTube table (selectSendTo).
+        if (obj.command === 'getYouTubeInstances') {
+            const list = await this.getYouTubeInstances();
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, list, obj.callback);
+            }
+            return;
+        }
+
+        if (obj.command === 'playYouTube') {
+            const m = (obj.message || {}) as { query?: string; kind?: string; player?: string };
+            const kind = m.kind === 'channel' || m.kind === 'playlist' || m.kind === 'video' ? m.kind : 'auto';
+            const res = String(m.query || '').trim()
+                ? await this.playYouTube(String(m.query).trim(), kind, m.player)
+                : { ok: false, text: 'no query given' };
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, this.youtubeResultData(res), obj.callback);
+            }
+            return;
+        }
+
         // Scripts / settings: which wake words an ESPHome satellite offers and which are listening.
         // message = { device? } — omitted means every connected one.
         if (obj.command === 'getWakeWords') {
@@ -2527,9 +2603,11 @@ class Assistant extends Adapter {
      * later turns have the full thread.
      */
     private answer(question: string, source = '', origin: JournalOrigin = {}): Promise<string> {
-        return this.journal
-            ? this.journal.run(question, source, origin, () => this.answerTracked(question, source))
-            : this.answerTracked(question, source);
+        return this.requestOrigin.run({ source, room: origin.room || '' }, () =>
+            this.journal
+                ? this.journal.run(question, source, origin, () => this.answerTracked(question, source))
+                : this.answerTracked(question, source),
+        );
     }
 
     private async answerTracked(question: string, source: string): Promise<string> {
@@ -2658,6 +2736,15 @@ class Assistant extends Adapter {
         }
         // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
         if (this.config.useLocalNlu) {
+            // "Spiele den Kanal X ab" first: the device NLU would find the TV in "… auf dem Fernseher" and
+            // answer with its power state.
+            const yt = this.youtubePlayers.length ? parseYouTubeCommand(question, this.youtubePlayers) : null;
+            if (yt) {
+                this.log.info(`YouTube request understood locally: ${yt.kind} "${yt.query}" (source='${source}').`);
+                this.journal?.note({ tier: 'nlu', detail: `youtube ${yt.kind}` });
+                const res = await this.playYouTube(yt.query, yt.kind, yt.player);
+                return res.text;
+            }
             try {
                 const handled = await this.tryLocalNlu(question, source);
                 if (handled !== null) {
@@ -4399,6 +4486,400 @@ class Assistant extends Adapter {
                       });
             },
         };
+    }
+
+    // ── YouTube on the TV (youtube-remote players) ──────────────────────────
+
+    /** The player a request means: the named one, else the one in the requesting room, else the first. */
+    private youtubePlayerFor(name?: string): YouTubePlayer | null {
+        return findPlayer(this.youtubePlayers, name, this.requestOrigin.getStore()?.room || '');
+    }
+
+    /**
+     * Find the device of a row that names a youtube-remote instance. Done again before every command: the
+     * device id comes from the TV's screen id, so pairing the TV again replaces the device while we run.
+     * false = nothing is paired with that instance.
+     */
+    private async resolveYouTubePlayer(player: YouTubePlayer): Promise<boolean> {
+        if (!player.instance) {
+            return true;
+        }
+        let devices: YouTubeDevice[] = [];
+        try {
+            const objs = await this.getForeignObjectsAsync(`${player.instance}.*`, 'device');
+            devices = Object.values(objs).map(o => ({ id: o._id, name: this.youtubeDeviceName(o) }));
+        } catch (e) {
+            this.log.debug(`YouTube: cannot read the devices of ${player.instance}: ${(e as Error).message}`);
+        }
+        const device = pickDevice(devices, player);
+        player.base = device?.id || '';
+        player.target = device ? `${device.id}.youtube` : '';
+        if (device && !player.name) {
+            player.name = device.name || player.instance;
+        }
+        return !!device;
+    }
+
+    /** Display name of an object, in the voice language if it is translated. */
+    private youtubeDeviceName(obj: ioBroker.Object): string {
+        const name = obj.common?.name;
+        if (typeof name === 'string') {
+            return name;
+        }
+        const lang = String(this.config.voiceLanguage || this.language || 'en') as ioBroker.Languages;
+        return name?.[lang] || name?.en || obj._id.split('.').pop() || obj._id;
+    }
+
+    /**
+     * Options of the "Player" column: every youtube-remote instance (it finds its TV itself), and for an
+     * instance with several paired TVs also each of them, to pin a row to one.
+     */
+    private async getYouTubeInstances(): Promise<{ label: string; value: string }[]> {
+        const options: { label: string; value: string }[] = [];
+        let instances: string[] = [];
+        try {
+            const view = await this.getObjectViewAsync('system', 'instance', {
+                startkey: 'system.adapter.youtube-remote.',
+                endkey: 'system.adapter.youtube-remote.香',
+            });
+            instances = (view?.rows || []).map(r => r.id.replace(/^system\.adapter\./, '')).sort();
+        } catch (e) {
+            this.log.warn(`getYouTubeInstances failed: ${(e as Error).message}`);
+        }
+        for (const instance of instances) {
+            const objs = await this.getForeignObjectsAsync(`${instance}.*`, 'device').catch(() => ({}));
+            const devices = Object.values(objs)
+                .map(o => ({ id: o._id, name: this.youtubeDeviceName(o) }))
+                .sort((a, b) => a.id.localeCompare(b.id));
+            const names = devices.map(d => d.name).join(', ');
+            options.push({ label: names ? `${instance} (${names})` : `${instance} (no TV paired)`, value: instance });
+            if (devices.length > 1) {
+                for (const d of devices) {
+                    options.push({ label: `${instance} › ${d.name}`, value: d.id });
+                }
+            }
+        }
+        return options;
+    }
+
+    /**
+     * Find `query` on YouTube and play it on a player, switching its TV on first. The search runs before
+     * anything is switched: a TV woken for a channel that does not exist would be the worst outcome.
+     *
+     * A TV that has to boot takes 10–30 s, so in that case the reply comes right away and the rest runs
+     * in the background ({@link playWhenTvIsOn}) — over voice, half a minute of silence reads as "did not
+     * hear me". An already running TV is answered only after the player acknowledged the command.
+     */
+    private async playYouTube(
+        query: string,
+        kind: YouTubeKind | 'auto',
+        playerName?: string,
+    ): Promise<YouTubePlayResult> {
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const player = this.youtubePlayerFor(playerName);
+        if (!player) {
+            const names = this.youtubePlayers.map(p => p.name).join(', ');
+            return { ok: false, text: youtubeReply(lang, 'unknownPlayer', { query: playerName, names }) };
+        }
+        if (!(await this.resolveYouTubePlayer(player))) {
+            return {
+                ok: false,
+                player: player.name,
+                text: youtubeReply(lang, 'noDevice', { instance: player.instance }),
+            };
+        }
+        if (!this.config.allowWriteStates) {
+            return { ok: false, player: player.name, text: youtubeReply(lang, 'noControl') };
+        }
+        let hit: YouTubeHit | null = null;
+        let alternatives: YouTubeHit[] = [];
+        // Unsaid kind: what is named like a channel is the channel ("spiele Sailing OceanAir auf YouTube"),
+        // anything else a video search — a video search for a channel name finds some video about it.
+        const searchKind: YouTubeKind = kind === 'auto' ? 'video' : kind;
+        const direct = directYouTubeTarget(query, searchKind);
+        if (direct) {
+            hit = { kind: searchKind, id: direct, title: query };
+        } else {
+            try {
+                if (kind === 'auto') {
+                    const channels = await searchYouTube(query, 'channel', { language: lang });
+                    hit = channels.find(h => isNamedChannel(h, query)) || null;
+                    alternatives = channels.filter(h => h !== hit).slice(0, 3);
+                }
+                if (!hit) {
+                    const hits = await searchYouTube(query, searchKind, { language: lang });
+                    hit = pickBest(hits, query);
+                    alternatives = hits.filter(h => h !== hit).slice(0, 3);
+                }
+            } catch (e) {
+                this.log.warn(`YouTube search for "${query}" failed: ${(e as Error).message}`);
+                return { ok: false, player: player.name, text: youtubeReply(lang, 'searchFailed') };
+            }
+            if (!hit) {
+                return {
+                    ok: false,
+                    player: player.name,
+                    text: youtubeReply(lang, 'notFound', { kind: searchKind, query }),
+                };
+            }
+        }
+        const title = spokenTitle(hit);
+        this.log.info(`YouTube: ${kind} "${query}" → ${hit.kind} ${hit.id} (${hit.title}) on ${player.name}.`);
+        const reply = { kind: hit.kind, title, player: player.name };
+        if ((await this.tvPower(player)) === 'off') {
+            try {
+                await this.switchTvOn(player);
+            } catch (e) {
+                this.log.warn(`YouTube: cannot switch ${player.power} on: ${(e as Error).message}`);
+            }
+            void this.playWhenTvIsOn(player, hit);
+            return {
+                ok: true,
+                hit,
+                alternatives,
+                player: player.name,
+                poweringOn: true,
+                text: youtubeReply(lang, 'poweringOn', reply),
+            };
+        }
+        if (await this.sendToYouTubePlayer(player, hit.id)) {
+            return { ok: true, hit, alternatives, player: player.name, text: youtubeReply(lang, 'playing', reply) };
+        }
+        const instance = player.base.split('.').slice(0, 2).join('.');
+        const alive = (await this.getForeignStateAsync(`system.adapter.${instance}.alive`).catch(() => null))?.val;
+        return {
+            ok: false,
+            hit,
+            player: player.name,
+            text: alive ? youtubeReply(lang, 'noConfirm', reply) : youtubeReply(lang, 'adapterDown', { instance }),
+        };
+    }
+
+    /**
+     * Whether the TV of a player is on. `unknown` when there is nothing to tell it by: no power state, or
+     * one that is a button — pressing a toggle button on a TV that is already on would switch it off.
+     */
+    private async tvPower(player: YouTubePlayer): Promise<'on' | 'off' | 'unknown'> {
+        if (!player.power) {
+            return 'unknown';
+        }
+        const obj = await this.getForeignObjectAsync(player.power).catch(() => null);
+        if (!obj) {
+            this.log.warn(`YouTube player ${player.name}: power state ${player.power} does not exist.`);
+            return 'unknown';
+        }
+        const common = obj.common as ioBroker.StateCommon;
+        if (common.read === false || String(common.role || '').startsWith('button')) {
+            this.log.debug(`YouTube player ${player.name}: ${player.power} is a button, the TV state is unknown.`);
+            return 'unknown';
+        }
+        const state = await this.getForeignStateAsync(player.power).catch(() => null);
+        return isPowerOn(state?.val) ? 'on' : 'off';
+    }
+
+    /** Write "on" to the power state, in the type the state has. */
+    private async switchTvOn(player: YouTubePlayer): Promise<void> {
+        const obj = await this.getForeignObjectAsync(player.power);
+        const type = (obj?.common as ioBroker.StateCommon | undefined)?.type;
+        const val: ioBroker.StateValue = type === 'number' ? 1 : type === 'string' ? 'on' : true;
+        await this.setForeignStateAsync(player.power, { val, ack: false });
+        this.journal?.stateAccess('set_state', { id: player.power, value: val });
+        this.log.info(`YouTube: switching ${player.name} on (${player.power} = ${JSON.stringify(val)}).`);
+    }
+
+    /**
+     * After the TV was switched on: wait until its power state confirms (an `ack` from the TV adapter — our
+     * own write already says `true`), give the TV its boot time, then play. The YouTube app is often not
+     * reachable over the lounge right after boot, so a command that is not acknowledged is sent once more.
+     */
+    private async playWhenTvIsOn(player: YouTubePlayer, hit: YouTubeHit): Promise<void> {
+        try {
+            const until = Date.now() + TV_POWER_TIMEOUT_MS;
+            let on = false;
+            while (!on && Date.now() < until) {
+                await this.delay(1000);
+                const st = await this.getForeignStateAsync(player.power).catch(() => null);
+                on = !!st?.ack && isPowerOn(st.val);
+            }
+            if (!on) {
+                this.log.warn(
+                    `YouTube: ${player.power} did not report "on" within ${TV_POWER_TIMEOUT_MS / 1000} s — trying to play anyway.`,
+                );
+            }
+            await this.delay(player.delaySec * 1000);
+            let ok = await this.sendToYouTubePlayer(player, hit.id);
+            if (!ok) {
+                await this.delay(YOUTUBE_RETRY_MS);
+                ok = await this.sendToYouTubePlayer(player, hit.id);
+            }
+            if (ok) {
+                this.log.info(`YouTube: playing ${hit.id} (${hit.title}) on ${player.name}.`);
+            } else {
+                this.log.warn(
+                    `YouTube: ${player.name} did not take ${hit.id} after power-on. If the TV needs longer to start, raise its start delay.`,
+                );
+            }
+        } catch (e) {
+            this.log.warn(`YouTube: playing on ${player.name} failed: ${(e as Error).message}`);
+        }
+    }
+
+    /**
+     * Hand a video/playlist/channel id to the player and wait for its acknowledgement: youtube-remote acks
+     * `youtube` (back to '') only once the TV took the command, and leaves it unacknowledged on failure.
+     */
+    private async sendToYouTubePlayer(player: YouTubePlayer, id: string): Promise<boolean> {
+        await this.setForeignStateAsync(player.target, { val: id, ack: false });
+        this.journal?.stateAccess('set_state', { id: player.target, value: id });
+        const until = Date.now() + YOUTUBE_ACK_TIMEOUT_MS;
+        while (Date.now() < until) {
+            await this.delay(250);
+            if ((await this.getForeignStateAsync(player.target).catch(() => null))?.ack) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A play result as tool / sendTo data: without the internal objects, with the alternatives as titles. */
+    private youtubeResultData(res: YouTubePlayResult): Record<string, unknown> {
+        return {
+            ok: res.ok,
+            text: res.text,
+            ...(res.player ? { player: res.player } : {}),
+            ...(res.hit ? { kind: res.hit.kind, id: res.hit.id, title: res.hit.title } : {}),
+            ...(res.hit?.channel ? { channel: res.hit.channel } : {}),
+            ...(res.poweringOn ? { poweringOn: true } : {}),
+            ...(res.alternatives?.length
+                ? { otherResults: res.alternatives.map(h => ({ id: h.id, title: h.title })) }
+                : {}),
+        };
+    }
+
+    /**
+     * LLM tools for the YouTube players: `play_youtube` (search + power-on + play) and `youtube_player`
+     * (pause, skip, volume, what is playing). The configured names go into the descriptions, the model
+     * cannot discover them otherwise.
+     */
+    private buildYouTubeTools(): Tool[] {
+        const names = this.youtubePlayers.map((p, i) => (i === 0 ? `${p.name} (default)` : p.name)).join(', ');
+        const playerParam = {
+            type: 'string',
+            description: `Player name or room: ${names}. Leave it out for the player in the room the user is in, else the default.`,
+        };
+        const play: Tool = {
+            name: 'play_youtube',
+            description:
+                'Play something from YouTube on the TV: finds the channel, video or playlist by name, switches ' +
+                'the TV on if it is off and starts playing. Use this for every "play … on YouTube", ' +
+                '"spiele den Kanal …", "zeig das Video …" — never write the player states yourself. kind ' +
+                '"channel" plays the newest uploads of a channel. The reply text of the result can be said as is; ' +
+                'otherResults are the next search hits, offer them if the user says it was the wrong one ' +
+                '(pass the id as query to play one).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: {
+                        type: 'string',
+                        description: 'Name of the channel, title of the video/playlist, a search phrase, or an id/URL',
+                    },
+                    kind: {
+                        type: 'string',
+                        enum: ['channel', 'video', 'playlist'],
+                        description: 'Leave it out if the user did not say: a channel of that name wins, else videos',
+                    },
+                    player: playerParam,
+                },
+                required: ['query'],
+                additionalProperties: false,
+            },
+            run: async (args): Promise<string> => {
+                const query = typeof args.query === 'string' ? args.query.trim() : '';
+                if (!query) {
+                    return JSON.stringify({ ok: false, error: 'no query given' });
+                }
+                const kind =
+                    args.kind === 'channel' || args.kind === 'playlist' || args.kind === 'video' ? args.kind : 'auto';
+                const player = typeof args.player === 'string' ? args.player : undefined;
+                return JSON.stringify(this.youtubeResultData(await this.playYouTube(query, kind, player)));
+            },
+        };
+        const control: Tool = {
+            name: 'youtube_player',
+            description:
+                'Control a YouTube player or ask what it plays: action play (resume), pause, next, previous, ' +
+                'volume (with "volume" 0-100), mute, unmute, or status (title, channel, play state, TV power).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: {
+                        type: 'string',
+                        enum: ['play', 'pause', 'next', 'previous', 'volume', 'mute', 'unmute', 'status'],
+                    },
+                    volume: { type: 'number', description: 'Volume 0-100, only for action volume' },
+                    player: playerParam,
+                },
+                required: ['action'],
+                additionalProperties: false,
+            },
+            run: async (args): Promise<string> => {
+                const player = this.youtubePlayerFor(typeof args.player === 'string' ? args.player : undefined);
+                if (!player) {
+                    return JSON.stringify({ ok: false, error: `unknown player, known are: ${names}` });
+                }
+                if (!(await this.resolveYouTubePlayer(player))) {
+                    return JSON.stringify({ ok: false, error: `no TV is paired with ${player.instance}` });
+                }
+                const action = typeof args.action === 'string' ? args.action : '';
+                if (action === 'status') {
+                    const ids = ['title', 'artist', 'state', 'connected', 'volume'].map(s => `${player.base}.${s}`);
+                    const states: Record<string, ioBroker.State> = await this.getForeignStatesAsync(
+                        `${player.base}.*`,
+                    ).catch(() => ({}));
+                    const val = (i: number): unknown => states[ids[i]]?.val ?? null;
+                    const power = await this.tvPower(player);
+                    return JSON.stringify({
+                        ok: true,
+                        data: {
+                            player: player.name,
+                            title: val(0),
+                            channel: val(1),
+                            state: ({ 0: 'paused', 1: 'playing', 2: 'stopped' } as Record<string, string>)[
+                                String(val(2))
+                            ],
+                            connected: val(3),
+                            volume: val(4),
+                            ...(power !== 'unknown' ? { tv: power } : {}),
+                        },
+                    });
+                }
+                if (!this.config.allowWriteStates) {
+                    return JSON.stringify({ ok: false, error: 'device control is disabled in the settings' });
+                }
+                let id: string;
+                let value: ioBroker.StateValue;
+                if (action === 'volume') {
+                    const v = Number(args.volume);
+                    if (!Number.isFinite(v)) {
+                        return JSON.stringify({ ok: false, error: 'volume 0-100 needed' });
+                    }
+                    id = `${player.base}.volume`;
+                    value = Math.min(100, Math.max(0, Math.round(v)));
+                } else if (action === 'mute' || action === 'unmute') {
+                    id = `${player.base}.muted`;
+                    value = action === 'mute';
+                } else if (['play', 'pause', 'next', 'previous'].includes(action)) {
+                    id = `${player.base}.${action === 'previous' ? 'prev' : action}`;
+                    value = true;
+                } else {
+                    return JSON.stringify({ ok: false, error: `unknown action '${action}'` });
+                }
+                await this.setForeignStateAsync(id, { val: value, ack: false });
+                this.journal?.stateAccess('set_state', { id, value });
+                return JSON.stringify({ ok: true, data: { player: player.name, [action]: value } });
+            },
+        };
+        return [play, control];
     }
 
     // ── Presence: who is at home (roadmap B1) ───────────────────────────────

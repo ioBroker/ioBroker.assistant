@@ -19,6 +19,35 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **YouTube auf dem Fernseher** — `src/lib/youtube.ts` + `main.ts` (`playYouTube`, `buildYouTubeTools`).
+  Abspielen über den Adapter **`youtube-remote`** (`C:\pWork\ioBroker.youtube-remote`, Lounge-API): dessen
+  State `<gerät>.youtube` nimmt Video-ID/`PL…`/`UC…` (= Uploads des Kanals)/URL und **ackt erst, wenn der TV
+  den Befehl angenommen hat** (zurück auf `''`), bei Fehler bleibt er unbestätigt → darauf warten wir
+  (`sendToYouTubePlayer`, 8 s). Namen → ID kann youtube-remote nicht; die **Suche liegt hier** und nutzt
+  **InnerTube** (`POST youtube.com/youtubei/v1/search`, `params` = Filter Kanal/Video/Playlist) — ohne API-Key
+  und ohne Quota (Data API: 100 Einheiten/Suche). Undokumentiert, deshalb läuft `parseSearchResults` rekursiv
+  über die ganze Antwort und sucht nur die Renderer (`channelRenderer`/`videoRenderer`/`playlistRenderer`/
+  `lockupViewModel` — Playlists sind schon umgezogen); `pickBest` nimmt exakten Titel (vor „ | ") oder
+  Handle, sonst YouTubes ersten Treffer. Live geprüft: „Sailing OceanAir" → `UCbmF2AHnpQsogOLW-MxBiJg`.
+  Config-Tabelle `youtubePlayers` (Name, Player = **Instanz** per `selectSendTo` `getYouTubeInstances` — das
+  Gerät wird zur Laufzeit gesucht (`resolveYouTubePlayer`/`pickDevice`, vor **jedem** Befehl), weil die
+  Geräte-Id aus der Screen-Id kommt und sich beim Neu-Koppeln ändert; bei mehreren TVs pro Instanz bietet die
+  Liste auch die Geräte einzeln an —, Power-State optional, Raum,
+  Startverzögerung Default 8 s); **erste Zeile = Standard**, sonst der Player im Raum der Anfrage
+  (`requestOrigin` = `AsyncLocalStorage` in `answer()`, weil LLM-Tools nur die Modell-Argumente sehen).
+  **Suche vor dem Einschalten** (kein TV für einen nicht existierenden Kanal wecken). TV aus → einschalten,
+  **sofort antworten**, Rest im Hintergrund (`playWhenTvIsOn`: auf `ack:true`+an warten — unser eigener
+  Write sagt schon `true` —, max. 30 s, dann Startverzögerung, ein Retry). Ein Power-State, der eine
+  **Taste** ist (`role button*`/`read:false`), wird **nie gedrückt** (würde einen laufenden TV ausschalten).
+  Lokaler Parser `parseYouTubeCommand` (de/en/ru, braucht Art-Wort Kanal/Video/Playlist **oder** „YouTube",
+  Player nur mit Präposition davor abgeschnitten — am Ende **und** direkt nach dem Verb, „im <Ort>" auch
+  unbekannt → ehrliche „Player kenne ich nicht"-Antwort; ohne Art-Wort `kind:auto` = erst Kanalsuche, ein
+  Kanal mit `similarName` (Leerzeichen egal, Editierdistanz ≤ Länge/8, weil STT „Ocean Air" statt
+  „Oceanaire" schreibt) gewinnt, sonst Videosuche — am echten Gerät aufgefallen, Test mit dem Originalsatz) läuft im `useLocalNlu`-Block **vor** der Geräte-NLU.
+  LLM-Tools `play_youtube` + `youtube_player` (play/pause/next/previous/volume/mute/status), sendTo
+  `playYouTube`. Gated über `allowWriteStates`. Test: `test/integration/youtube.test.js`.
+  ⚠️ Noch nicht am echten TV durchgespielt (Instanz `youtube-remote.0.tv_8198d994` +
+  `samsungtv.0.samsung-the-frame-55.control.power` existieren).
 - **Gesprächs-Journal im Chat-Tab** — `src/lib/journal.ts` (`Journal`): ein Eintrag pro beantworteter
   Anfrage **aus jeder Quelle** (Chat, Skript, `text.request`, Telegram, ESPHome/UDP/nativ/Wyoming) mit
   Satellit, Raum, **Wake-Word** (`''` = Mikro ohne Wake-Word wieder geöffnet), STT-Dauer, **Stufe**
