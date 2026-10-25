@@ -183,7 +183,7 @@ each one shows up under `assistant.0.satellites.*` like any other.
     ### **WORK IN PROGRESS**
 -->
 ### 1.1.0 (2026-10-25)
-* (@GermanBluefox) YouTube on the TV: "play the channel Sailing OceanAir" finds the channel, video or playlist on YouTube (no API key needed), switches the TV on if it is off and plays it over the youtube-remote adapter. The players are set in a table in the settings; the first one is used when no player is named. Pause, skip, volume and "what is playing" work too
+* (@GermanBluefox) YouTube on the TV: "play the channel XY" finds the channel, video or playlist on YouTube (no API key needed)
 
 ### 1.0.3 (2026-10-23)
 * (@GermanBluefox) The Chat tab now shows every request of the last hours live - from satellites, Telegram, scripts and the chat itself - with the satellite, the detected wake word, which stage answered (rule-based NLU, routine, local LLM, cloud LLM), the tool calls and the state ids that were read and written. How many hours are kept is set in the settings (0 = record nothing)
