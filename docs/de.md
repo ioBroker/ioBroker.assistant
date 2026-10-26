@@ -399,7 +399,11 @@ dauerhaft.
 - Nur **microWakeWord** (`.tflite`, Typ `micro`) — mehr nimmt die Firmware von außen nicht an.
   openWakeWord- oder Porcupine-Modelle lassen sich so nicht installieren. Fertige Modelle gibt es bei
   [esphome/micro-wake-word-models](https://github.com/esphome/micro-wake-word-models), eigene trainierst
-  du mit [microWakeWord](https://github.com/kahrendt/microWakeWord).
+  du mit [microWakeWord](https://github.com/kahrendt/microWakeWord). Beide Arten heißen `.tflite`, deshalb
+  prüft der Adapter beim Hochladen das Modell selbst (Eingang `[1, n, 40]`, quantisiert) und lehnt alles
+  andere mit Begründung ab. Achtung: Ein Wake-Word, das du für den ioBroker-Satelliten trainiert hast (siehe
+  [Eigenes Wake-Word](#eigenes-wake-word-z-b-iobroker)), ist ein **openWakeWord**-Modell — für ESPHome
+  musst du dieselbe Phrase mit microWakeWord neu trainieren.
 - Ohne `.json` nimmt der Adapter die Phrase aus dem Dateinamen, die Sprache aus `voiceLanguage` und die
   übliche Schwelle 0,97. Die Empfindlichkeit stellst du danach am Gerät mit
   `wake_word_1_sensitivity`/`wake_word_2_sensitivity` nach.

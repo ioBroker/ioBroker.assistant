@@ -387,7 +387,11 @@ person icon. Only when you **activate** it there does the device download the mo
 - **microWakeWord only** (`.tflite`, type `micro`) — that is all the firmware accepts from outside.
   openWakeWord or Porcupine models cannot be installed this way. Ready-made models are in
   [esphome/micro-wake-word-models](https://github.com/esphome/micro-wake-word-models); to train your own,
-  use [microWakeWord](https://github.com/kahrendt/microWakeWord).
+  use [microWakeWord](https://github.com/kahrendt/microWakeWord). Both kinds are called `.tflite`, so the
+  adapter checks the model itself on upload (input `[1, n, 40]`, quantized) and rejects anything else with
+  the reason. Note: a wake word you trained for the ioBroker satellite (see
+  [Custom wake word](#custom-wake-word-eg-iobroker)) is an **openWakeWord** model — for ESPHome, train the
+  same phrase again with microWakeWord.
 - Without a `.json` the adapter takes the phrase from the file name, the language from `voiceLanguage` and
   the usual 0.97 cutoff. Fine-tune the sensitivity on the device afterwards with
   `wake_word_1_sensitivity`/`wake_word_2_sensitivity`.

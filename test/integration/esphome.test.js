@@ -11,6 +11,7 @@ const { SpeechDetector, rms } = require('../../build/lib/voice/vad.js');
 const { MediaServer } = require('../../build/lib/voice/mediaServer.js');
 const { EsphomeSatellites } = require('../../build/lib/voice/esphome.js');
 const { prepareWakeWord } = require('../../build/lib/voice/wakeWords.js');
+const { microModel } = require('./tfliteModel.js');
 
 const silentLog = { info() {}, warn() {}, error() {}, debug() {} };
 
@@ -836,11 +837,6 @@ test('setting wake words on an unknown satellite reports failure', async t => {
 
 // ── custom (uploaded) wake words ────────────────────────────────────────────
 
-/** A minimal TFLite flatbuffer: what matters to the adapter is the `TFL3` identifier at byte 4. */
-function fakeModel(seed = 'a') {
-    return Buffer.concat([Buffer.from([0x1c, 0, 0, 0]), Buffer.from('TFL3'), Buffer.alloc(300, seed)]);
-}
-
 /** Serve a prepared wake word like main.ts does and return the offer for the satellites. */
 function offerFor(media, word) {
     media.serve(`/wakeword/${word.id}.json`, word.config, 'application/json');
@@ -856,7 +852,7 @@ function offerFor(media, word) {
 }
 
 test('an uploaded wake word is offered, downloaded on selection and becomes active', async t => {
-    const word = prepareWakeWord({ model: fakeModel(), fileName: 'hey_hannah.tflite' }, 'de');
+    const word = prepareWakeWord({ model: microModel('a'), fileName: 'hey_hannah.tflite' }, 'de');
     const offers = [];
     const { device, satellites, reported, name } = await connectedSatellite(
         t,
@@ -905,7 +901,7 @@ test('a wake word uploaded while connected reaches the device with the next offe
     );
     assert.equal(device.externals.length, 0);
 
-    const word = prepareWakeWord({ model: fakeModel('b'), fileName: 'computer.tflite' }, 'en');
+    const word = prepareWakeWord({ model: microModel('b'), fileName: 'computer.tflite' }, 'en');
     offers.push(offerFor(media, word));
     assert.equal(satellites.refreshWakeWords(), 1);
     await new Promise(resolve => setTimeout(resolve, 300));
@@ -921,7 +917,7 @@ test('a wake word uploaded while connected reaches the device with the next offe
 
 test('a wake word the device cannot download is reported, and the old selection stays', async t => {
     const warnings = [];
-    const word = prepareWakeWord({ model: fakeModel('c'), fileName: 'broken.tflite' }, 'de');
+    const word = prepareWakeWord({ model: microModel('c'), fileName: 'broken.tflite' }, 'de');
     const offers = [];
     const { device, satellites, reported, name } = await connectedSatellite(
         t,

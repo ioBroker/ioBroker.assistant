@@ -92,6 +92,7 @@ import {
     WAKE_WORD_ID_RE,
     WAKE_WORD_URL_PREFIX,
     loadWakeWord,
+    microModelProblem,
     prepareWakeWord,
     type CustomWakeWord,
 } from './lib/voice/wakeWords';
@@ -1227,7 +1228,15 @@ class Assistant extends Adapter {
                 try {
                     const config = await this.readStoredFile(`${WAKE_WORD_DIR}/${id}.json`, 'utf8');
                     const model = await this.readStoredFile(`${WAKE_WORD_DIR}/${id}.tflite`, 'binary');
-                    this.customWakeWords.set(id, loadWakeWord(id, config, model));
+                    const word = loadWakeWord(id, config, model);
+                    this.customWakeWords.set(id, word);
+                    // Uploaded before the upload checked the model: keep it, so it can be deleted in the dialog.
+                    const problem = microModelProblem(model);
+                    if (problem) {
+                        this.log.warn(
+                            `Custom wake word ${word.phrase} (${id}) cannot run on the device: ${problem}. Delete it in the satellite settings.`,
+                        );
+                    }
                 } catch (e) {
                     this.log.warn(`Custom wake word ${id} skipped: ${(e as Error).message}`);
                 }

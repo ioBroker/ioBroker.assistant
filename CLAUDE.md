@@ -41,7 +41,20 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   markiert eigene mit `custom: true`. GUI: `SatelliteSettingsDialog` (Upload-Button → Phrase prüfen →
   hochladen, ✕ am Chip mit Bestätigung; bekommt dafür `sendTo` von `SatellitesComponent`). Tests:
   `test/integration/wakeWords.test.js` + Fake-Gerät in `esphome.test.js` lädt wie die Firmware herunter.
-  ⚠️ Noch nicht am echten Gerät getestet (war beim Bau per `EHOSTUNREACH` nicht erreichbar).
+  **Am echten Gerät (2026-10-26):** Angebot → Chip → Aktivieren → das Gerät holte JSON **und** `.tflite` vom
+  Media-Server — der Transportweg stimmt. Aktiv wurde das Wort trotzdem nie: der Nutzer hatte ein
+  **openWakeWord**-Modell hochgeladen (Eingang `[1,16,96]` float32 — vermutlich das für den nativen Satelliten
+  trainierte), und `MicroWakeWord::FromConfig` verlangt `[1, stride, 40]` mit quantisiertem Ein- **und**
+  Ausgang. Ein Trick über `"type":"open"` in der ausgelieferten JSON (das Gerät wählt den Loader nach der
+  JSON) hilft **nicht**: die openWakeWord-Features (`melspectrogram`/`embedding_model.tflite`) lädt `main.cpp`
+  nur, wenn die Firmware mit `--wakeword-type open` startet — der ThirdReality läuft im micro-Modus.
+  Deshalb prüft `microModelProblem()` jetzt beim Upload die Tensoren (`readTfliteIo`, Flatbuffer von Hand
+  gelesen, keine TF-Abhängigkeit; gegen die offiziellen v2-Modelle und die echte Datei geprüft) und benennt
+  openWakeWord ausdrücklich; schon gespeicherte kaputte Modelle bleiben geladen (damit ✕ sie löschen kann),
+  aber `loadCustomWakeWords` warnt. Test-Modelle baut `test/integration/tfliteModel.js` (echte Flatbuffer
+  statt `TFL3`+Füllbytes). ⚠️ Die vom Gerät heruntergeladene Kopie bleibt dort liegen (keine Lösch-API) und
+  steht weiter in `available_wake_words` — auch nach dem Löschen in ioBroker. Ein **funktionierendes** eigenes
+  microWakeWord-Modell ist am Gerät noch nicht durchgespielt.
 - **Anfrage-Details zum Debuggen im Chat** — Klick auf Frage/Antwort (oder den Detailblock) öffnet
   `src-admin/src/RequestDetailsDialog.tsx`. Datenquelle ist ein **Trace pro Journal-Eintrag**
   (`journal.ts`: `JournalStep {t, ms, stage, title, level, tokens, data}`, `Journal.step()`): **nicht**
