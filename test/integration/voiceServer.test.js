@@ -21,7 +21,16 @@ function audio(buf) {
 /** A fake satellite socket that records what the server sends back. */
 function fakeSat() {
     const sock = dgram.createSocket('udp4');
-    const rec = { registered: false, ackCount: 0, ttsBytes: 0, ttsEnd: null, status: [], listens: 0 };
+    const rec = {
+        registered: false,
+        ackCount: 0,
+        ttsBytes: 0,
+        ttsEnd: null,
+        ttsListen: false,
+        status: [],
+        listens: 0,
+        volume: [],
+    };
     sock.on('message', d => {
         if (d[0] === TYPE_TTS) {
             rec.ttsBytes += d.length - 1;
@@ -30,9 +39,12 @@ function fakeSat() {
         const m = JSON.parse(d.subarray(1).toString('utf8'));
         if (m.type === 'registered') rec.registered = m.ok;
         else if (m.type === 'heartbeat_ack') rec.ackCount++;
-        else if (m.type === 'tts_end') rec.ttsEnd = m.sample_rate;
-        else if (m.type === 'status') rec.status.push(m.state);
+        else if (m.type === 'tts_end') {
+            rec.ttsEnd = m.sample_rate;
+            rec.ttsListen = m.listen === true;
+        } else if (m.type === 'status') rec.status.push(m.state);
         else if (m.type === 'listen') rec.listens++;
+        else if (m.type === 'volume') rec.volume.push(m);
     });
     return { sock, rec, send: b => sock.send(b, PORT, '127.0.0.1') };
 }
@@ -113,4 +125,68 @@ test('listen re-opens the mic for the answer to a question', async () => {
         assert.equal(sat.rec.listens, 2);
         assert.equal(sat.rec.status.at(-1), 'listening');
     });
+});
+
+/** Register, speak one utterance and wait for the reply. */
+async function utterance(sat) {
+    sat.send(ctrl({ type: 'register', device: 'wz', listen_port: SAT }));
+    await delay(60);
+    sat.send(audio(Buffer.alloc(3200, 1)));
+    await delay(5);
+    sat.send(ctrl({ type: 'audio_end', device: 'wz' }));
+    await delay(250);
+}
+
+test('a reply that asks back carries listen in tts_end and leaves the satellite listening', async () => {
+    const asked = [];
+    await withServer(
+        {
+            answer: async () => 'Meinst du Büro oder Wohnzimmer?',
+            expectsFollowUp: (answer, device) => {
+                asked.push([answer, device]);
+                return true;
+            },
+        },
+        async (_server, sat) => {
+            await utterance(sat);
+            assert.deepEqual(asked, [['Meinst du Büro oder Wohnzimmer?', 'wz']]);
+            assert.equal(sat.rec.ttsListen, true, 'mic-on rides on tts_end');
+            assert.equal(sat.rec.listens, 0, 'no separate listen message that could overtake the audio');
+            assert.equal(sat.rec.status.at(-1), 'listening');
+        },
+    );
+});
+
+test('a plain reply does not open the mic', async () => {
+    await withServer({ expectsFollowUp: () => false }, async (_server, sat) => {
+        await utterance(sat);
+        assert.equal(sat.rec.ttsEnd, 24000);
+        assert.equal(sat.rec.ttsListen, false);
+        assert.equal(sat.rec.status.at(-1), 'idle');
+    });
+});
+
+test('volume: absolute and relative commands go out, the reported level comes back', async () => {
+    const reported = [];
+    await withServer(
+        { onVolume: (device, room, level) => reported.push([device, room, level]) },
+        async (server, sat) => {
+            sat.send(ctrl({ type: 'register', device: 'wz', room: 'Wohnzimmer', listen_port: SAT }));
+            await delay(60);
+            assert.equal(server.has('wz'), true);
+            assert.equal(server.has('nope'), false);
+            assert.equal(server.volume('wz', { level: 140 }), true);
+            assert.equal(server.volume('wz', { delta: -10 }), true);
+            assert.equal(server.volume('nope', { level: 50 }), false, 'unknown satellite');
+            await delay(60);
+            assert.deepEqual(sat.rec.volume, [
+                { type: 'volume', level: 100 },
+                { type: 'volume', delta: -10 },
+            ]);
+            sat.send(ctrl({ type: 'volume', device: 'wz', level: 90 }));
+            sat.send(ctrl({ type: 'volume', device: 'wz', level: 'loud' }));
+            await delay(60);
+            assert.deepEqual(reported, [['wz', 'Wohnzimmer', 90]], 'only a numeric level is reported');
+        },
+    );
 });

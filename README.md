@@ -182,6 +182,14 @@ each one shows up under `assistant.0.satellites.*` like any other.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) Voice answers come faster: the device list for the offline rule engine is built once and shared for a minute instead of up to three times per spoken command
+* (@GermanBluefox) The local LLM is now the fallback for when the cloud LLM fails; "Ask the local model first" restores the old order. It is stopped after a configurable timeout, answers shorter and leaves one CPU core free
+* (@GermanBluefox) When an answer asks back, UDP satellites now keep the microphone open for the reply too (needs `@iobroker/assistant-satellite` 0.2.0)
+* (@GermanBluefox) "Louder", "quieter", "volume 5" change the volume of the satellite that heard it - ESPHome, ioBroker-native and UDP satellites
+* (@GermanBluefox) "How's the weather tomorrow?" is answered from the weather adapter without an LLM
+* (@GermanBluefox) Fixed: Russian questions with "будет" ("will it be …") were taken for alarm queries
+
 ### 1.1.0 (2026-10-25)
 * (@GermanBluefox) YouTube on the TV: "play the channel XY" finds the channel, video or playlist on YouTube (no API key needed)
 

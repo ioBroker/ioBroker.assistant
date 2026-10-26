@@ -30,6 +30,7 @@ import {
     WEATHER_ADAPTERS,
     buildWeatherReport,
     buildWeatherPrompt,
+    buildWeatherAnswer,
     trimReport,
     type WeatherReport,
     type StateValues,
@@ -106,6 +107,22 @@ import type { AdapterConfig } from './types';
  * so re-reading their whole state tree on every single request would be pure overhead.
  */
 const WEATHER_CTX_TTL = 5 * 60 * 1000;
+
+/**
+ * How long the NLU device model stays valid. Building it costs a `list_devices` plus a name lookup per
+ * device, and one spoken command needs it up to three times (STT hints, NLU, the cloud device list).
+ * Enum and name changes drop it at once (see {@link ListCache.onClear}); the TTL only catches devices
+ * that were added or renamed elsewhere.
+ */
+const NLU_DEVICES_TTL_MS = 60_000;
+
+/** Default for `localLlmTimeoutSec`: after this the local model is stopped and the next tier answers. */
+const LOCAL_LLM_TIMEOUT_SEC = 15;
+/**
+ * Answer length cap of the local model. It answers small talk and general questions, mostly by voice, and
+ * on a Raspberry Pi every token costs about a fifth of a second — 512 tokens would be a minute and a half.
+ */
+const LOCAL_LLM_MAX_TOKENS = 256;
 
 /**
  * The replies the assistant speaks verbatim, whatever the question was. They are pre-synthesised into
@@ -215,7 +232,7 @@ function iaqLabel(value: unknown, unit: string, lang: string): string {
 }
 
 /** NLU actions that only switch something; their success is what the confirmation tone replaces. */
-const CONTROL_ACTIONS = new Set(['on', 'off', 'level', 'color']);
+const CONTROL_ACTIONS = new Set(['on', 'off', 'level', 'color', 'volumeSet']);
 
 const FIXED_REPLIES: Record<'de' | 'en' | 'ru', string[]> = {
     de: ['Ok.', 'Erledigt.'],
@@ -272,6 +289,12 @@ class Assistant extends Adapter {
     private journal: Journal | null = null;
     /** Short-TTL cache for the expensive device/room/function listings; invalidated on enum changes. */
     private listCache: ListCache | null = null;
+    /** The NLU device model of {@link getNluDevices}, shared by all callers (and concurrent requests). */
+    private nluDevices: {
+        key: string;
+        at: number;
+        result: Promise<{ rooms: string[]; devices: NluDevice[] }>;
+    } | null = null;
     /** Cache of a `<base>.SET` level state id → its writable boolean sibling switch (`<base>.ON_SET`/`.ON`), or ''. */
     private readonly siblingSwitch = new Map<string, string>();
     /** Tier-1a local LLM (node-llama-cpp), lazily loaded when enabled + installed; null otherwise. */
@@ -302,6 +325,8 @@ class Assistant extends Adapter {
     private mirroredTimers = new Map<string, TimerInfo>();
     /** Per satellite: resolves once its control objects exist, so state writes can wait for them. */
     private readonly satControlsReady = new Map<string, Promise<void>>();
+    /** Satellites whose `volume` state exists and is subscribed (see updateSatelliteVolume). */
+    private readonly satVolumeEnsured = new Set<string>();
     /** Native (ioBroker) satellite state-id → sender instance id, so we can push announcements back to it. */
     private readonly nativeSatFrom = new Map<string, string>();
     /** Countdown timers / reminders (roadmap #2); mirrored into `timers.*` states. Null until onReady. */
@@ -388,6 +413,9 @@ class Assistant extends Adapter {
                 }),
             );
             this.listCache = new ListCache();
+            this.listCache.onClear = () => {
+                this.nluDevices = null;
+            };
             const { tools, denied } = await buildMcpTools(this.mcp, cfg, this.listCache, (id, fb) =>
                 this.resolveDeviceName(id, fb),
             );
@@ -622,7 +650,7 @@ class Assistant extends Adapter {
                     this.log.debug(`satellite control update failed: ${(e as Error).message}`),
                 );
             },
-            expectsFollowUp: answer => this.expectsFollowUp(answer),
+            expectsFollowUp: (answer, device) => this.followUpFor(device, answer),
         });
         await this.esphome.start();
         this.log.info(
@@ -684,6 +712,12 @@ class Assistant extends Adapter {
                 tts,
                 answer: (question, ctx) =>
                     this.answerVoice(question, ctx.device, { transport: 'udp', room: ctx.room, sttMs: ctx.sttMs }),
+                expectsFollowUp: (answer, device) => this.followUpFor(device, answer),
+                onVolume: (device, room, level) => {
+                    this.updateSatelliteVolume(device, room, level).catch(e =>
+                        this.log.debug(`satellite volume update failed: ${(e as Error).message}`),
+                    );
+                },
                 getHints: () => this.buildSttHints(),
                 log: this.log,
                 onStatus: (device, room, state) => {
@@ -844,14 +878,7 @@ class Assistant extends Adapter {
                 return { text, answer: '' };
             }
             const reply = await engines.tts.synthesize(answer, language);
-            // Follow-up: primarily the LLM's own signal ([[LISTEN]] → lastFollowUp); "?" heuristic as fallback.
-            const llmSignalled = this.lastFollowUp;
-            const listen = llmSignalled || this.expectsFollowUp(answer);
-            if (listen) {
-                this.log.info(
-                    `→ mic-on to satellite '${source}' (${llmSignalled ? 'LLM signalled a follow-up' : 'reply is a question (fallback)'}).`,
-                );
-            }
+            const listen = this.followUpFor(source, answer);
             return { text, answer, audio: reply.pcm.toString('base64'), sampleRate: reply.sampleRate, listen };
         } catch (e) {
             this.log.warn(`Voice query failed: ${(e as Error).message}`);
@@ -929,6 +956,34 @@ class Assistant extends Adapter {
         if (room) {
             await this.setStateAsync(`${base}.room`, { val: room, ack: true });
         }
+    }
+
+    /**
+     * Mirror the playback volume a UDP satellite reported into `satellites.<id>.volume`. The state only
+     * appears for satellites that speak the `volume` message — an older one would never answer a write.
+     */
+    private async updateSatelliteVolume(device: string, room: string, level: number): Promise<void> {
+        const id = await this.ensureSatelliteObjects(device, room);
+        const stateId = `satellites.${id}.volume`;
+        if (!this.satVolumeEnsured.has(id)) {
+            await this.setObjectNotExistsAsync(stateId, {
+                type: 'state',
+                common: {
+                    name: 'Playback volume',
+                    type: 'number',
+                    role: 'level.volume',
+                    unit: '%',
+                    min: 0,
+                    max: 100,
+                    read: true,
+                    write: true,
+                },
+                native: {},
+            });
+            this.subscribeStates(stateId);
+            this.satVolumeEnsured.add(id);
+        }
+        await this.setStateAsync(stateId, { val: level, ack: true });
     }
 
     /**
@@ -1467,7 +1522,8 @@ class Assistant extends Adapter {
                     await Promise.all(allowed.map(d => this.voice!.announce(d, pcm, sampleRate)));
                     delivered += allowed.length;
                     if (listen) {
-                        allowed.forEach(d => this.voice!.listen(d));
+                        const playMs = (pcm.length / 2 / sampleRate) * 1000;
+                        allowed.forEach(d => this.voice!.listen(d, playMs));
                     }
                 } catch (e) {
                     this.log.debug(`UDP announce failed: ${(e as Error).message}`);
@@ -1840,6 +1896,15 @@ class Assistant extends Adapter {
             this.globalDnd = !!state.val;
             this.log.info(`Do-Not-Disturb ${this.globalDnd ? 'on' : 'off'} (all satellites).`);
             await this.setStateAsync('dnd', { val: this.globalDnd, ack: true });
+            return;
+        }
+        // Playback volume of a UDP satellite — not acked here: the satellite reports the level it took.
+        const satVolume = id.match(/\.satellites\.([^.]+)\.volume$/);
+        if (satVolume) {
+            const device = this.satDeviceById.get(satVolume[1]) || satVolume[1];
+            if (!this.voice?.volume(device, { level: Number(state.val) })) {
+                this.log.warn(`Cannot set the volume of '${device}': it is not a registered UDP satellite.`);
+            }
             return;
         }
         const satDnd = id.match(/\.satellites\.([^.]+)\.dnd$/);
@@ -2615,10 +2680,11 @@ class Assistant extends Adapter {
         const history = useCtx ? this.context.get(source) : [];
         const raw = await this.produceAnswer(question, history, source);
         // The LLM signals "I'm waiting for the user's reply" by appending the [[LISTEN]] control marker
-        // (see followUpHint). Strip it here so it's neither stored, shown nor spoken, and expose it as the
-        // follow-up flag. Single-user voice → a shared field is race-free enough (read right after await).
-        this.lastFollowUp = /\[\[LISTEN\]\]/i.test(raw);
-        if (this.lastFollowUp) {
+        // (see followUpHint). Strip it here so it's neither stored, shown nor spoken, and keep it per source:
+        // two satellites answered at the same time must not hand each other their mic-on.
+        const followUp = /\[\[LISTEN\]\]/i.test(raw);
+        this.followUps.set(source, followUp);
+        if (followUp) {
             this.journal?.note({ followUp: true });
         }
         const result = raw.replace(/\s*\[\[LISTEN\]\]\s*/gi, ' ').trim();
@@ -2628,8 +2694,34 @@ class Assistant extends Adapter {
         return result;
     }
 
-    /** Whether the LAST {@link answer} asked the user something (LLM-signalled via [[LISTEN]]). */
-    private lastFollowUp = false;
+    /** Per source: whether its last {@link answer} asked the user something (LLM-signalled via [[LISTEN]]). */
+    private readonly followUps = new Map<string, boolean>();
+
+    /**
+     * Should the satellite behind `source` re-open its mic after this reply? Primarily the LLM's own
+     * [[LISTEN]] signal, with a question mark in the reply as the fallback (the NLU and the local tiers
+     * cannot emit the marker, but they do ask "Meinst du Büro oder Wohnzimmer?").
+     */
+    private wantsFollowUp(source: string, answer: string): 'llm' | 'question' | null {
+        if (!answer) {
+            return null;
+        }
+        if (this.followUps.get(source)) {
+            return 'llm';
+        }
+        return this.expectsFollowUp(answer) ? 'question' : null;
+    }
+
+    /** {@link wantsFollowUp} for a voice transport, logged, as the `listen` flag of the reply. */
+    private followUpFor(source: string, answer: string): boolean {
+        const why = this.wantsFollowUp(source, answer);
+        if (why) {
+            this.log.info(
+                `→ mic-on to satellite '${source}' (${why === 'llm' ? 'LLM signalled a follow-up' : 'reply is a question'}).`,
+            );
+        }
+        return !!why;
+    }
 
     /**
      * System-prompt instruction letting the LLM explicitly signal a follow-up: append [[LISTEN]] when it
@@ -2760,26 +2852,21 @@ class Assistant extends Adapter {
         // invent a forecast; the cloud model saves a get_weather round-trip). Cached, see buildWeatherContext.
         const weather = await this.buildWeatherContext();
         // Tier 1a: local LLM — answers general questions offline; emits HANDOFF for anything needing tools.
+        // With a cloud LLM it only goes first when asked to (`localLlmFirst`): on a Raspberry Pi a small model
+        // needs 10–25 s, often only to hand off, and the cloud then starts from zero. By default it is the
+        // fallback for when the cloud fails (see below).
         // Skipped inside an ongoing conversation (history present): the tool-free local model gets no history,
         // so it would answer a follow-up like "yes" context-free and swallow it — let the cloud LLM (which has
         // the thread and the tools) handle follow-ups instead. Without a cloud LLM there is nobody to hand
         // follow-ups to, so the local model takes them too.
-        if (this.config.useLocalLlm && this.localLlm && (!history.length || !this.agent)) {
-            try {
-                // The local model has no tools: without these lines it would invent the weather and guess
-                // who is at home.
-                const facts = [weather, this.buildPresenceContext()].filter(Boolean).join('\n\n');
-                const ans = await this.localLlm.ask(facts ? `${facts}\n\n${question}` : question);
-                if (ans && !isHandoff(ans)) {
-                    this.log.info(`Answered by local LLM (source='${source}').`);
-                    this.journal?.note({ tier: 'localLlm', detail: this.localLlmName() });
-                    return ans;
-                }
-                this.log.debug('Local LLM handed off to the cloud LLM.');
-            } catch (e) {
-                this.log.debug(`Local LLM error: ${(e as Error).message}`);
+        const useLocal = !!(this.config.useLocalLlm && this.localLlm);
+        const localFirst = useLocal && (!this.agent || !!this.config.localLlmFirst);
+        if (localFirst && (!history.length || !this.agent)) {
+            const ans = await this.askLocalLlm(question, weather, source);
+            if (ans) {
+                return ans;
             }
-        } else if (this.config.useLocalLlm && this.localLlm) {
+        } else if (localFirst) {
             this.log.debug('Local LLM skipped (follow-up in an ongoing conversation → cloud LLM).');
         }
         // Tier 2: cloud LLM with full tool access. Inject a compact device list into the system prompt so
@@ -2807,7 +2894,45 @@ class Assistant extends Adapter {
             tier: 'cloud',
             detail: `${this.config.provider || 'openai'} · ${this.agent.model || 'auto'}`,
         });
-        return this.agent.ask(questionForLlm, sys, history);
+        try {
+            return await this.agent.ask(questionForLlm, sys, history);
+        } catch (e) {
+            // Offline, quota, outage: the local model is the fallback — unless it was already asked above.
+            if (useLocal && !localFirst) {
+                this.log.warn(`Cloud LLM failed (${(e as Error).message}) — asking the local LLM instead.`);
+                const ans = await this.askLocalLlm(question, weather, source);
+                if (ans) {
+                    return ans;
+                }
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Ask the local model, bounded by `localLlmTimeoutSec`. Returns its answer, or null when it handed off,
+     * timed out or failed — the caller then goes on to the next tier.
+     */
+    private async askLocalLlm(question: string, weather: string, source: string): Promise<string | null> {
+        if (!this.localLlm) {
+            return null;
+        }
+        const timeoutMs = Math.max(1, Number(this.config.localLlmTimeoutSec) || LOCAL_LLM_TIMEOUT_SEC) * 1000;
+        try {
+            // The local model has no tools: without these lines it would invent the weather and guess who is
+            // at home.
+            const facts = [weather, this.buildPresenceContext()].filter(Boolean).join('\n\n');
+            const ans = await this.localLlm.ask(facts ? `${facts}\n\n${question}` : question, timeoutMs);
+            if (ans && !isHandoff(ans)) {
+                this.log.info(`Answered by local LLM (source='${source}').`);
+                this.journal?.note({ tier: 'localLlm', detail: this.localLlmName() });
+                return ans;
+            }
+            this.log.debug('Local LLM handed off.');
+        } catch (e) {
+            this.log.info(`Local LLM gave no answer: ${(e as Error).message}`);
+        }
+        return null;
     }
 
     /** Reply when nothing local understood the request and there is no cloud LLM (provider "none"). */
@@ -3063,7 +3188,7 @@ class Assistant extends Adapter {
             dataDir,
             modelUrl: (this.config.localLlmModelUrl || '').trim() || DEFAULT_LOCAL_MODEL_URL,
             systemPrompt: this.config.systemPrompt || '',
-            maxTokens: this.config.maxTokens || 512,
+            maxTokens: Math.min(this.config.maxTokens || LOCAL_LLM_MAX_TOKENS, LOCAL_LLM_MAX_TOKENS),
             log: this.log,
         });
         this.lastLlmPct = -1;
@@ -3098,7 +3223,9 @@ class Assistant extends Adapter {
         // Timer intents match device-independently (parse() checks them first), so build the NLU even
         // when no devices are known and always try timers before bailing out.
         const { rooms, devices } = await this.getNluDevices();
-        const intents = new Nlu(rooms, devices, this.getNluAliases()).parseAll(question);
+        const intents = new Nlu(rooms, devices, this.getNluAliases(), {
+            weather: !!(this.config.weatherInstance || '').trim(),
+        }).parseAll(question);
         if (!intents.length || !intents.every(i => this.canExecuteNlu(i, devices.length))) {
             return null; // nothing matched, or one part cannot run here → let the LLM answer the whole thing
         }
@@ -3157,6 +3284,10 @@ class Assistant extends Adapter {
             case 'timeQuery':
             case 'dateQuery':
                 return true;
+            case 'weatherQuery':
+                return !!(this.config.weatherInstance || '').trim();
+            case 'volumeSet':
+                return !!(this.voice || this.esphome || this.nativeSatFrom.size);
             default:
                 // Device intents; writes additionally require the coarse "allow control" toggle.
                 return (
@@ -3180,9 +3311,100 @@ class Assistant extends Adapter {
             case 'timeQuery':
             case 'dateQuery':
                 return this.executeTimeIntent(intent);
+            case 'weatherQuery':
+                return this.executeWeatherIntent(intent);
+            case 'volumeSet':
+                return this.executeVolumeIntent(intent, source);
             default:
                 return this.executeIntent(intent);
         }
+    }
+
+    /**
+     * Speak the weather straight from the configured adapter. Throws when the report has nothing for the
+     * asked day (or the adapter has no mapper), so the question goes on to the LLM and its tool instead.
+     */
+    private async executeWeatherIntent(intent: NluIntent): Promise<string> {
+        const res = await this.readWeather(this.config.weatherInstance || '');
+        if (!res.report) {
+            throw new Error(res.error || 'no weather report');
+        }
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const text = buildWeatherAnswer(res.report, lang, intent.when);
+        if (!text) {
+            throw new Error(`the weather report has no data for '${intent.when || 'now'}'`);
+        }
+        return text;
+    }
+
+    /**
+     * Change the playback volume of a satellite: the one in the named room, else the one that heard the
+     * command. Each transport has its own knob — the native satellite's `volume` state, the media player
+     * of an ESPHome device, the `volume` message of a UDP satellite.
+     */
+    private async executeVolumeIntent(intent: NluIntent, source: string): Promise<string> {
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const satId = intent.room ? this.resolveSatelliteId(intent.room) : this.announceTargetForSource(source);
+        const absolute = typeof intent.value === 'number' ? intent.value : null;
+        const delta = intent.delta || 0;
+        const next = (current: number): number => Math.min(100, Math.max(0, Math.round(absolute ?? current + delta)));
+        // 1 процент, 2 процента, 5 процентов (11–14 take the last form).
+        const ruPercent = (n: number): string =>
+            n % 100 > 10 && n % 100 < 20
+                ? 'процентов'
+                : n % 10 === 1
+                  ? 'процент'
+                  : n % 10 >= 2 && n % 10 <= 4
+                    ? 'процента'
+                    : 'процентов';
+        const confirm = (level: number): string =>
+            lang === 'ru'
+                ? `Громкость ${level} ${ruPercent(level)}.`
+                : lang === 'de'
+                  ? `Lautstärke ${level} Prozent.`
+                  : `Volume ${level} percent.`;
+        if (satId) {
+            const device = this.satDeviceById.get(satId) || satId;
+            const instance = this.nativeSatFrom.get(satId);
+            if (instance) {
+                const stateId = `${instance}.volume`;
+                const current = Number((await this.getForeignStateAsync(stateId))?.val ?? 50);
+                const level = next(Number.isFinite(current) ? current : 50);
+                await this.setForeignStateAsync(stateId, level);
+                return confirm(level);
+            }
+            const player = this.esphome?.entities(device).find(e => e.kind === 'mediaPlayer');
+            if (player) {
+                const current = ((player.value as MediaPlayerValue | undefined)?.volume ?? 0.5) * 100;
+                const level = next(current);
+                if (this.esphome!.setEntity(device, player.objectId, level / 100)) {
+                    return confirm(level);
+                }
+            }
+            // A UDP satellite works out a relative step itself (it knows its level) and reports the result.
+            if (this.voice?.has(device)) {
+                this.voice.volume(device, absolute !== null ? { level: absolute } : { delta });
+                if (absolute !== null) {
+                    return confirm(next(0));
+                }
+                return lang === 'ru'
+                    ? delta > 0
+                        ? 'Сделала громче.'
+                        : 'Сделала тише.'
+                    : lang === 'de'
+                      ? delta > 0
+                          ? 'Etwas lauter.'
+                          : 'Etwas leiser.'
+                      : delta > 0
+                        ? 'A bit louder.'
+                        : 'A bit quieter.';
+            }
+        }
+        return lang === 'ru'
+            ? 'Я не знаю, громкость какой колонки изменить.'
+            : lang === 'de'
+              ? 'Ich weiß nicht, bei welchem Lautsprecher ich die Lautstärke ändern soll.'
+              : "I don't know which speaker's volume to change.";
     }
 
     /** Localized "this part did not work" sentence for a failed part of a combined command. */
@@ -3236,14 +3458,37 @@ class Assistant extends Adapter {
         }
     }
 
-    /** Device model for the NLU: friendly name, room, type and controls (controlType → state id). */
-    private async getNluDevices(): Promise<{ rooms: string[]; devices: NluDevice[] }> {
+    /**
+     * Device model for the NLU: friendly name, room, type and controls (controlType → state id). Cached
+     * for {@link NLU_DEVICES_TTL_MS}; requests arriving while it is being built wait for the same build.
+     */
+    private getNluDevices(): Promise<{ rooms: string[]; devices: NluDevice[] }> {
         if (!this.mcp) {
-            return { rooms: [], devices: [] };
+            return Promise.resolve({ rooms: [], devices: [] });
         }
         // Match names in the assistant's interaction language (voice language, else system) so a
         // Russian command matches Russian smartNames.
         const nluLang = (this.config.voiceLanguage || this.language || 'en') as ioBroker.Languages;
+        const now = Date.now();
+        const hit = this.nluDevices;
+        if (hit && hit.key === nluLang && now - hit.at < NLU_DEVICES_TTL_MS) {
+            return hit.result;
+        }
+        const entry = { key: nluLang, at: now, result: this.buildNluDevices(nluLang) };
+        this.nluDevices = entry;
+        // An empty model is usually a failed build (the manager not ready yet) — don't keep it for a minute.
+        void entry.result.then(r => {
+            if (!r.devices.length && this.nluDevices === entry) {
+                this.nluDevices = null;
+            }
+        });
+        return entry.result;
+    }
+
+    private async buildNluDevices(nluLang: ioBroker.Languages): Promise<{ rooms: string[]; devices: NluDevice[] }> {
+        if (!this.mcp) {
+            return { rooms: [], devices: [] };
+        }
         try {
             const res = await this.mcp.callTool('list_devices', { language: nluLang });
             const parsed = JSON.parse(res.text) as {

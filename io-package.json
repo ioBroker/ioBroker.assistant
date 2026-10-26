@@ -213,6 +213,8 @@
     "ringSeconds": 60,
     "useLocalLlm": false,
     "localLlmModelUrl": "",
+    "localLlmFirst": false,
+    "localLlmTimeoutSec": 15,
     "journalHours": 24,
     "voiceEnabled": false,
     "udpServerEnabled": false,

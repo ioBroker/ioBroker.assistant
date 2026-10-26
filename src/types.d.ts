@@ -124,6 +124,10 @@ export interface AdapterConfig {
     useLocalLlm: boolean;
     /** Direct URL of the GGUF model for the local LLM ('' → built-in default, Qwen2.5-1.5B). */
     localLlmModelUrl: string;
+    /** Ask the local LLM before the cloud LLM; otherwise it only answers when the cloud fails. */
+    localLlmFirst: boolean;
+    /** Seconds after which a local LLM answer is aborted and the next tier takes over. */
+    localLlmTimeoutSec: number;
     /** Hours of conversation history the admin chat shows (journal); 0 = do not record. */
     journalHours: number;
 

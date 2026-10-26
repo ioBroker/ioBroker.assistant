@@ -271,3 +271,47 @@ test('buildWeatherPrompt: omits missing fields and returns empty for an empty re
         '',
     );
 });
+
+// ── buildWeatherAnswer: the spoken reply when the NLU answers a weather question itself ──
+
+const { buildWeatherAnswer } = require('../../build/lib/weather.js');
+
+const spoken = {
+    source: 'open-meteo-weather',
+    units: { temp: '°C', wind: 'km/h', precip: 'mm' },
+    current: { temperature: 11.6, feelsLike: 7.8, condition: wmoText(2) },
+    forecast: [
+        { day: 0, tempMin: 6.2, tempMax: 13.4, condition: wmoText(61), precipProbability: 40 },
+        { day: 1, tempMin: 4, tempMax: 9, condition: 'Sonnig' },
+    ],
+};
+
+test('buildWeatherAnswer: now = current conditions plus today, WMO texts translated', () => {
+    assert.equal(
+        buildWeatherAnswer(spoken, 'de', 'now'),
+        'Draußen sind es 12 Grad, gefühlt 8 Grad, teilweise bewölkt. Heute 6 bis 13 Grad, leichter Regen, Regenwahrscheinlichkeit 40 Prozent.',
+    );
+    assert.equal(
+        buildWeatherAnswer(spoken, 'en', 'now'),
+        'It is 12 degrees outside, feels like 8 degrees, partly cloudy. Today 6 to 13 degrees, slight rain, 40 percent chance of rain.',
+    );
+});
+
+test('buildWeatherAnswer: a forecast day, with adapter texts kept as they come', () => {
+    assert.equal(buildWeatherAnswer(spoken, 'de', 'tomorrow'), 'Morgen 4 bis 9 Grad, Sonnig.');
+    assert.equal(buildWeatherAnswer(spoken, 'ru', 'tomorrow'), 'Завтра от 4 до 9 градусов, Sonnig.');
+    assert.equal(
+        buildWeatherAnswer(spoken, 'ru', 'today').startsWith('Сегодня от 6 до 13 градусов, небольшой дождь'),
+        true,
+    );
+});
+
+test('buildWeatherAnswer: nothing for the asked day → empty, so the LLM gets the question', () => {
+    assert.equal(buildWeatherAnswer(spoken, 'de', 'dayAfter'), '');
+    assert.equal(buildWeatherAnswer({ ...spoken, current: undefined, forecast: [] }, 'de', 'now'), '');
+    // Without current data "now" still answers from today's forecast.
+    assert.equal(
+        buildWeatherAnswer({ ...spoken, current: undefined }, 'de', 'now').startsWith('Heute 6 bis 13 Grad'),
+        true,
+    );
+});

@@ -414,8 +414,8 @@
                 "useLocalLlm": {
                     "newLine": true,
                     "type": "checkbox",
-                    "label": "Use a local LLM before the cloud (installed on demand)",
-                    "help": "Runs a small local model (node-llama-cpp) for general questions; escalates to the cloud LLM when it needs live device data. Install it with the button below.",
+                    "label": "Use a local LLM (installed on demand)",
+                    "help": "Runs a small local model (node-llama-cpp) for general questions. With a cloud provider it only answers when the cloud fails, unless \"Ask the local model first\" is on. Install it with the button below.",
                     "default": false,
                     "xs": 12,
                     "sm": 12,
@@ -433,6 +433,33 @@
                     "md": 6,
                     "lg": 6,
                     "xl": 6
+                },
+                "localLlmFirst": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Ask the local model first",
+                    "help": "Every question the rules do not understand goes to the local model before the cloud. Saves cloud calls, but on a Raspberry Pi it adds 10–25 seconds to such questions.",
+                    "default": false,
+                    "hidden": "!data.useLocalLlm || data.provider === 'none'",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 6,
+                    "lg": 6,
+                    "xl": 6
+                },
+                "localLlmTimeoutSec": {
+                    "type": "number",
+                    "label": "Local model timeout (s)",
+                    "help": "After this time the local model is stopped and the question goes on to the cloud.",
+                    "min": 1,
+                    "max": 300,
+                    "default": 15,
+                    "hidden": "!data.useLocalLlm",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
                 },
                 "_installLocalLlm": {
                     "newLine": true,

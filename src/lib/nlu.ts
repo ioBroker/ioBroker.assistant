@@ -40,7 +40,9 @@ export type NluActionType =
     | 'alarmQuery'
     | 'alarmCancel'
     | 'timeQuery'
-    | 'dateQuery';
+    | 'dateQuery'
+    | 'weatherQuery'
+    | 'volumeSet';
 
 export interface NluIntent {
     action: NluActionType;
@@ -80,6 +82,21 @@ export interface NluIntent {
     minute?: number;
     /** Weekdays (0 = Sunday … 6 = Saturday) for `alarmSet`; empty = one-shot next occurrence. */
     weekdays?: number[];
+    // ── Weather (action 'weatherQuery') ──
+    /** Which part of the forecast was asked for. */
+    when?: WeatherWhen;
+    // ── Satellite volume (action 'volumeSet'): `value` = absolute level 0–100, or `delta` ──
+    /** Relative change in percentage points ("lauter" = +10). */
+    delta?: number;
+}
+
+/** The part of the forecast a weather question is about: current conditions, or a forecast day. */
+export type WeatherWhen = 'now' | 'today' | 'tomorrow' | 'dayAfter';
+
+/** Options of the {@link Nlu} that depend on what the adapter has configured. */
+export interface NluOptions {
+    /** A weather source is configured, so weather questions can be answered locally. */
+    weather?: boolean;
 }
 
 const TURN_ON = new Set([
@@ -256,6 +273,42 @@ const CATEGORY_WORDS: { words: string[]; category: string; types: string[] }[] =
 /** Words that ask about every room at once ("wie warm ist es überall"). */
 const EVERYWHERE_WORDS = ['ueberall', 'alle', 'allen', 'everywhere', 'all', 'везде', 'всюду'];
 
+/** Words (stemmed) that make a question a weather question on their own. */
+const WEATHER_WORDS = ['wetter', 'wetterbericht', 'vorhersage', 'weather', 'forecast', 'погода', 'прогноз'];
+/**
+ * Precipitation words, matched as whole tokens: stemming "regen" would also catch "Regelung", and nobody
+ * gives a smart home the order "rain" — these only ever start a question.
+ */
+const RAIN_TOKENS = new Set([
+    'regnet',
+    'regnen',
+    'regen',
+    'schneit',
+    'schnee',
+    'gewitter',
+    'rain',
+    'raining',
+    'snow',
+    'snowing',
+    'дождь',
+    'дождя',
+    'снег',
+    'гроза',
+]);
+/** A weather question about some other place or a later day is left to the LLM and its `get_weather` tool. */
+const WEATHER_ELSEWHERE = new Set(['in', 'fuer', 'for', 'в', 'во', 'для']);
+const WEATHER_LATER_RE =
+    /(?<![\p{L}])(woche\p{L}*|wochenende|week\p{L}*|недел\p{L}*|выходн\p{L}*|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|monday|tuesday|wednesday|thursday|friday|saturday|sunday|понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)(?![\p{L}])/u;
+
+/** Words (stemmed) that name the playback volume. */
+const VOLUME_WORDS = ['lautstaerke', 'volume', 'громкость'];
+const LOUDER_TOKENS = new Set(['lauter', 'louder', 'громче', 'погромче']);
+const QUIETER_TOKENS = new Set(['leiser', 'quieter', 'softer', 'тише', 'потише']);
+const VOLUME_MAX_TOKENS = new Set(['maximum', 'max', 'voll', 'full', 'максимум', 'полную']);
+const VOLUME_MIN_TOKENS = new Set(['minimum', 'min', 'минимум']);
+/** Step of a bare "lauter"/"leiser", in percentage points. */
+const VOLUME_STEP = 10;
+
 /** Words (de/en/ru, stemmed) that mean "open". */
 const OPEN_WORDS = ['offen', 'geoeffnet', 'geoffnet', 'auf', 'open', 'открыт', 'открыта', 'открыты', 'открытые'];
 
@@ -419,9 +472,10 @@ const LABEL_MARKERS = new Set(['an', 'fuer', 'for', 'to', 'about', 'про']);
 /**
  * Marks a command as being about an alarm / wake-up ("Wecker", "weck mich", "alarm", "будильник"). Like
  * {@link TIMER_RE}, "alarms?"/"wecker" carry no leading boundary so compounds ("Küchenwecker") and the
- * plural still match; the verb-prefix forms ("weck…", "разбуд…") keep a boundary.
+ * plural still match; the verb-prefix forms ("weck…", "разбуд…") keep a boundary. "буди…" and not just
+ * "буд…": that would also catch "будет" (will be), and turn "будет ли дождь?" into an alarm query.
  */
-const ALARM_RE = /(?:(?<![\p{L}])(weck\p{L}*|wake|буд\p{L}*|разбуд\p{L}*)|alarms?|wecker)(?![\p{L}])/iu;
+const ALARM_RE = /(?:(?<![\p{L}])(weck\p{L}*|wake|буди\p{L}*|разбуд\p{L}*)|alarms?|wecker)(?![\p{L}])/iu;
 /** Hour number words → digits (no fractions — those are handled by the clock regexes). de/en/ru, 1–12. */
 const HOUR_WORDS: Record<string, string> = {
     ein: '1',
@@ -748,10 +802,17 @@ export class Nlu {
     private readonly devices: NluDevice[];
     /** Synonym dictionary as normalized [from, to] pairs, applied to the input before matching. */
     private readonly aliases: [string, string][];
+    private readonly opts: NluOptions;
 
-    constructor(rooms: string[], devices: NluDevice[], aliases: { from: string; to: string }[] = []) {
+    constructor(
+        rooms: string[],
+        devices: NluDevice[],
+        aliases: { from: string; to: string }[] = [],
+        opts: NluOptions = {},
+    ) {
         this.rooms = rooms.filter(Boolean);
         this.devices = devices;
+        this.opts = opts;
         this.aliases = aliases
             .map(a => [normalize(a.from || ''), normalize(a.to || '')] as [string, string])
             .filter(([from]) => from);
@@ -872,8 +933,11 @@ export class Nlu {
         const roomName = this.findRoom(p.joined);
         const device = this.findDevice(p.joined, roomName);
         if (!device) {
-            // No device named — but the question may still be about a kind of measurement.
-            return this.parseCategoryQuery(p, this.extractFeatures(p));
+            // No device named — so "lauter" is meant for the speaker that heard it, "wie wird das Wetter" goes to
+            // the weather adapter, and a question may still be about a kind of measurement. A named device
+            // always wins: "Fernseher lauter" is about the TV.
+            const features = this.extractFeatures(p);
+            return this.parseVolume(p) ?? this.parseWeatherQuery(p, features) ?? this.parseCategoryQuery(p, features);
         }
         let features = this.extractFeatures(p);
         if (inherited && this.namesOnly(p, device, roomName)) {
@@ -1062,6 +1126,9 @@ export class Nlu {
      */
     private parseTimeQuery(text: string): NluIntent | null {
         const has = (w: string): boolean => wordInText(w, text);
+        if (WEATHER_WORDS.some(has)) {
+            return null; // "what is the weather the day after tomorrow" asks about the weather, not the date
+        }
         const qualifier = (): boolean =>
             has('heute') ||
             has('welch') ||
@@ -1132,6 +1199,86 @@ export class Nlu {
             room: room || undefined,
             confidence: 0.8,
         };
+    }
+
+    /**
+     * "Wie wird das Wetter morgen?", "regnet es heute?", "wie warm wird es übermorgen?" (de/en/ru) → the
+     * configured weather adapter, read and spoken without an LLM. Only today, tomorrow and the day after
+     * — other days, other places ("Wetter in Berlin") and the plain "wie warm ist es" (the house sensors,
+     * see {@link parseCategoryQuery}) stay with their own paths.
+     */
+    private parseWeatherQuery(p: Prepared, features: CommandFeatures): NluIntent | null {
+        if (!this.opts.weather) {
+            return null;
+        }
+        const t = p.joined;
+        const tokens = p.tokens;
+        const has = (w: string): boolean => p.tokenSet.has(w);
+        let when: WeatherWhen = 'now';
+        if (has('uebermorgen') || t.includes('day after tomorrow') || has('послезавтра')) {
+            when = 'dayAfter';
+        } else if (has('heute') || has('today') || has('сегодня')) {
+            when = 'today'; // also "heute Morgen"
+        } else if (
+            has('tomorrow') ||
+            has('завтра') ||
+            tokens.some((w, i) => w === 'morgen' && tokens[i - 1] !== 'guten')
+        ) {
+            when = 'tomorrow';
+        }
+        const weatherWord = WEATHER_WORDS.some(w => wordInText(w, t));
+        const rain = tokens.some(w => RAIN_TOKENS.has(w));
+        const temperature = (CATEGORY_WORDS.find(c => c.category === 'temperature')?.words || []).some(w =>
+            wordInText(w, t),
+        );
+        // A temperature question is about the forecast only when it names a day; without one it is about the house.
+        if (!weatherWord && !rain && !(temperature && features.isQuery && when !== 'now')) {
+            return null;
+        }
+        // The filler list drops prepositions from the tokens, so look for them in the full text.
+        if (WEATHER_LATER_RE.test(t) || p.norm.split(/\s+/).some(w => WEATHER_ELSEWHERE.has(w))) {
+            return null;
+        }
+        return { action: 'weatherQuery', when, confidence: 0.85 };
+    }
+
+    /**
+     * "Lautstärke 5", "Lautstärke auf 40 Prozent", "lauter", "etwas leiser", "volume 7", "громче" → the
+     * playback volume of the satellite that heard it (or of the named room's satellite). A bare number up
+     * to 10 is a step on a 1–10 scale, anything above is percent. "Wie ist die Lautstärke" is not a command.
+     */
+    private parseVolume(p: Prepared): NluIntent | null {
+        const louder = p.tokens.some(w => LOUDER_TOKENS.has(w));
+        const quieter = p.tokens.some(w => QUIETER_TOKENS.has(w));
+        const volumeWord = VOLUME_WORDS.some(w => wordInText(w, p.joined));
+        if (!louder && !quieter && !volumeWord) {
+            return null;
+        }
+        const percent = /(?:prozent|percent|процент\p{L}*|%)/u.test(p.norm);
+        // "ein bisschen lauter" is no step count — only digits and the number words from two upwards count.
+        const num = p.tokens
+            .map(w => (/^\d+$/.test(w) ? w : ['ein', 'eine', 'einen'].includes(w) ? '' : NUMBER_WORDS[w] || ''))
+            .find(w => /^\d+$/.test(w));
+        const n = num === undefined ? null : parseInt(num, 10);
+        const scaled = n === null ? null : n <= 10 && !percent ? n * 10 : n;
+        const room = this.findRoom(p.joined) || undefined;
+        if (louder !== quieter) {
+            const step = scaled ?? VOLUME_STEP;
+            return { action: 'volumeSet', delta: louder ? step : -step, room, confidence: 0.85 };
+        }
+        if (!volumeWord) {
+            return null;
+        }
+        let level = scaled;
+        if (p.tokens.some(w => VOLUME_MAX_TOKENS.has(w))) {
+            level = 100;
+        } else if (p.tokens.some(w => VOLUME_MIN_TOKENS.has(w))) {
+            level = VOLUME_STEP;
+        }
+        if (level === null) {
+            return null;
+        }
+        return { action: 'volumeSet', value: Math.min(100, Math.max(0, level)), room, confidence: 0.85 };
     }
 
     private parseWindowsOpen(text: string): NluIntent | null {

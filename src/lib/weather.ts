@@ -612,3 +612,181 @@ export function buildWeatherPrompt(report: WeatherReport, lang: string): string 
     lines.push(t.hint);
     return lines.join('\n');
 }
+
+/** WMO texts in the other voice languages, by the English text {@link wmoText} puts into a report. */
+const WMO_LOCAL: Record<string, Record<string, string>> = {
+    de: {
+        'clear sky': 'klarer Himmel',
+        'mainly clear': 'überwiegend klar',
+        'partly cloudy': 'teilweise bewölkt',
+        overcast: 'bedeckt',
+        fog: 'Nebel',
+        'depositing rime fog': 'Nebel mit Raureif',
+        'light drizzle': 'leichter Nieselregen',
+        drizzle: 'Nieselregen',
+        'dense drizzle': 'starker Nieselregen',
+        'freezing drizzle': 'gefrierender Nieselregen',
+        'dense freezing drizzle': 'starker gefrierender Nieselregen',
+        'slight rain': 'leichter Regen',
+        rain: 'Regen',
+        'heavy rain': 'starker Regen',
+        'freezing rain': 'gefrierender Regen',
+        'heavy freezing rain': 'starker gefrierender Regen',
+        'slight snow': 'leichter Schneefall',
+        snow: 'Schneefall',
+        'heavy snow': 'starker Schneefall',
+        'snow grains': 'Schneegriesel',
+        'slight rain showers': 'leichte Regenschauer',
+        'rain showers': 'Regenschauer',
+        'violent rain showers': 'heftige Regenschauer',
+        'snow showers': 'Schneeschauer',
+        'heavy snow showers': 'starke Schneeschauer',
+        thunderstorm: 'Gewitter',
+        'thunderstorm with slight hail': 'Gewitter mit leichtem Hagel',
+        'thunderstorm with heavy hail': 'Gewitter mit starkem Hagel',
+    },
+    ru: {
+        'clear sky': 'ясно',
+        'mainly clear': 'преимущественно ясно',
+        'partly cloudy': 'переменная облачность',
+        overcast: 'пасмурно',
+        fog: 'туман',
+        'depositing rime fog': 'туман с изморозью',
+        'light drizzle': 'лёгкая морось',
+        drizzle: 'морось',
+        'dense drizzle': 'сильная морось',
+        'freezing drizzle': 'ледяная морось',
+        'dense freezing drizzle': 'сильная ледяная морось',
+        'slight rain': 'небольшой дождь',
+        rain: 'дождь',
+        'heavy rain': 'сильный дождь',
+        'freezing rain': 'ледяной дождь',
+        'heavy freezing rain': 'сильный ледяной дождь',
+        'slight snow': 'небольшой снег',
+        snow: 'снег',
+        'heavy snow': 'сильный снег',
+        'snow grains': 'снежная крупа',
+        'slight rain showers': 'небольшой ливень',
+        'rain showers': 'ливень',
+        'violent rain showers': 'сильный ливень',
+        'snow showers': 'снегопад',
+        'heavy snow showers': 'сильный снегопад',
+        thunderstorm: 'гроза',
+        'thunderstorm with slight hail': 'гроза с небольшим градом',
+        'thunderstorm with heavy hail': 'гроза с сильным градом',
+    },
+};
+
+/** Russian noun form after a number: 1 градус, 2 градуса, 5 градусов. */
+function ruPlural(n: number, one: string, few: string, many: string): string {
+    const a = Math.abs(n) % 100;
+    const b = a % 10;
+    if (a > 10 && a < 20) {
+        return many;
+    }
+    return b === 1 ? one : b >= 2 && b <= 4 ? few : many;
+}
+
+/** Wording of {@link buildWeatherAnswer}. */
+const ANSWER_TEXT: Record<
+    string,
+    {
+        degrees: (n: number) => string;
+        percent: (n: number) => string;
+        now: (temp: string) => string;
+        feels: (temp: string) => string;
+        range: (min: number, max: number) => string;
+        chance: (p: string) => string;
+        day: Record<'today' | 'tomorrow' | 'dayAfter', string>;
+    }
+> = {
+    en: {
+        degrees: n => `${n} ${Math.abs(n) === 1 ? 'degree' : 'degrees'}`,
+        percent: n => `${n} percent`,
+        now: temp => `It is ${temp} outside`,
+        feels: temp => `feels like ${temp}`,
+        range: (min, max) => `${min} to ${max} degrees`,
+        chance: p => `${p} chance of rain`,
+        day: { today: 'Today', tomorrow: 'Tomorrow', dayAfter: 'The day after tomorrow' },
+    },
+    de: {
+        degrees: n => `${n} Grad`,
+        percent: n => `${n} Prozent`,
+        now: temp => `Draußen sind es ${temp}`,
+        feels: temp => `gefühlt ${temp}`,
+        range: (min, max) => `${min} bis ${max} Grad`,
+        chance: p => `Regenwahrscheinlichkeit ${p}`,
+        day: { today: 'Heute', tomorrow: 'Morgen', dayAfter: 'Übermorgen' },
+    },
+    ru: {
+        degrees: n => `${n} ${ruPlural(n, 'градус', 'градуса', 'градусов')}`,
+        percent: n => `${n} ${ruPlural(n, 'процент', 'процента', 'процентов')}`,
+        now: temp => `Сейчас на улице ${temp}`,
+        feels: temp => `ощущается как ${temp}`,
+        range: (min, max) => `от ${min} до ${max} ${ruPlural(max, 'градуса', 'градусов', 'градусов')}`,
+        chance: p => `вероятность осадков ${p}`,
+        day: { today: 'Сегодня', tomorrow: 'Завтра', dayAfter: 'Послезавтра' },
+    },
+};
+
+/** A condition text in the answer language: WMO texts are translated, adapter texts are kept as they come. */
+function localCondition(condition: string, lang: string): string {
+    const text = String(condition).trim();
+    return WMO_LOCAL[lang]?.[text.toLowerCase()] || text;
+}
+
+/**
+ * The spoken answer to a weather question, straight from the report — no LLM. `now` gives the current
+ * conditions plus today's range; `today`/`tomorrow`/`dayAfter` give that forecast day. Returns '' when the
+ * report has nothing for the asked day, so the caller can hand the question on.
+ */
+export function buildWeatherAnswer(
+    report: WeatherReport,
+    lang: string,
+    when: 'now' | 'today' | 'tomorrow' | 'dayAfter' = 'now',
+): string {
+    const t = ANSWER_TEXT[lang] || ANSWER_TEXT.en;
+    const r = Math.round;
+    const sentences: string[] = [];
+    const c = report.current;
+    if (when === 'now' && c && (c.temperature !== undefined || c.condition)) {
+        const parts: string[] = [];
+        if (c.temperature !== undefined) {
+            parts.push(t.now(t.degrees(r(c.temperature))));
+            // Only worth a word when it differs noticeably (wind chill, humid heat).
+            if (c.feelsLike !== undefined && Math.abs(c.feelsLike - c.temperature) >= 3) {
+                parts.push(t.feels(t.degrees(r(c.feelsLike))));
+            }
+        }
+        if (c.condition) {
+            parts.push(localCondition(c.condition, lang));
+        }
+        sentences.push(`${parts.join(', ')}.`);
+    }
+    const dayIndex = when === 'tomorrow' ? 1 : when === 'dayAfter' ? 2 : 0;
+    const d = report.forecast.find(f => f.day === dayIndex);
+    let dayParts = 0;
+    if (d) {
+        const parts: string[] = [];
+        if (d.tempMin !== undefined && d.tempMax !== undefined) {
+            parts.push(t.range(r(d.tempMin), r(d.tempMax)));
+        } else if (d.tempMax !== undefined) {
+            parts.push(t.degrees(r(d.tempMax)));
+        }
+        if (d.condition) {
+            parts.push(localCondition(d.condition, lang));
+        }
+        if (d.precipProbability !== undefined) {
+            parts.push(t.chance(t.percent(r(d.precipProbability))));
+        }
+        if (parts.length) {
+            dayParts = parts.length;
+            sentences.push(`${t.day[when === 'now' ? 'today' : when]} ${parts.join(', ')}.`);
+        }
+    }
+    // A forecast day without data cannot be answered from the current conditions.
+    if (when !== 'now' && !dayParts) {
+        return '';
+    }
+    return sentences.join(' ');
+}

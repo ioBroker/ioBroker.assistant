@@ -19,6 +19,27 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Sprachpfad schneller (Issue #3, znyde87)** — sechs Teile, Assistant + Satelliten-Lib + Wrapper:
+  (1) **NLU-Gerätemodell gecacht** (`main.ts.getNluDevices` → `nluDevices`, TTL `NLU_DEVICES_TTL_MS`=60 s,
+  gleichzeitige Anfragen teilen sich den Build, leeres Ergebnis wird nicht gehalten). Vorher pro Sprachbefehl
+  bis zu 3× `list_devices` + Namensauflösung je Gerät (STT-Hints, NLU, Cloud-Geräteliste) — der `ListCache`
+  galt nur für die LLM-Tools. Invalidiert über `ListCache.onClear` (alle bisherigen `clear()`-Stellen).
+  (2) **Rückfrage-Flag pro Quelle** (`followUps`-Map + `wantsFollowUp`/`followUpFor`) statt des geteilten
+  `lastFollowUp`; ESPHome bekommt jetzt auch das `[[LISTEN]]`-Signal, **UDP** schickt `tts_end.listen`
+  (im `tts_end`, damit nichts das Audio überholt) und hält `listening` mit Timer (`LISTEN_WINDOW_MS`).
+  (3) **Lib `C:\iot\assistant-satellite`**: UDP-`Satellite` kennt `listen`/`tts_end.listen` (Follow-up-Fenster
+  wie `LocalListener`, ohne Stille an STT zu streamen, `maxFollowUps`, Ansagen zählen nicht als Antwort) und
+  `volume` (absolut/relativ, Software-Gain quadratisch, meldet `{type:'volume',level}` zurück; Host-Hooks
+  `onVolume`/`mixerVolume`, `setVolume()`). **Noch nicht veröffentlicht** — Wrapper braucht Lib 0.2.0.
+  (4) **Lokales LLM = Fallback**, wenn ein Cloud-Provider da ist (`localLlmFirst` stellt es wieder davor);
+  `localLlmTimeoutSec` (Default 15) bricht per `AbortSignal` ab, `threads` = Kerne−1, max. 256 Tokens,
+  parallele Fragen → `HANDOFF` statt Warten. (5) NLU-Intent **`volumeSet`** („lauter/leiser/Lautstärke 5",
+  1–10 = Zehnerschritte) → Satellit der Anfrage bzw. des Raums: nativ `<instanz>.volume`, ESPHome
+  Media-Player, UDP `volume`-Nachricht + State `satellites.<id>.volume`. (6) NLU-Intent **`weatherQuery`**
+  (nur bei `weatherInstance`; heute/morgen/übermorgen; andere Orte/Wochentage → LLM) →
+  `weather.ts.buildWeatherAnswer` (de/en/ru, WMO-Texte übersetzt). Nebenbei gefixt: `ALARM_RE` matchte
+  `буд…` → „будет" war eine Wecker-Abfrage. Nicht übernommen aus dem Issue: Persona, `everyday.js`,
+  gelernte Skills, Vosk-Reparatur (eigenes Design nötig).
 - **YouTube auf dem Fernseher** — `src/lib/youtube.ts` + `main.ts` (`playYouTube`, `buildYouTubeTools`).
   Abspielen über den Adapter **`youtube-remote`** (`C:\pWork\ioBroker.youtube-remote`, Lounge-API): dessen
   State `<gerät>.youtube` nimmt Video-ID/`PL…`/`UC…` (= Uploads des Kanals)/URL und **ackt erst, wenn der TV

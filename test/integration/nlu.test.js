@@ -635,3 +635,90 @@ test('category queries work in English and Russian too', () => {
     assert.equal(ru?.action, 'categoryQuery');
     assert.equal(ru?.category, 'temperature');
 });
+
+// ── Weather questions without an LLM ────────────────────────────────────────────
+
+const tv = {
+    name: 'Fernseher',
+    room: 'Wohnzimmer',
+    type: 'media',
+    controls: { volume: 'x.v' },
+    writable: { volume: true },
+    types: { volume: 'number' },
+};
+const wxNlu = new Nlu(['Wohnzimmer', 'Schlafzimmer'], [light, temp, tempSz, tv], [], { weather: true });
+
+test('weather: the day decides which part of the report is read', () => {
+    const when = text => {
+        const i = wxNlu.parse(text);
+        return i?.action === 'weatherQuery' ? i.when : i?.action || null;
+    };
+    assert.equal(when('Wie ist das Wetter?'), 'now');
+    assert.equal(when('Wie wird das Wetter morgen?'), 'tomorrow');
+    assert.equal(when('Wie wird das Wetter heute Morgen?'), 'today', '"heute Morgen" is this morning');
+    assert.equal(when('Guten Morgen, wie ist das Wetter?'), 'now', 'a greeting is no day');
+    assert.equal(when('Wetter übermorgen'), 'dayAfter');
+    assert.equal(when('Regnet es morgen?'), 'tomorrow');
+    assert.equal(when('Wie warm wird es morgen?'), 'tomorrow', 'a temperature question with a day is the forecast');
+    assert.equal(when("What's the weather like tomorrow?"), 'tomorrow');
+    assert.equal(when('What is the weather the day after tomorrow?'), 'dayAfter');
+    assert.equal(when('Какая погода завтра?'), 'tomorrow');
+    assert.equal(when('Будет ли дождь послезавтра?'), 'dayAfter');
+});
+
+test('weather: house sensors, other places and later days keep their own paths', () => {
+    assert.equal(wxNlu.parse('Wie warm ist es?').action, 'categoryQuery', 'no day → the house sensors');
+    assert.equal(wxNlu.parse('Wie ist das Wetter in Berlin?'), null, 'another place → LLM');
+    assert.equal(wxNlu.parse('Wie wird das Wetter am Wochenende?'), null, 'later days → LLM');
+    assert.equal(wxNlu.parse('Wie wird das Wetter am Freitag?'), null);
+    assert.equal(wxNlu.parse('Какая погода в Москве?'), null);
+    assert.equal(wxNlu.parse('Wie ist die Regelung?'), null, '"Regen" is matched as a whole word only');
+    // Without a weather source there is nothing to read.
+    assert.equal(new Nlu([], [light]).parse('Wie wird das Wetter morgen?'), null);
+});
+
+// ── Satellite volume ────────────────────────────────────────────────────────────
+
+test('volume: absolute levels on a 1–10 scale or in percent', () => {
+    const v = text => {
+        const i = wxNlu.parse(text);
+        return i?.action === 'volumeSet' ? { value: i.value, delta: i.delta, room: i.room } : i?.action || null;
+    };
+    assert.deepEqual(v('Lautstärke 5'), { value: 50, delta: undefined, room: undefined });
+    assert.deepEqual(v('Lautstärke auf fünf'), { value: 50, delta: undefined, room: undefined }, 'number word (Vosk)');
+    assert.deepEqual(v('Lautstärke auf 35 Prozent'), { value: 35, delta: undefined, room: undefined });
+    assert.deepEqual(
+        v('Lautstärke 3 Prozent'),
+        { value: 3, delta: undefined, room: undefined },
+        'percent stays percent',
+    );
+    assert.deepEqual(v('Lautstärke auf Maximum'), { value: 100, delta: undefined, room: undefined });
+    assert.deepEqual(v('Lautstärke im Schlafzimmer auf 2'), { value: 20, delta: undefined, room: 'Schlafzimmer' });
+    assert.deepEqual(v('volume 7'), { value: 70, delta: undefined, room: undefined });
+    assert.deepEqual(v('громкость на 4'), { value: 40, delta: undefined, room: undefined });
+    assert.equal(v('Wie ist die Lautstärke?'), null, 'a question is no command');
+});
+
+test('volume: louder / quieter are relative steps', () => {
+    const delta = text => wxNlu.parse(text)?.delta;
+    assert.equal(delta('lauter'), 10);
+    assert.equal(delta('Mach leiser'), -10);
+    assert.equal(delta('ein bisschen lauter'), 10, '"ein" is no step count');
+    assert.equal(delta('um 3 lauter'), 30);
+    assert.equal(delta('louder'), 10);
+    assert.equal(delta('потише'), -10);
+});
+
+test('volume: a named device wins over the satellite', () => {
+    // The device path has no "louder" of its own, so this goes on to the LLM — but never to the satellite.
+    assert.equal(wxNlu.parse('Fernseher lauter'), null);
+});
+
+test('volume and a device command in one sentence', () => {
+    const intents = wxNlu.parseAll('Schalte das Licht an und mach leiser');
+    assert.deepEqual(
+        intents.map(i => i.action),
+        ['on', 'volumeSet'],
+    );
+    assert.equal(intents[1].delta, -10);
+});

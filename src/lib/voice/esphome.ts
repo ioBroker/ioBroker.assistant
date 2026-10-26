@@ -136,7 +136,7 @@ export interface EsphomeSatellitesOptions {
     /** Notified whenever one of those entities changes (and once per entity right after connecting). */
     onEntityState?: (device: string, room: string, entity: EsphomeEntity) => void;
     /** True when the reply asks something back, so the device should re-open its mic without a wake word. */
-    expectsFollowUp?: (answer: string) => boolean;
+    expectsFollowUp?: (answer: string, device: string) => boolean;
 }
 
 /** What a device reports about its wake words. Which ones exist is fixed by the firmware. */
@@ -759,7 +759,7 @@ class EsphomeConnection {
                     sttMs,
                 })
             ).trim();
-            const followUp = !!answer && this.opts.expectsFollowUp?.(answer) === true;
+            const followUp = !!answer && this.opts.expectsFollowUp?.(answer, this.deviceName) === true;
             this.event(EVENT.INTENT_END, followUp ? { continue_conversation: '1' } : undefined);
 
             if (!answer) {

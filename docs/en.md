@@ -50,6 +50,10 @@ Every request runs through up to three tiers, stopping at the first that can ans
    locally*.
 2. **Local LLM (optional)** — a small model (via `node-llama-cpp`) installed on demand, for general
    questions. It escalates to the cloud when it needs live device data. Toggle: *Use a local LLM*.
+   With a cloud provider it is the **fallback**: it answers when the cloud fails (offline, quota, outage).
+   *Ask the local model first* puts it before the cloud instead — that saves cloud calls, but on a
+   Raspberry Pi a small model needs 10–25 seconds per question, often only to hand it on. It is stopped
+   after *Local model timeout* and leaves one CPU core free for ioBroker.
 3. **Cloud LLM (tool-calling)** — the full assistant. It gets a compact list of your devices in its prompt
    and calls tools (read states, set states, history, logs …) over the native ioBroker API.
 
@@ -239,6 +243,12 @@ cloud call:
   "everywhere" removes the filter again. For air quality the number also gets a word ("good", "moderate"),
   because an IAQ of 85 means nothing read out loud.
 - **Timers, alarms, time and date** — see §11.
+- **Weather** — "how's the weather?", "will it rain tomorrow?", "how warm will it be the day after
+  tomorrow?", read straight from the configured weather adapter. Other places ("weather in Berlin") and
+  later days ("at the weekend") go to the LLM and its weather tool.
+- **Volume of the speaker you are talking to** — "louder", "quieter", "volume 5" (a 1–10 scale),
+  "volume 40 percent", "volume in the bedroom to 3". A named device wins here too: "TV louder" is about
+  the TV.
 
 Two rules decide what wins: a **named device** beats a category ("how warm is the radiator" is about that
 thermostat), and a **routine** beats everything (see above). Anything the engine cannot resolve falls
@@ -530,6 +540,13 @@ ALSA mixer and therefore apply to answers, announcements and the beep alike:
 - **`assistant-satellite.<n>.mute`** — silence the speaker.
 - **`assistant-satellite.<n>.dnd`** — the satellite's own Do-Not-Disturb.
 
+**By voice:** "louder", "quieter", "volume 5" or "volume 40 percent" change the speaker that heard it; with
+a room name ("volume in the bedroom to 3") the one in that room. This works on all three kinds of satellite:
+an ESPHome device through its media player, an ioBroker-native one through the states above, and a UDP
+satellite through the protocol — it then also gets **`assistant.0.satellites.<id>.volume`** (0–100 %,
+writable). A UDP satellite without a mixer the satellite library can drive makes its playback quieter in
+software.
+
 **Priority announcements:** if the announcement text starts with **`!`**, the `!` is stripped and the
 announcement plays **even when Do-Not-Disturb is on** — e.g. `!Water leak in the basement`.
 
@@ -599,7 +616,13 @@ older one for the same satellite, and the timeout always releases it.
 
 **Microphone support:** ESPHome satellites open the mic by themselves (the question is sent with
 `start_conversation`). ioBroker-native and UDP satellites are told to listen; whether they can depends on
-their firmware — if not, the answer still works, it just needs the wake word first.
+their firmware — if not, the answer still works, it just needs the wake word first. `@iobroker/assistant-satellite`
+from version 0.2.0 does it for UDP too.
+
+The same goes for the assistant's own questions: when an answer asks back ("Do you mean the office or the
+living room?" — or the cloud model marks it as a question), the satellite keeps its mic open after playing
+it, so you can answer without the wake word. A few turns in a row at most, then the wake word is needed
+again.
 
 ---
 

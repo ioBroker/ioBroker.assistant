@@ -47,6 +47,15 @@ test('ListCache serves within the TTL and refreshes after clear/expiry', async (
     assert.equal(await cache.run('k', produce), 'v3');
 });
 
+test('ListCache.onClear lets a cache built on the listings drop its copy too', () => {
+    const cache = new ListCache();
+    let cleared = 0;
+    cache.onClear = () => cleared++;
+    cache.clear();
+    cache.clear();
+    assert.equal(cleared, 2);
+});
+
 // ── Enforcement via a fake in-process MCP ───────────────────────────────────
 const LIST_DEVICES = JSON.stringify({
     ok: true,

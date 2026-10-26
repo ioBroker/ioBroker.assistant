@@ -27,6 +27,8 @@ interface Satellite {
     lastSeen: number;
     /** Buffered audio chunks of the utterance currently being spoken. */
     chunks: Buffer[];
+    /** Puts the satellite back to `idle` once a mic-on window passed unanswered. */
+    listenTimer?: NodeJS.Timeout;
 }
 
 export interface VoiceServerOptions {
@@ -44,12 +46,21 @@ export interface VoiceServerOptions {
     log: ioBroker.Logger;
     /** Notified on every satellite state transition (idle/listening/processing/speaking/offline). */
     onStatus?: (device: string, room: string, state: SatelliteState | 'offline') => void;
+    /** True when the reply asks something back, so the satellite should re-open its mic without a wake word. */
+    expectsFollowUp?: (answer: string, device: string) => boolean;
+    /** The playback volume (0–100) a satellite reported, after a `volume` command or a local change. */
+    onVolume?: (device: string, room: string, level: number) => void;
 }
 
 /** Payload bytes per TTS datagram — well under the typical MTU-fragmentation-free UDP size. */
 const TTS_CHUNK_BYTES = 8192;
 /** Drop a satellite after this long without any packet (3× the satellite's 10 s heartbeat). */
 const STALE_MS = 30_000;
+/**
+ * How long a satellite stays `listening` after a mic-on once its playback is over. A little longer than the
+ * satellite's own follow-up window (6 s by default), which we cannot see from here.
+ */
+const LISTEN_WINDOW_MS = 10_000;
 
 export class VoiceServer {
     private sock: dgram.Socket | null = null;
@@ -89,6 +100,7 @@ export class VoiceServer {
         }
         const sock = this.sock;
         this.sock = null;
+        this.sats.forEach(sat => this.clearListenTimer(sat));
         this.sats.clear();
         if (sock) {
             await new Promise<void>(res => sock.close(() => res()));
@@ -108,6 +120,8 @@ export class VoiceServer {
             const sat = this.sats.get(VoiceServer.addrKey(rinfo.address, rinfo.port));
             if (sat) {
                 sat.lastSeen = Date.now();
+                // The user answered within the mic-on window — don't let the timer flip the LED to idle.
+                this.clearListenTimer(sat);
                 sat.chunks.push(Buffer.from(payload)); // copy: payload is a view onto a reused recv buffer
             }
             return;
@@ -135,6 +149,10 @@ export class VoiceServer {
                 lastSeen: Date.now(),
                 chunks: [],
             };
+            const previous = this.sats.get(key);
+            if (previous) {
+                this.clearListenTimer(previous);
+            }
             this.sats.set(key, sat);
             void this.send(encodeControl({ type: 'registered', ok: true }), sat);
             this.opts.log.info(`Satellite registered: ${sat.device} (room: ${sat.room || '-'}) @ ${key}`);
@@ -156,6 +174,13 @@ export class VoiceServer {
         }
         if (msg.type === 'audio_end') {
             await this.handleUtterance(sat);
+            return;
+        }
+        if (msg.type === 'volume') {
+            const level = Math.round(Number(msg.level));
+            if (Number.isFinite(level)) {
+                this.opts.onVolume?.(sat.device, sat.room, Math.min(100, Math.max(0, level)));
+            }
         }
     }
 
@@ -169,6 +194,8 @@ export class VoiceServer {
         }
 
         this.setStatus(sat, 'processing');
+        let listen = false;
+        let playMs = 0;
         try {
             const hints = this.opts.getHints ? await this.opts.getHints() : undefined;
             const sttStart = Date.now();
@@ -189,15 +216,26 @@ export class VoiceServer {
 
             this.setStatus(sat, 'speaking');
             const { pcm: ttsPcm, sampleRate } = await this.opts.tts.synthesize(answer, this.opts.language);
-            await this.streamTts(sat, ttsPcm, sampleRate);
+            listen = this.opts.expectsFollowUp?.(answer, sat.device) === true;
+            await this.streamTts(sat, ttsPcm, sampleRate, listen);
+            playMs = (ttsPcm.length / 2 / sampleRate) * 1000;
         } catch (e) {
             this.opts.log.error(`Voice pipeline failed (${sat.device}): ${(e as Error).message}`);
+            listen = false;
         } finally {
-            this.setStatus(sat, 'idle');
+            if (listen) {
+                this.markListening(sat, playMs);
+            } else {
+                this.setStatus(sat, 'idle');
+            }
         }
     }
 
-    private async streamTts(sat: Satellite, pcm: Buffer, sampleRate: number): Promise<void> {
+    /**
+     * Stream one reply. `listen` travels inside `tts_end` rather than as a message of its own: the satellite
+     * then knows before playback starts that it has to open the mic afterwards, and nothing can overtake it.
+     */
+    private async streamTts(sat: Satellite, pcm: Buffer, sampleRate: number, listen = false): Promise<void> {
         for (let off = 0, i = 0; off < pcm.length; off += TTS_CHUNK_BYTES, i++) {
             await this.send(encodeTts(pcm.subarray(off, off + TTS_CHUNK_BYTES)), sat);
             // Yield every 16 packets so a long reply doesn't burst the OS send buffer / the satellite's recv.
@@ -205,7 +243,14 @@ export class VoiceServer {
                 await new Promise<void>(res => setImmediate(res));
             }
         }
-        await this.send(encodeControl({ type: 'tts_end', sample_rate: sampleRate }), sat);
+        await this.send(
+            encodeControl(
+                listen
+                    ? { type: 'tts_end', sample_rate: sampleRate, listen }
+                    : { type: 'tts_end', sample_rate: sampleRate },
+            ),
+            sat,
+        );
     }
 
     /**
@@ -238,13 +283,52 @@ export class VoiceServer {
      * question the assistant just asked without saying the wake word again. Returns how many satellites
      * were told to listen — whether they can is up to their firmware (the message is additive).
      */
-    listen(device: string | null): number {
+    listen(device: string | null, playMs = 0): number {
         const targets = [...this.sats.values()].filter(s => !device || s.device === device);
         for (const sat of targets) {
             void this.send(encodeControl({ type: 'listen' }), sat);
-            this.setStatus(sat, 'listening');
+            this.markListening(sat, playMs);
         }
         return targets.length;
+    }
+
+    /**
+     * Change the playback volume of one satellite: absolute (`level`, 0–100) or relative (`delta`). The
+     * satellite answers with the level it ended up at (→ `onVolume`); one built before this message
+     * existed ignores it. Returns false when the device is not registered.
+     */
+    volume(device: string, change: { level?: number; delta?: number }): boolean {
+        const sat = [...this.sats.values()].find(s => s.device === device);
+        if (!sat) {
+            return false;
+        }
+        const msg =
+            change.level !== undefined
+                ? { type: 'volume' as const, level: Math.min(100, Math.max(0, Math.round(change.level))) }
+                : { type: 'volume' as const, delta: Math.round(change.delta || 0) };
+        void this.send(encodeControl(msg), sat);
+        return true;
+    }
+
+    /** Whether a satellite with this device name is registered. */
+    has(device: string): boolean {
+        return [...this.sats.values()].some(s => s.device === device);
+    }
+
+    /** Show `listening` while the satellite waits for an answer, and fall back to `idle` if none comes. */
+    private markListening(sat: Satellite, playMs: number): void {
+        this.setStatus(sat, 'listening');
+        sat.listenTimer = setTimeout(() => {
+            sat.listenTimer = undefined;
+            this.setStatus(sat, 'idle');
+        }, playMs + LISTEN_WINDOW_MS);
+    }
+
+    private clearListenTimer(sat: Satellite): void {
+        if (sat.listenTimer) {
+            clearTimeout(sat.listenTimer);
+            sat.listenTimer = undefined;
+        }
     }
 
     /** Device names of the currently registered satellites. */
@@ -253,6 +337,7 @@ export class VoiceServer {
     }
 
     private setStatus(sat: Satellite, state: SatelliteState): void {
+        this.clearListenTimer(sat);
         void this.send(encodeControl({ type: 'status', state }), sat);
         this.opts.onStatus?.(sat.device, sat.room, state);
     }
@@ -272,6 +357,7 @@ export class VoiceServer {
         const now = Date.now();
         for (const [key, sat] of this.sats) {
             if (now - sat.lastSeen > STALE_MS) {
+                this.clearListenTimer(sat);
                 this.sats.delete(key);
                 this.opts.log.info(`Satellite offline (timeout): ${sat.device}`);
                 this.opts.onStatus?.(sat.device, sat.room, 'offline');

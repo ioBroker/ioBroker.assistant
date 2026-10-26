@@ -51,7 +51,11 @@ Jede Anfrage läuft durch bis zu drei Stufen und stoppt bei der ersten, die antw
    *Einfache Befehle lokal beantworten*.
 2. **Lokales LLM (optional)** — ein kleines Modell (über `node-llama-cpp`), bei Bedarf installiert, für
    allgemeine Fragen. Es eskaliert an die Cloud, wenn es aktuelle Gerätedaten braucht. Schalter: *Lokales
-   LLM verwenden*.
+   LLM verwenden*. Mit einem Cloud-Anbieter ist es der **Fallback**: es antwortet, wenn die Cloud ausfällt
+   (offline, Kontingent, Störung). *Zuerst das lokale Modell fragen* stellt es stattdessen vor die Cloud —
+   das spart Cloud-Aufrufe, aber auf einem Raspberry Pi braucht ein kleines Modell 10–25 Sekunden pro
+   Frage, oft nur, um sie dann weiterzugeben. Nach dem *Zeitlimit lokales Modell* wird es abgebrochen, und
+   es lässt ioBroker einen CPU-Kern frei.
 3. **Cloud-LLM (Tool-Calling)** — der volle Assistent. Er bekommt eine kompakte Geräteliste im Prompt und
    ruft Tools auf (States lesen/schreiben, Historie, Logs …) über die native ioBroker-API.
 
@@ -249,6 +253,12 @@ Cloud-Aufruf kosten:
   sie, „überall" hebt den Filter wieder auf. Bei der Luftqualität bekommt die Zahl zusätzlich ein Wort
   („gut", „mäßig") — ein IAQ von 85 sagt vorgelesen niemandem etwas.
 - **Timer, Wecker, Zeit und Datum** — siehe §11.
+- **Wetter** — „wie ist das Wetter?", „regnet es morgen?", „wie warm wird es übermorgen?", direkt aus dem
+  eingestellten Wetter-Adapter vorgelesen. Andere Orte („Wetter in Berlin") und spätere Tage („am
+  Wochenende") gehen ans LLM und sein Wetter-Tool.
+- **Lautstärke des Lautsprechers, mit dem du sprichst** — „lauter", „leiser", „Lautstärke 5" (Skala 1–10),
+  „Lautstärke 40 Prozent", „Lautstärke im Schlafzimmer auf 3". Auch hier gewinnt ein genanntes Gerät:
+  „Fernseher lauter" betrifft den Fernseher.
 
 Zwei Regeln entscheiden, was gewinnt: ein **genannter Gerätename** schlägt die Kategorie („wie warm ist
 die Heizung" ist über dieses Thermostat), und eine **Routine** schlägt alles (siehe oben). Was die Engine
@@ -545,6 +555,13 @@ ALSA-Mixer des Lautsprechers und gelten damit für Antworten, Durchsagen und den
 - **`assistant-satellite.<n>.mute`** — Lautsprecher stummschalten.
 - **`assistant-satellite.<n>.dnd`** — das „Nicht stören" des Satelliten selbst.
 
+**Per Sprache:** „lauter", „leiser", „Lautstärke 5" oder „Lautstärke 40 Prozent" ändern den Lautsprecher,
+der es gehört hat; mit Raumnamen („Lautstärke im Schlafzimmer auf 3") den in diesem Raum. Das geht bei allen
+drei Arten von Satelliten: ein ESPHome-Gerät über seinen Media-Player, ein ioBroker-nativer über die States
+oben, ein UDP-Satellit über das Protokoll — er bekommt dann zusätzlich
+**`assistant.0.satellites.<id>.volume`** (0–100 %, beschreibbar). Hat ein UDP-Satellit keinen Mixer, den die
+Satelliten-Bibliothek steuern kann, macht er seine Wiedergabe in Software leiser.
+
 **Priority-Durchsagen:** beginnt der Durchsage-Text mit **`!`**, wird das `!` entfernt und die Durchsage
 läuft **auch bei „Nicht stören"** — z. B. `!Wasserleck im Keller`.
 
@@ -616,7 +633,12 @@ eine ältere für denselben Satelliten, und der Timeout gibt ihn in jedem Fall w
 **Mikrofon-Unterstützung:** ESPHome-Satelliten öffnen das Mikrofon selbst (die Frage wird mit
 `start_conversation` gesendet). ioBroker-native und UDP-Satelliten bekommen die Aufforderung zuzuhören;
 ob sie das können, hängt an ihrer Firmware — wenn nicht, funktioniert die Antwort trotzdem, braucht aber
-vorher das Wake-Word.
+vorher das Wake-Word. `@iobroker/assistant-satellite` kann es ab Version 0.2.0 auch über UDP.
+
+Dasselbe gilt für die Rückfragen des Assistenten selbst: Fragt eine Antwort zurück („Meinst du Büro oder
+Wohnzimmer?" — oder markiert das Cloud-Modell sie als Frage), lässt der Satellit nach dem Abspielen das
+Mikrofon offen, und du antwortest ohne Wake-Word. Höchstens ein paar Runden hintereinander, dann braucht es
+wieder das Wake-Word.
 
 ---
 

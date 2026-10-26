@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import * as os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
@@ -97,6 +98,8 @@ export class LocalLlm {
     private session: any = null;
     private model: any = null;
     private context: any = null;
+    /** A prompt is running — the session takes one at a time. */
+    private busy = false;
 
     constructor(private readonly opts: LocalLlmOptions) {}
 
@@ -144,7 +147,10 @@ export class LocalLlm {
 
         const llama = await getLlama();
         this.model = await llama.loadModel({ modelPath });
-        this.context = await this.model.createContext();
+        // Leave one core to js-controller and the other adapters: llama.cpp takes all of them otherwise, and on
+        // a Raspberry Pi the whole host — the voice server included — stalls for the length of an answer.
+        const cores = typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length;
+        this.context = await this.model.createContext({ threads: Math.max(1, cores - 1) });
         this.session = new LlamaChatSession({
             contextSequence: this.context.getSequence(),
             systemPrompt: this.systemPrompt(),
@@ -152,19 +158,44 @@ export class LocalLlm {
         this.opts.log.info('Local model loaded.');
     }
 
-    /** Ask the local model. Returns its answer, or {@link HANDOFF} to escalate to the cloud LLM. */
-    async ask(question: string): Promise<string> {
-        if (!this.session) {
+    /**
+     * Ask the local model. Returns its answer, or {@link HANDOFF} to escalate to the cloud LLM — also when
+     * another question is still being answered (waiting for it would only add its run time to this one).
+     * With `timeoutMs` the generation is aborted after that long and the call throws.
+     */
+    async ask(question: string, timeoutMs = 0): Promise<string> {
+        if (!this.session || this.busy) {
             return HANDOFF;
         }
-        // Reset per-question so prompts stay independent (best-effort across node-llama-cpp versions).
+        this.busy = true;
+        const abort = new AbortController();
+        const timer = timeoutMs > 0 ? setTimeout(() => abort.abort(), timeoutMs) : null;
         try {
-            this.session.setChatHistory?.([]);
-        } catch {
-            /* ignore */
+            // Reset per-question so prompts stay independent (best-effort across node-llama-cpp versions).
+            try {
+                this.session.setChatHistory?.([]);
+            } catch {
+                /* ignore */
+            }
+            const answer: string = await this.session.prompt(question, {
+                maxTokens: this.opts.maxTokens || 256,
+                signal: abort.signal,
+            });
+            if (abort.signal.aborted) {
+                throw new Error('aborted');
+            }
+            return (answer || '').trim();
+        } catch (e) {
+            if (abort.signal.aborted) {
+                throw new Error(`timed out after ${Math.round(timeoutMs / 1000)} s`);
+            }
+            throw e;
+        } finally {
+            if (timer) {
+                clearTimeout(timer);
+            }
+            this.busy = false;
         }
-        const answer: string = await this.session.prompt(question, { maxTokens: this.opts.maxTokens || 512 });
-        return (answer || '').trim();
     }
 
     async dispose(): Promise<void> {

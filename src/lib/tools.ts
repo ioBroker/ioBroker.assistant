@@ -126,8 +126,12 @@ export class ListCache {
         return val;
     }
 
+    /** Called after every {@link clear}, so caches built on top of these listings can drop theirs too. */
+    onClear: (() => void) | null = null;
+
     clear(): void {
         this.store.clear();
+        this.onClear?.();
     }
 }
 
