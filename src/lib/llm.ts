@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import type { Tool } from './tools';
+import { errorInfo, type JournalTokens, type TraceFn } from './journal';
 
 /** All selectable LLM providers. gemini/deepseek/custom all use the OpenAI-compatible SDK path. */
 export type Provider = 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'custom';
@@ -58,6 +59,33 @@ export interface LlmAgentOptions {
     maxTokens?: number;
     tools: Tool[];
     log: ioBroker.Logger;
+    /** Records the prompt and every round of {@link LlmAgent.ask} (the request journal's debug view). */
+    trace?: TraceFn;
+}
+
+/** Normalised token counts of an OpenAI-compatible or Anthropic `usage` block. */
+function tokensOf(usage: any): JournalTokens | undefined {
+    if (!usage || typeof usage !== 'object') {
+        return undefined;
+    }
+    if (usage.input_tokens !== undefined) {
+        return {
+            input: Number(usage.input_tokens) || 0,
+            output: Number(usage.output_tokens) || 0,
+            cacheRead: Number(usage.cache_read_input_tokens) || undefined,
+            cacheWrite: Number(usage.cache_creation_input_tokens) || undefined,
+        };
+    }
+    return {
+        input: Number(usage.prompt_tokens) || 0,
+        output: Number(usage.completion_tokens) || 0,
+        cacheRead: Number(usage.prompt_tokens_details?.cached_tokens) || undefined,
+    };
+}
+
+/** "Round 2 → get_states, set_state" or "Round 3 → answer" — the title of a round in the trace. */
+function roundTitle(round: number, toolNames: string[]): string {
+    return `Round ${round + 1} → ${toolNames.length ? toolNames.join(', ') : 'answer'}`;
 }
 
 /**
@@ -82,12 +110,19 @@ export class LlmAgent {
     private readonly toolMap: Record<string, Tool>;
     private readonly log: ioBroker.Logger;
     private readonly maxRounds = 6; // safety cap against tool-call loops
+    /** Configured provider (gemini, deepseek, custom … — {@link provider} is only the SDK). */
+    private readonly providerName: string;
+    private readonly baseUrl: string;
+    private readonly trace?: TraceFn;
 
     private readonly openai?: OpenAI;
     private readonly anthropic?: Anthropic;
 
     constructor(opts: LlmAgentOptions) {
         this.provider = opts.provider === 'anthropic' ? 'anthropic' : 'openai';
+        this.providerName = opts.provider || this.provider;
+        this.baseUrl = opts.baseUrl || '';
+        this.trace = opts.trace;
         this.configuredModel = (opts.model || '').trim();
         this.systemPrompt = opts.systemPrompt || '';
         this.maxTokens = opts.maxTokens || 1024;
@@ -153,6 +188,20 @@ export class LlmAgent {
         this.log.debug(`llm ask [${this.provider}/${this.model}] (${history.length} history): ${question}`);
         const started = Date.now();
         const sys = systemPrompt ?? this.systemPrompt;
+        this.trace?.({
+            stage: 'cloud',
+            title: `${this.providerName} · ${this.model}: ${this.tools.length} tools, ${history.length} earlier turn(s)`,
+            data: {
+                provider: this.providerName,
+                sdk: this.provider,
+                model: this.model,
+                baseUrl: this.baseUrl || undefined,
+                maxTokens: this.maxTokens,
+                maxRounds: this.maxRounds,
+                system: sys,
+                tools: this.tools.map(t => t.name),
+            },
+        });
         const answer =
             this.provider === 'anthropic'
                 ? await this.askAnthropic(question, sys, history)
@@ -337,6 +386,35 @@ export class LlmAgent {
             .sort();
     }
 
+    /**
+     * One model request of the tool loop, timed. A failure goes into the trace together with what was sent
+     * (status, API error body, stack) before it is rethrown.
+     */
+    private async timedRound(
+        round: number,
+        sent: unknown[],
+        call: () => Promise<any>,
+    ): Promise<{ resp: any; ms: number }> {
+        const start = Date.now();
+        try {
+            return { resp: await call(), ms: Date.now() - start };
+        } catch (e) {
+            this.trace?.({
+                stage: 'cloud',
+                level: 'error',
+                title: `Round ${round + 1} failed: ${(e as Error).message}`,
+                ms: Date.now() - start,
+                data: { sent, error: errorInfo(e) },
+            });
+            throw e;
+        }
+    }
+
+    private tooManyRounds(): string {
+        this.trace?.({ stage: 'cloud', level: 'warn', title: `Gave up after ${this.maxRounds} rounds of tool calls` });
+        return 'Ich konnte die Anfrage nicht abschließen (zu viele Tool-Schritte).';
+    }
+
     private async runTool(name: string, args: Record<string, unknown>): Promise<unknown> {
         const tool = this.toolMap[name];
         if (!tool) {
@@ -372,6 +450,8 @@ export class LlmAgent {
             messages.push({ role: t.role, content: t.content });
         }
         messages.push({ role: 'user', content: question });
+        // Messages the trace has shown already: the system prompt is part of the opening step.
+        let shown = systemPrompt ? 1 : 0;
 
         for (let round = 0; round < this.maxRounds; round++) {
             const request = {
@@ -381,10 +461,27 @@ export class LlmAgent {
                 max_tokens: this.maxTokens,
             };
             this.dump(`llm → openai round ${round}`, request);
-            const resp: any = await client.chat.completions.create(request);
+            const sent = messages.slice(shown);
+            const { resp, ms } = await this.timedRound(round, sent, () => client.chat.completions.create(request));
             const msg = resp.choices[0].message;
             this.dump(`llm ← openai round ${round}`, { message: msg, usage: resp.usage });
             messages.push(msg);
+            shown = messages.length;
+            this.trace?.({
+                stage: 'cloud',
+                title: roundTitle(
+                    round,
+                    (msg.tool_calls || []).map((tc: any) => String(tc.function?.name)),
+                ),
+                ms,
+                tokens: tokensOf(resp.usage),
+                data: {
+                    sent,
+                    response: { finish_reason: resp.choices[0].finish_reason, message: msg },
+                    model: resp.model,
+                    usage: resp.usage,
+                },
+            });
 
             if (!msg.tool_calls || !msg.tool_calls.length) {
                 return String(msg.content || '').trim();
@@ -401,7 +498,7 @@ export class LlmAgent {
                 messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
             }
         }
-        return 'Ich konnte die Anfrage nicht abschließen (zu viele Tool-Schritte).';
+        return this.tooManyRounds();
     }
 
     /**
@@ -457,6 +554,8 @@ export class LlmAgent {
             ...history.map(t => ({ role: t.role, content: t.content })),
             { role: 'user', content: question },
         ];
+        // Messages the trace has shown already (the system prompt is part of the opening step).
+        let shown = 0;
 
         for (let round = 0; round < this.maxRounds; round++) {
             // Cache the growing conversation prefix too (e.g. the large list_devices result): move a
@@ -470,10 +569,26 @@ export class LlmAgent {
                 messages,
             };
             this.dump(`llm → anthropic round ${round}`, request);
-            const resp: any = await client.messages.create(request);
+            const sent = messages.slice(shown);
+            const { resp, ms } = await this.timedRound(round, sent, () => client.messages.create(request));
             this.dump(`llm ← anthropic round ${round}`, { content: resp.content, usage: resp.usage });
 
             const toolUses = resp.content.filter((b: any) => b.type === 'tool_use');
+            this.trace?.({
+                stage: 'cloud',
+                title: roundTitle(
+                    round,
+                    toolUses.map((b: any) => String(b.name)),
+                ),
+                ms,
+                tokens: tokensOf(resp.usage),
+                data: {
+                    sent,
+                    response: { stop_reason: resp.stop_reason, content: resp.content },
+                    model: resp.model,
+                    usage: resp.usage,
+                },
+            });
             if (!toolUses.length) {
                 return resp.content
                     .filter((b: any) => b.type === 'text')
@@ -483,6 +598,7 @@ export class LlmAgent {
             }
 
             messages.push({ role: 'assistant', content: resp.content });
+            shown = messages.length;
             const toolResults = [];
             for (const tu of toolUses) {
                 const result = await this.runTool(tu.name, tu.input);
@@ -490,6 +606,6 @@ export class LlmAgent {
             }
             messages.push({ role: 'user', content: toolResults });
         }
-        return 'Ich konnte die Anfrage nicht abschließen (zu viele Tool-Schritte).';
+        return this.tooManyRounds();
     }
 }

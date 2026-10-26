@@ -8,6 +8,10 @@
  *
  * Clips live in memory, are addressed by an unguessable token and expire on their own, so nothing is
  * written to disk and a clip cannot be replayed indefinitely by anyone who once saw the URL.
+ *
+ * Besides the clips it serves a few **fixed files** under a path the caller picks — the custom wake-word
+ * models, which a device may fetch at any time after it was offered one. Only paths registered with
+ * {@link MediaServer.serve} answer, so nothing beyond what was put there is reachable.
  */
 import * as http from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -33,6 +37,8 @@ const MAX_CLIPS = 64;
 export class MediaServer {
     private server: http.Server | null = null;
     private readonly clips = new Map<string, Clip>();
+    /** Fixed files by exact path (`/wakeword/<id>.tflite`), served until removed. */
+    private readonly files = new Map<string, { body: Buffer; contentType: string }>();
     private sweepTimer: NodeJS.Timeout | null = null;
     /** Port the OS actually handed out — differs from the configured one when that is 0. */
     private boundPort = 0;
@@ -102,8 +108,33 @@ export class MediaServer {
         return `/media/${token}`;
     }
 
+    /**
+     * Serve `body` at exactly `urlPath` (e.g. `/wakeword/hey_hannah_1a2b3c4d.tflite`) until
+     * {@link unserve} removes it. Replaces whatever was there.
+     */
+    serve(urlPath: string, body: Buffer, contentType: string): void {
+        this.files.set(urlPath, { body, contentType });
+    }
+
+    unserve(urlPath: string): void {
+        this.files.delete(urlPath);
+    }
+
     private onRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-        const token = /^\/media\/([\w.]+)$/.exec((req.url || '').split('?')[0])?.[1];
+        const urlPath = (req.url || '').split('?')[0];
+        const file = this.files.get(urlPath);
+        if (file) {
+            this.opts.log.debug(`media: ${req.method} ${urlPath} → ${file.body.length} bytes`);
+            res.writeHead(200, {
+                'Content-Type': file.contentType,
+                'Content-Length': file.body.length,
+                'Cache-Control': 'no-cache',
+            });
+            res.end(req.method === 'HEAD' ? undefined : file.body);
+            return;
+        }
+
+        const token = /^\/media\/([\w.]+)$/.exec(urlPath)?.[1];
         const clip = token ? this.clips.get(token) : undefined;
 
         if (!clip || clip.expiresAt < Date.now()) {

@@ -380,6 +380,9 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                         objects={this.state.settingsObjects}
                         loading={this.state.settingsLoading}
                         onWrite={(prop, value) => this.writeSetting(this.state.settingsFor as string, prop, value)}
+                        sendTo={(command, message) =>
+                            this.props.oContext.socket.sendTo(this.instanceId, command, message)
+                        }
                         onClose={() => this.setState({ settingsFor: null, settingsObjects: {} })}
                     />
                 ) : null}

@@ -5,10 +5,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const net = require('node:net');
 const http = require('node:http');
+const crypto = require('node:crypto');
 const { pb, encode, decode, registrySize } = require('../../build/lib/voice/esphomeProto.js');
 const { SpeechDetector, rms } = require('../../build/lib/voice/vad.js');
 const { MediaServer } = require('../../build/lib/voice/mediaServer.js');
 const { EsphomeSatellites } = require('../../build/lib/voice/esphome.js');
+const { prepareWakeWord } = require('../../build/lib/voice/wakeWords.js');
 
 const silentLog = { info() {}, warn() {}, error() {}, debug() {} };
 
@@ -272,6 +274,27 @@ test('media server serves a published clip and 404s an expired one', async () =>
     }
 });
 
+test('media server serves registered files until they are removed, and nothing else', async () => {
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+    const base = `http://127.0.0.1:${media.port}`;
+    try {
+        media.serve('/wakeword/hey_test_1234abcd.tflite', Buffer.from('model-bytes'), 'application/octet-stream');
+        const ok = await fetch(`${base}/wakeword/hey_test_1234abcd.tflite`);
+        assert.equal(ok.status, 200);
+        assert.equal(ok.body.toString(), 'model-bytes');
+        // The firmware drops the query when it derives the model URL; we must not depend on one either.
+        assert.equal((await fetch(`${base}/wakeword/hey_test_1234abcd.tflite?x=1`)).status, 200);
+
+        assert.equal((await fetch(`${base}/wakeword/other.tflite`)).status, 404);
+
+        media.unserve('/wakeword/hey_test_1234abcd.tflite');
+        assert.equal((await fetch(`${base}/wakeword/hey_test_1234abcd.tflite`)).status, 404);
+    } finally {
+        await media.stop();
+    }
+});
+
 // ── the whole pipeline against a fake device ────────────────────────────────
 
 /**
@@ -290,10 +313,16 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
         commands: [],
         timerEvents: [],
         announces: [],
+        // Custom wake words: what the last configuration request offered, what was downloaded (and is
+        // then a local model, like on the real device), and every URL fetched for that.
+        externals: [],
+        local: [],
+        downloads: [],
     };
 
     const server = net.createServer(socket => {
         let buf = Buffer.alloc(0);
+        let queue = Promise.resolve();
         let pump = null;
         let elapsed = 0;
         const send = m => socket.write(encode(m));
@@ -315,6 +344,10 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
                     ['okay_nabu', 'Okay Nabu', ['en', 'de']],
                     ['hey_jarvis', 'Hey Jarvis', ['en']],
                     ['alexa', 'Alexa', ['en']],
+                    // Like the firmware: the model folder first, then the offered ones — so a
+                    // downloaded custom wake word that is still offered appears twice.
+                    ...state.local.map(w => [w.id, w.phrase, w.languages]),
+                    ...state.externals.map(w => [w.id, w.phrase, w.languages]),
                 ].map(([id, phrase, langs]) => {
                     const w = new pb.VoiceAssistantWakeWord();
                     w.setId(id);
@@ -486,11 +519,56 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
                     active: message.getIsActive(),
                 });
             } else if (name === 'VoiceAssistantConfigurationRequest') {
+                // Each request replaces the offer; only microWakeWord models are taken.
+                state.externals = message
+                    .getExternalWakeWordsList()
+                    .filter(w => w.getModelType() === 'micro')
+                    .map(w => ({
+                        id: w.getId(),
+                        phrase: w.getWakeWord(),
+                        languages: w.getTrainedLanguagesList(),
+                        size: w.getModelSize(),
+                        sha256: w.getModelHash(),
+                        url: w.getUrl(),
+                    }));
                 sendWakeWordConfig();
             } else if (name === 'VoiceAssistantSetConfiguration') {
-                // The real device silently keeps whatever it was given and echoes it on the next read.
-                state.setConfigCalls.push(message.getActiveWakeWordsList());
-                state.activeWakeWords = message.getActiveWakeWordsList();
+                const ids = message.getActiveWakeWordsList();
+                state.setConfigCalls.push(ids);
+                // An offered id is downloaded while handling this message (the firmware blocks on
+                // curl): `<url>` → `<id>.json`, the model from the same folder as `<id>.tflite`.
+                return (async () => {
+                    const loaded = [];
+                    for (const id of ids) {
+                        const builtIn = ['okay_nabu', 'hey_jarvis', 'alexa'].includes(id);
+                        if (builtIn || state.local.some(w => w.id === id)) {
+                            loaded.push(id);
+                            continue;
+                        }
+                        const offer = state.externals.find(w => w.id === id);
+                        if (!offer) {
+                            continue;
+                        }
+                        const config = await fetch(offer.url).catch(() => null);
+                        state.downloads.push({ url: offer.url, status: config?.status });
+                        if (config?.status !== 200) {
+                            continue;
+                        }
+                        const modelUrl = `${offer.url.split('?')[0].replace(/[^/]*$/, '')}${id}.tflite`;
+                        const model = await fetch(modelUrl).catch(() => null);
+                        state.downloads.push({ url: modelUrl, status: model?.status });
+                        const sha = model ? crypto.createHash('sha256').update(model.body).digest('hex') : '';
+                        const json = JSON.parse(config.body.toString());
+                        if (model?.status === 200 && json.model === `${id}.tflite`) {
+                            state.local.push({ id, phrase: json.wake_word, languages: json.trained_languages, sha });
+                            loaded.push(id);
+                        }
+                    }
+                    // Nothing loadable → the firmware keeps its previous selection.
+                    if (loaded.length) {
+                        state.activeWakeWords = loaded;
+                    }
+                })();
             } else if (name === 'VoiceAssistantResponse') {
                 pump = setInterval(() => {
                     const audio = new pb.VoiceAssistantAudio();
@@ -541,7 +619,11 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
             buf = rest;
             for (const frame of frames) {
                 if (frame.name && frame.message) {
-                    handle(frame.name, frame.message);
+                    // One message after the other, like the firmware's message loop — a download
+                    // inside SetConfiguration delays the read-back that follows it.
+                    queue = queue
+                        .then(() => handle(frame.name, frame.message))
+                        .catch(e => console.error('fake device:', e));
                 }
             }
         });
@@ -574,8 +656,11 @@ test('wake word → captured audio → STT → answer → TTS url the device fet
         answer: async (question, ctx) => {
             seen.question = question;
             seen.room = ctx.room;
+            seen.audioMs = ctx.audioMs;
+            seen.vad = ctx.vad;
             return 'Es ist zwölf Uhr';
         },
+        onSpoken: (device, info) => (seen.spoken = { device, ...info }),
         media,
         silenceMs: 300,
         log: silentLog,
@@ -598,6 +683,10 @@ test('wake word → captured audio → STT → answer → TTS url the device fet
     assert.ok(seen.pcmBytes > 0, 'STT should have received the captured audio');
     assert.equal(seen.question, 'wie spät ist es');
     assert.equal(seen.room, 'Wohnzimmer');
+    assert.equal(seen.audioMs, Math.round((seen.pcmBytes / 2 / 16000) * 1000), 'the journal gets the recording length');
+    assert.ok(seen.vad.peak > seen.vad.noiseFloor, 'the journal gets the VAD levels');
+    assert.equal(seen.spoken.device, 'fake-speaker');
+    assert.equal(seen.spoken.audioMs, 100, 'the journal gets the length of the reply');
 
     const types = device.events.map(e => e.type);
     for (const [label, type] of [
@@ -666,11 +755,12 @@ test('announce reaches a connected satellite as a media url', async t => {
 // ── wake words ──────────────────────────────────────────────────────────────
 
 /** Bring up a satellite against a fake device and wait until the handshake reported its wake words. */
-async function connectedSatellite(t, opts = {}) {
+async function connectedSatellite(t, opts = {}, satelliteOpts = {}, prepare = () => {}) {
     const device = fakeDevice({ speechMs: 0, ...opts });
     const port = await device.listen();
     const media = new MediaServer({ port: 0, log: silentLog });
     await media.start();
+    prepare(media);
     const reported = [];
     const satellites = new EsphomeSatellites({
         devices: [{ ip: '127.0.0.1', port, room: 'Küche' }],
@@ -682,6 +772,7 @@ async function connectedSatellite(t, opts = {}) {
         silenceMs: 300,
         log: silentLog,
         onWakeWords: (d, room, cfg) => reported.push(cfg),
+        ...satelliteOpts,
     });
     t.after(async () => {
         await satellites.stop();
@@ -741,6 +832,117 @@ test('setting wake words on an unknown satellite reports failure', async t => {
     const { satellites } = await connectedSatellite(t);
     assert.equal(satellites.setWakeWords('no-such-device', ['alexa']), false);
     assert.equal(satellites.wakeWords('no-such-device'), null);
+});
+
+// ── custom (uploaded) wake words ────────────────────────────────────────────
+
+/** A minimal TFLite flatbuffer: what matters to the adapter is the `TFL3` identifier at byte 4. */
+function fakeModel(seed = 'a') {
+    return Buffer.concat([Buffer.from([0x1c, 0, 0, 0]), Buffer.from('TFL3'), Buffer.alloc(300, seed)]);
+}
+
+/** Serve a prepared wake word like main.ts does and return the offer for the satellites. */
+function offerFor(media, word) {
+    media.serve(`/wakeword/${word.id}.json`, word.config, 'application/json');
+    media.serve(`/wakeword/${word.id}.tflite`, word.model, 'application/octet-stream');
+    return {
+        id: word.id,
+        phrase: word.phrase,
+        languages: word.languages,
+        size: word.size,
+        sha256: word.sha256,
+        path: `/wakeword/${word.id}.json`,
+    };
+}
+
+test('an uploaded wake word is offered, downloaded on selection and becomes active', async t => {
+    const word = prepareWakeWord({ model: fakeModel(), fileName: 'hey_hannah.tflite' }, 'de');
+    const offers = [];
+    const { device, satellites, reported, name } = await connectedSatellite(
+        t,
+        {},
+        { externalWakeWords: () => offers },
+        media => offers.push(offerFor(media, word)),
+    );
+
+    // Offered with everything the device needs to fetch and verify it…
+    assert.equal(device.externals.length, 1);
+    const offer = device.externals[0];
+    assert.equal(offer.id, word.id);
+    assert.equal(offer.phrase, 'Hey Hannah');
+    assert.deepEqual(offer.languages, ['de']);
+    assert.equal(offer.size, word.size);
+    assert.equal(offer.sha256, word.sha256);
+    assert.match(offer.url, new RegExp(`^http://127\\.0\\.0\\.1:\\d+/wakeword/${word.id}\\.json$`));
+    // …and listed among the device's wake words, but not downloaded before anyone picks it.
+    assert.ok(reported.at(-1).available.some(w => w.id === word.id && w.phrase === 'Hey Hannah'));
+    assert.equal(device.downloads.length, 0);
+
+    assert.equal(satellites.setWakeWords(name, ['okay_nabu', word.id]), true);
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    assert.deepEqual(
+        device.downloads.map(d => [d.url.replace(/^.*\//, ''), d.status]),
+        [
+            [`${word.id}.json`, 200],
+            [`${word.id}.tflite`, 200],
+        ],
+    );
+    assert.equal(device.local[0].sha, word.sha256, 'the device got exactly the uploaded model');
+    assert.deepEqual(reported.at(-1).active, ['okay_nabu', word.id]);
+    // Downloaded *and* still offered: the device lists it twice, we show it once.
+    assert.equal(reported.at(-1).available.filter(w => w.id === word.id).length, 1);
+});
+
+test('a wake word uploaded while connected reaches the device with the next offer', async t => {
+    const offers = [];
+    let media;
+    const { device, satellites, reported } = await connectedSatellite(
+        t,
+        {},
+        { externalWakeWords: () => offers },
+        m => (media = m),
+    );
+    assert.equal(device.externals.length, 0);
+
+    const word = prepareWakeWord({ model: fakeModel('b'), fileName: 'computer.tflite' }, 'en');
+    offers.push(offerFor(media, word));
+    assert.equal(satellites.refreshWakeWords(), 1);
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    assert.equal(device.externals[0]?.id, word.id);
+    assert.ok(reported.at(-1).available.some(w => w.id === word.id));
+
+    // Every request repeats the offer — the firmware forgets it otherwise.
+    satellites.setWakeWords(satellites.devices()[0], ['okay_nabu']);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(device.externals[0]?.id, word.id);
+});
+
+test('a wake word the device cannot download is reported, and the old selection stays', async t => {
+    const warnings = [];
+    const word = prepareWakeWord({ model: fakeModel('c'), fileName: 'broken.tflite' }, 'de');
+    const offers = [];
+    const { device, satellites, reported, name } = await connectedSatellite(
+        t,
+        {},
+        {
+            externalWakeWords: () => offers,
+            log: { ...silentLog, warn: msg => warnings.push(msg) },
+        },
+        // Offered, but the files are not on the media server.
+        () => offers.push({ ...offerFor({ serve() {} }, word) }),
+    );
+
+    satellites.setWakeWords(name, [word.id]);
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    assert.equal(device.downloads[0]?.status, 404);
+    assert.deepEqual(reported.at(-1).active, ['okay_nabu'], 'the device keeps what it had');
+    assert.ok(
+        warnings.some(w => w.includes('could not activate') && w.includes(word.id)),
+        `expected a warning, got: ${warnings.join(' | ')}`,
+    );
 });
 
 // ── device settings (entities) ──────────────────────────────────────────────

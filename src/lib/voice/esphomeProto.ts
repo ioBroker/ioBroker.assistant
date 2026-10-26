@@ -62,6 +62,20 @@ export interface GetTimeResponse extends PbMessage {
 export interface VoiceAssistantSetConfiguration extends PbMessage {
     setActiveWakeWordsList(value: string[]): void;
 }
+/** A model the device may download when it is selected (custom wake words). */
+export interface VoiceAssistantExternalWakeWord extends PbMessage {
+    setId(value: string): void;
+    setWakeWord(value: string): void;
+    setTrainedLanguagesList(value: string[]): void;
+    setModelType(value: string): void;
+    setModelSize(value: number): void;
+    setModelHash(value: string): void;
+    setUrl(value: string): void;
+}
+/** Asks for the wake-word configuration — and offers the external ones, replacing the last offer. */
+export interface VoiceAssistantConfigurationRequest extends PbMessage {
+    setExternalWakeWordsList(value: VoiceAssistantExternalWakeWord[]): void;
+}
 
 // Entity command messages. All address an entity by the `fixed32 key` from its announcement.
 export interface SwitchCommandRequest extends PbMessage {
@@ -147,7 +161,8 @@ interface ApiPb {
     ListEntitiesRequest: Ctor<PbMessage>;
     SubscribeStatesRequest: Ctor<PbMessage>;
     SubscribeVoiceAssistantRequest: Ctor<SubscribeVoiceAssistantRequest>;
-    VoiceAssistantConfigurationRequest: Ctor<PbMessage>;
+    VoiceAssistantConfigurationRequest: Ctor<VoiceAssistantConfigurationRequest>;
+    VoiceAssistantExternalWakeWord: Ctor<VoiceAssistantExternalWakeWord>;
     VoiceAssistantSetConfiguration: Ctor<VoiceAssistantSetConfiguration>;
     VoiceAssistantTimerEventResponse: Ctor<VoiceAssistantTimerEventResponse>;
     SwitchCommandRequest: Ctor<SwitchCommandRequest>;

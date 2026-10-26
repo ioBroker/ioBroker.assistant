@@ -35,7 +35,7 @@ import {
     type WeatherReport,
     type StateValues,
 } from './lib/weather';
-import { Journal, type JournalOrigin } from './lib/journal';
+import { Journal, errorInfo, traceDirFor, type JournalOrigin } from './lib/journal';
 import { LocalLlm, installLocalLlm, isLocalLlmInstalled, isHandoff, DEFAULT_LOCAL_MODEL_URL } from './lib/localLlm';
 import { resolveApiKey, resolveVoiceCredentials } from './lib/credentials';
 import { ConversationStore, type ConversationTurn } from './lib/context';
@@ -87,6 +87,14 @@ import {
     type UpdateInfo,
 } from './lib/voice/esphomeEntities';
 import { MediaServer } from './lib/voice/mediaServer';
+import {
+    WAKE_WORD_DIR,
+    WAKE_WORD_ID_RE,
+    WAKE_WORD_URL_PREFIX,
+    loadWakeWord,
+    prepareWakeWord,
+    type CustomWakeWord,
+} from './lib/voice/wakeWords';
 import { confirmationTone } from './lib/voice/tone';
 import {
     createSttEngine,
@@ -234,6 +242,24 @@ function iaqLabel(value: unknown, unit: string, lang: string): string {
 /** NLU actions that only switch something; their success is what the confirmation tone replaces. */
 const CONTROL_ACTIONS = new Set(['on', 'off', 'level', 'color', 'volumeSet']);
 
+/** An intent in one line for the request trace: "level Rollo (Büro) = 30", "timerSet 300 s", "alarmSet 7:05". */
+function describeIntent(intent: NluIntent): string {
+    let text = intent.action;
+    if (intent.device) {
+        text += ` ${intent.device.name}${intent.device.room ? ` (${intent.device.room})` : ''}`;
+    } else if (intent.room) {
+        text += ` (${intent.room})`;
+    }
+    if (intent.value !== undefined) {
+        text += ` = ${JSON.stringify(intent.value)}`;
+    } else if (intent.durationSec !== undefined) {
+        text += ` ${intent.durationSec} s`;
+    } else if (intent.hour !== undefined) {
+        text += ` ${intent.hour}:${String(intent.minute ?? 0).padStart(2, '0')}`;
+    }
+    return text;
+}
+
 const FIXED_REPLIES: Record<'de' | 'en' | 'ru', string[]> = {
     de: ['Ok.', 'Erledigt.'],
     en: ['Okay.', 'Done.'],
@@ -311,6 +337,10 @@ class Assistant extends Adapter {
     private esphome: EsphomeSatellites | null = null;
     /** Serves spoken replies to ESPHome satellites over HTTP; null unless those are enabled. */
     private media: MediaServer | null = null;
+    /** Uploaded wake words (`assistant.0/wakewords/`), offered to every ESPHome satellite. */
+    private readonly customWakeWords = new Map<string, CustomWakeWord>();
+    /** Loads {@link customWakeWords} once from the file storage; later calls wait for the same load. */
+    private customWakeWordsLoaded: Promise<void> | null = null;
     /** Short-term per-source conversation memory (in-memory, TTL) for follow-up questions. */
     private readonly context = new ConversationStore();
     /** Questions the assistant asked and is waiting for an answer to (`askUser`), keyed by source. */
@@ -462,6 +492,7 @@ class Assistant extends Adapter {
                     maxTokens: cfg.maxTokens || 1024,
                     tools: tools.map(t => this.journalTool(t)),
                     log: this.log,
+                    trace: step => this.journal?.step(step),
                 });
             }
         } catch (e) {
@@ -557,7 +588,9 @@ class Assistant extends Adapter {
                 language,
                 stt,
                 tts,
-                answer: (question, sttMs) => this.answer(question, 'wyoming', { transport: 'wyoming', sttMs }),
+                answer: (question, sttMs, audioMs) =>
+                    this.answer(question, 'wyoming', { transport: 'wyoming', sttMs, audioMs }),
+                onSpoken: info => this.reportSpoken('wyoming', info),
                 getHints: () => this.buildSttHints(),
                 log: this.log,
             });
@@ -612,6 +645,10 @@ class Assistant extends Adapter {
             this.media = null;
             return;
         }
+        await this.loadCustomWakeWords();
+        for (const word of this.customWakeWords.values()) {
+            this.serveWakeWord(word);
+        }
 
         this.esphome = new EsphomeSatellites({
             devices,
@@ -624,7 +661,10 @@ class Assistant extends Adapter {
                     room: origin.room,
                     wakeWord: origin.wakeWord,
                     sttMs: origin.sttMs,
+                    audioMs: origin.audioMs,
+                    vad: origin.vad,
                 }),
+            onSpoken: (device, info) => this.reportSpoken(device, info),
             getHints: () => this.buildSttHints(),
             media: this.media,
             mediaHost: (cfg.esphomeMediaHost || '').trim(),
@@ -651,6 +691,15 @@ class Assistant extends Adapter {
                 );
             },
             expectsFollowUp: (answer, device) => this.followUpFor(device, answer),
+            externalWakeWords: () =>
+                [...this.customWakeWords.values()].map(w => ({
+                    id: w.id,
+                    phrase: w.phrase,
+                    languages: w.languages,
+                    size: w.size,
+                    sha256: w.sha256,
+                    path: `${WAKE_WORD_URL_PREFIX}${w.id}.json`,
+                })),
         });
         await this.esphome.start();
         this.log.info(
@@ -711,7 +760,13 @@ class Assistant extends Adapter {
                 stt,
                 tts,
                 answer: (question, ctx) =>
-                    this.answerVoice(question, ctx.device, { transport: 'udp', room: ctx.room, sttMs: ctx.sttMs }),
+                    this.answerVoice(question, ctx.device, {
+                        transport: 'udp',
+                        room: ctx.room,
+                        sttMs: ctx.sttMs,
+                        audioMs: ctx.audioMs,
+                    }),
+                onSpoken: (device, info) => this.reportSpoken(device, info),
                 expectsFollowUp: (answer, device) => this.followUpFor(device, answer),
                 onVolume: (device, room, level) => {
                     this.updateSatelliteVolume(device, room, level).catch(e =>
@@ -787,6 +842,24 @@ class Assistant extends Adapter {
      */
     private expectsFollowUp(answer: string): boolean {
         return /[?？]/.test(answer || '');
+    }
+
+    /** A transport synthesised the reply to `source`'s latest request — the journal shows it with that request. */
+    private reportSpoken(source: string, info: { ms: number; audioMs: number }): void {
+        const cfg = this.config;
+        const provider = cfg.ttsProvider || 'openai';
+        const voices: Record<string, string | undefined> = {
+            openai: cfg.ttsVoice || 'alloy',
+            azure: cfg.azureVoice,
+            aws: cfg.awsVoice,
+            piper: cfg.piperVoice,
+        };
+        this.journal?.spoken(source, {
+            ...info,
+            provider,
+            fallback: cfg.ttsFallback || undefined,
+            voice: (voices[provider] || '').trim() || undefined,
+        });
     }
 
     /** Record the origin of the current text.request/response ('' = state write, 'chat' = message, else satellite). */
@@ -873,11 +946,17 @@ class Assistant extends Adapter {
                 room,
                 wakeWord: typeof msg.wakeWord === 'string' ? msg.wakeWord : undefined,
                 sttMs: Date.now() - sttStart,
+                audioMs: Math.round((pcm.length / 2 / rate) * 1000),
             });
             if (!answer) {
                 return { text, answer: '' };
             }
+            const ttsStart = Date.now();
             const reply = await engines.tts.synthesize(answer, language);
+            this.reportSpoken(source, {
+                ms: Date.now() - ttsStart,
+                audioMs: (reply.pcm.length / 2 / reply.sampleRate) * 1000,
+            });
             const listen = this.followUpFor(source, answer);
             return { text, answer, audio: reply.pcm.toString('base64'), sampleRate: reply.sampleRate, listen };
         } catch (e) {
@@ -1123,10 +1202,117 @@ class Assistant extends Adapter {
             this.satWakeWordStatesEnsured.add(id);
         }
         await this.setStateAsync(`${base}.wakeWords`, { val: config.active.join(','), ack: true });
+        // `custom` marks the uploaded ones, so the settings dialog can offer to delete them.
+        const words = config.available.map(w => (this.customWakeWords.has(w.id) ? { ...w, custom: true } : w));
         await this.setStateAsync(`${base}.availableWakeWords`, {
-            val: JSON.stringify({ max: config.max, words: config.available }),
+            val: JSON.stringify({ max: config.max, words }),
             ack: true,
         });
+    }
+
+    /** Read the uploaded wake words (`<instance>/wakewords/<id>.json` + `.tflite`) once. */
+    private loadCustomWakeWords(): Promise<void> {
+        this.customWakeWordsLoaded ||= (async () => {
+            let entries: ioBroker.ReadDirResult[] = [];
+            try {
+                entries = await this.readDirAsync(this.namespace, WAKE_WORD_DIR);
+            } catch {
+                return; // nothing uploaded yet
+            }
+            for (const entry of entries) {
+                const id = entry.file.replace(/\.json$/, '');
+                if (entry.isDir || !entry.file.endsWith('.json') || !WAKE_WORD_ID_RE.test(id)) {
+                    continue;
+                }
+                try {
+                    const config = await this.readStoredFile(`${WAKE_WORD_DIR}/${id}.json`, 'utf8');
+                    const model = await this.readStoredFile(`${WAKE_WORD_DIR}/${id}.tflite`, 'binary');
+                    this.customWakeWords.set(id, loadWakeWord(id, config, model));
+                } catch (e) {
+                    this.log.warn(`Custom wake word ${id} skipped: ${(e as Error).message}`);
+                }
+            }
+            if (this.customWakeWords.size) {
+                this.log.info(
+                    `Custom wake words: ${[...this.customWakeWords.values()].map(w => `${w.phrase} (${w.id})`).join(', ')}`,
+                );
+            }
+        })();
+        return this.customWakeWordsLoaded;
+    }
+
+    /**
+     * Read a file from this instance's file storage as a Buffer. Depending on the backend and the file's
+     * type it comes back as a Buffer or a string — `encoding` says how to read the latter.
+     */
+    private async readStoredFile(name: string, encoding: BufferEncoding): Promise<Buffer> {
+        const res = (await this.readFileAsync(this.namespace, name)) as { file?: Buffer | string } | Buffer | string;
+        const f = Buffer.isBuffer(res) || typeof res === 'string' ? res : res.file;
+        if (f == null) {
+            throw new Error(`${name} not found`);
+        }
+        return Buffer.isBuffer(f) ? f : Buffer.from(f, encoding);
+    }
+
+    private serveWakeWord(word: CustomWakeWord): void {
+        this.media?.serve(`${WAKE_WORD_URL_PREFIX}${word.id}.json`, word.config, 'application/json');
+        this.media?.serve(`${WAKE_WORD_URL_PREFIX}${word.id}.tflite`, word.model, 'application/octet-stream');
+    }
+
+    /**
+     * Store an uploaded wake word and offer it to the connected satellites. It shows up in their wake
+     * word list right away; a device downloads the model only when it is selected there.
+     */
+    private async addCustomWakeWord(
+        message: Record<string, unknown>,
+    ): Promise<{ id: string; phrase: string; languages: string[]; size: number; devices: number }> {
+        await this.loadCustomWakeWords();
+        const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
+        const languages = (
+            Array.isArray(message.languages)
+                ? message.languages.map(String)
+                : (text(message.languages) ?? '').split(/[,;\s]+/)
+        ).filter(Boolean);
+        const word = prepareWakeWord(
+            {
+                model: Buffer.from(text(message.model) ?? '', 'base64'),
+                fileName: text(message.fileName),
+                config:
+                    message.config && typeof message.config === 'object'
+                        ? (message.config as Record<string, unknown>)
+                        : text(message.config),
+                phrase: text(message.phrase),
+                languages,
+            },
+            this.config.voiceLanguage || this.language || '',
+        );
+        if (!this.customWakeWords.has(word.id)) {
+            await this.writeFileAsync(this.namespace, `${WAKE_WORD_DIR}/${word.id}.tflite`, word.model);
+            await this.writeFileAsync(this.namespace, `${WAKE_WORD_DIR}/${word.id}.json`, word.config);
+            this.customWakeWords.set(word.id, word);
+            this.serveWakeWord(word);
+            this.log.info(`Custom wake word uploaded: ${word.phrase} (${word.id}, ${word.size} bytes)`);
+        }
+        const devices = this.esphome?.refreshWakeWords() ?? 0;
+        return { id: word.id, phrase: word.phrase, languages: word.languages, size: word.size, devices };
+    }
+
+    /**
+     * Remove an uploaded wake word: it is no longer offered or served. A device that already downloaded
+     * it keeps its copy — the ESPHome API cannot delete a model from a device.
+     */
+    private async deleteCustomWakeWord(id: string): Promise<void> {
+        await this.loadCustomWakeWords();
+        if (!WAKE_WORD_ID_RE.test(id) || !this.customWakeWords.has(id)) {
+            throw new Error(`unknown wake word ${id}`);
+        }
+        for (const ext of ['json', 'tflite']) {
+            await this.delFileAsync(this.namespace, `${WAKE_WORD_DIR}/${id}.${ext}`).catch(() => undefined);
+            this.media?.unserve(`${WAKE_WORD_URL_PREFIX}${id}.${ext}`);
+        }
+        this.customWakeWords.delete(id);
+        this.esphome?.refreshWakeWords();
+        this.log.info(`Custom wake word deleted: ${id}`);
     }
 
     /**
@@ -2370,6 +2556,39 @@ class Assistant extends Adapter {
             return;
         }
 
+        // Settings dialog / scripts: own wake words for the ESPHome satellites (microWakeWord models).
+        // uploadWakeWord: { model: base64 .tflite, fileName?, config?: JSON text, phrase?, languages? }
+        //   → { ok, id, phrase, languages, size, devices } | { error }
+        // deleteWakeWord: { id } → { ok } | { error };  listWakeWords → { wakeWords: [{id, phrase, …}] }
+        if (obj.command === 'uploadWakeWord' || obj.command === 'deleteWakeWord' || obj.command === 'listWakeWords') {
+            const m = (obj.message || {}) as Record<string, unknown>;
+            let payload: Record<string, unknown>;
+            try {
+                if (obj.command === 'uploadWakeWord') {
+                    payload = { ok: true, ...(await this.addCustomWakeWord(m)) };
+                } else if (obj.command === 'deleteWakeWord') {
+                    await this.deleteCustomWakeWord(typeof m.id === 'string' ? m.id : '');
+                    payload = { ok: true };
+                } else {
+                    await this.loadCustomWakeWords();
+                    payload = {
+                        wakeWords: [...this.customWakeWords.values()].map(w => ({
+                            id: w.id,
+                            phrase: w.phrase,
+                            languages: w.languages,
+                            size: w.size,
+                        })),
+                    };
+                }
+            } catch (e) {
+                payload = { error: (e as Error).message };
+            }
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, payload, obj.callback);
+            }
+            return;
+        }
+
         // Scripts: everything an ESPHome satellite exposes besides the voice pipeline.
         // message = { device? }; without a device, every connected one is listed.
         if (obj.command === 'getControls') {
@@ -2611,6 +2830,18 @@ class Assistant extends Adapter {
             }
             return;
         }
+        // Admin chat debug view: one request with every step of its processing (message = { id }).
+        if (obj.command === 'getJournalTrace') {
+            const id = String((obj.message as { id?: string } | undefined)?.id || '');
+            const entry = this.journal?.get(id);
+            const result = entry
+                ? { entry, steps: await this.journal!.trace(id) }
+                : { error: this.journal?.enabled ? 'unknown request' : 'journal disabled' };
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
         if (obj.command === 'clearJournal') {
             this.journal?.clear();
             if (obj.callback) {
@@ -2670,14 +2901,49 @@ class Assistant extends Adapter {
     private answer(question: string, source = '', origin: JournalOrigin = {}): Promise<string> {
         return this.requestOrigin.run({ source, room: origin.room || '' }, () =>
             this.journal
-                ? this.journal.run(question, source, origin, () => this.answerTracked(question, source))
+                ? this.journal.run(question, source, origin, () => {
+                      this.traceSpeechInput(question, origin);
+                      return this.answerTracked(question, source);
+                  })
                 : this.answerTracked(question, source),
         );
+    }
+
+    /** Speech recognition happened before the request: put it at the head of its trace. */
+    private traceSpeechInput(question: string, origin: JournalOrigin): void {
+        if (origin.sttMs === undefined) {
+            return;
+        }
+        const cfg = this.config;
+        const provider = cfg.sttProvider || 'openai';
+        const audio = origin.audioMs !== undefined ? `, ${(origin.audioMs / 1000).toFixed(1)} s of audio` : '';
+        this.journal?.step({
+            stage: 'stt',
+            title: `Speech recognition: ${provider}${audio}`,
+            ms: origin.sttMs,
+            data: {
+                provider,
+                fallback: cfg.sttFallback || undefined,
+                model: (cfg.sttModel || cfg.voskModel || '').trim() || undefined,
+                language: cfg.voiceLanguage || this.language || '',
+                audioMs: origin.audioMs,
+                wakeWord: origin.wakeWord,
+                vad: origin.vad,
+                transcript: question,
+            },
+        });
     }
 
     private async answerTracked(question: string, source: string): Promise<string> {
         const useCtx = this.config.useConversationContext !== false;
         const history = useCtx ? this.context.get(source) : [];
+        if (history.length) {
+            this.journal?.step({
+                stage: 'context',
+                title: `Conversation context: ${history.length} earlier turn(s) of '${source}'`,
+                data: history,
+            });
+        }
         const raw = await this.produceAnswer(question, history, source);
         // The LLM signals "I'm waiting for the user's reply" by appending the [[LISTEN]] control marker
         // (see followUpHint). Strip it here so it's neither stored, shown nor spoken, and keep it per source:
@@ -2688,6 +2954,13 @@ class Assistant extends Adapter {
             this.journal?.note({ followUp: true });
         }
         const result = raw.replace(/\s*\[\[LISTEN\]\]\s*/gi, ' ').trim();
+        this.journal?.step({
+            stage: 'answer',
+            title: result
+                ? `Answer: ${result.length} characters${followUp ? ', waits for a reply' : ''}`
+                : 'No spoken answer',
+            data: { answer: result, raw: raw !== result ? raw : undefined, followUp },
+        });
         if (useCtx && result) {
             this.context.add(source, question, result);
         }
@@ -2802,6 +3075,7 @@ class Assistant extends Adapter {
             const n = this.stopRinging();
             this.log.info(`Ring stopped by voice (${n} session(s)).`);
             this.journal?.note({ tier: 'stop' });
+            this.journal?.step({ stage: 'stop', title: `Stop word: silenced ${n} ringing timer/alarm(s)` });
             const lang = String(this.config.voiceLanguage || this.language || 'en');
             return lang === 'ru' ? 'Хорошо.' : lang === 'de' ? 'Ok.' : 'Okay.';
         }
@@ -2813,6 +3087,11 @@ class Assistant extends Adapter {
             if (this.pending.deliver(source, question)) {
                 this.log.info(`Answer to "${asked}" from source '${source || 'any'}': ${question}`);
                 this.journal?.note({ tier: 'askReply', detail: asked || undefined });
+                this.journal?.step({
+                    stage: 'askReply',
+                    title: `Reply to the open question "${asked}"`,
+                    data: { question: asked, reply: question },
+                });
                 return '';
             }
         }
@@ -2823,8 +3102,16 @@ class Assistant extends Adapter {
         if (routine) {
             this.log.info(`Routine '${routine.name}' triggered (source='${source}').`);
             this.journal?.note({ tier: 'routine', detail: routine.name });
+            this.journal?.step({ stage: 'routine', title: `Routine "${routine.name}" matched`, data: routine });
             await this.runRoutine(routine, source);
             return routine.reply;
+        }
+        if (this.routines.length) {
+            this.journal?.step({
+                stage: 'routine',
+                title: `No routine matched (${this.routines.length} configured)`,
+                data: { phrases: this.routines.map(r => ({ name: r.name, phrases: r.phrases })) },
+            });
         }
         // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
         if (this.config.useLocalNlu) {
@@ -2834,8 +3121,18 @@ class Assistant extends Adapter {
             if (yt) {
                 this.log.info(`YouTube request understood locally: ${yt.kind} "${yt.query}" (source='${source}').`);
                 this.journal?.note({ tier: 'nlu', detail: `youtube ${yt.kind}` });
+                const start = Date.now();
                 const res = await this.playYouTube(yt.query, yt.kind, yt.player);
+                this.journal?.step({
+                    stage: 'youtube',
+                    title: `YouTube ${yt.kind} "${yt.query}"${yt.player ? ` on "${yt.player}"` : ''}`,
+                    ms: Date.now() - start,
+                    data: { parsed: yt, result: res },
+                });
                 return res.text;
+            }
+            if (this.youtubePlayers.length) {
+                this.journal?.step({ stage: 'youtube', title: 'Not a YouTube command' });
             }
             try {
                 const handled = await this.tryLocalNlu(question, source);
@@ -2845,7 +3142,15 @@ class Assistant extends Adapter {
                 }
             } catch (e) {
                 this.log.debug(`NLU skipped: ${(e as Error).message}`);
+                this.journal?.step({
+                    stage: 'nlu',
+                    level: 'warn',
+                    title: `NLU gave up, the request goes on: ${(e as Error).message}`,
+                    data: errorInfo(e),
+                });
             }
+        } else {
+            this.journal?.step({ stage: 'nlu', title: 'Rule-based NLU is switched off (useLocalNlu)' });
         }
         // Current weather from the configured adapter — prepended to the user turn of BOTH LLM tiers so
         // "how's the weather?" is answered from real data (the local model has no tools and would otherwise
@@ -2868,6 +3173,15 @@ class Assistant extends Adapter {
             }
         } else if (localFirst) {
             this.log.debug('Local LLM skipped (follow-up in an ongoing conversation → cloud LLM).');
+            this.journal?.step({
+                stage: 'localLlm',
+                title: 'Local LLM skipped: follow-up in an ongoing conversation goes to the cloud LLM',
+            });
+        } else if (useLocal) {
+            this.journal?.step({
+                stage: 'localLlm',
+                title: 'Local LLM not asked first: it is the fallback for when the cloud LLM fails (localLlmFirst)',
+            });
         }
         // Tier 2: cloud LLM with full tool access. Inject a compact device list into the system prompt so
         // the model can act without a first `list_devices` round-trip (kept cached via prompt caching).
@@ -2876,6 +3190,11 @@ class Assistant extends Adapter {
             // read out as a technical message.
             this.log.info(`No local tier could answer and no LLM provider is configured (source='${source}').`);
             this.journal?.note({ tier: 'none' });
+            this.journal?.step({
+                stage: 'none',
+                level: 'warn',
+                title: 'Nothing local understood the request and no LLM provider is configured',
+            });
             return this.localOnlyFallback();
         }
         const ctx = await this.buildDeviceContext();
@@ -2889,10 +3208,26 @@ class Assistant extends Adapter {
         );
         // Prepend the current date/time (and the weather line, if a source is configured) to the user turn —
         // cache-safe, see buildTimeContext. The stored history keeps the untouched question.
-        const questionForLlm = [this.buildTimeContext(), weather, question].filter(Boolean).join('\n\n');
+        const time = this.buildTimeContext();
+        const questionForLlm = [time, weather, question].filter(Boolean).join('\n\n');
         this.journal?.note({
             tier: 'cloud',
             detail: `${this.config.provider || 'openai'} · ${this.agent.model || 'auto'}`,
+        });
+        // What went into the prompt, piece by piece. The device list is only counted: the model's opening
+        // step carries the whole system prompt, and with it the list.
+        const deviceLines = ctx ? ctx.split('\n').length - 1 : 0;
+        this.journal?.step({
+            stage: 'context',
+            title: `Prompt: ${deviceLines} devices${mem ? ', memory' : ''}${weather ? ', weather' : ''}${followUp ? ', follow-up marker' : ''}`,
+            data: {
+                systemPrompt: this.config.systemPrompt || '',
+                followUpHint: followUp || undefined,
+                memory: mem || undefined,
+                devices: deviceLines,
+                time,
+                weather: weather || undefined,
+            },
         });
         try {
             return await this.agent.ask(questionForLlm, sys, history);
@@ -2900,6 +3235,11 @@ class Assistant extends Adapter {
             // Offline, quota, outage: the local model is the fallback — unless it was already asked above.
             if (useLocal && !localFirst) {
                 this.log.warn(`Cloud LLM failed (${(e as Error).message}) — asking the local LLM instead.`);
+                this.journal?.step({
+                    stage: 'localLlm',
+                    level: 'warn',
+                    title: `Cloud LLM failed (${(e as Error).message}) — asking the local LLM instead`,
+                });
                 const ans = await this.askLocalLlm(question, weather, source);
                 if (ans) {
                     return ans;
@@ -2918,19 +3258,46 @@ class Assistant extends Adapter {
             return null;
         }
         const timeoutMs = Math.max(1, Number(this.config.localLlmTimeoutSec) || LOCAL_LLM_TIMEOUT_SEC) * 1000;
+        const name = this.localLlmName();
+        // The local model has no tools: without these lines it would invent the weather and guess who is
+        // at home.
+        const facts = [weather, this.buildPresenceContext()].filter(Boolean).join('\n\n');
+        const prompt = facts ? `${facts}\n\n${question}` : question;
+        const busy = this.localLlm.running;
+        const data = { model: name, timeoutMs, system: this.localLlm.systemPrompt(), prompt };
+        const start = Date.now();
         try {
-            // The local model has no tools: without these lines it would invent the weather and guess who is
-            // at home.
-            const facts = [weather, this.buildPresenceContext()].filter(Boolean).join('\n\n');
-            const ans = await this.localLlm.ask(facts ? `${facts}\n\n${question}` : question, timeoutMs);
+            const ans = await this.localLlm.ask(prompt, timeoutMs);
+            const ms = Date.now() - start;
             if (ans && !isHandoff(ans)) {
                 this.log.info(`Answered by local LLM (source='${source}').`);
-                this.journal?.note({ tier: 'localLlm', detail: this.localLlmName() });
+                this.journal?.note({ tier: 'localLlm', detail: name });
+                this.journal?.step({
+                    stage: 'localLlm',
+                    title: `Local LLM ${name}: answered`,
+                    ms,
+                    data: { ...data, answer: ans },
+                });
                 return ans;
             }
             this.log.debug('Local LLM handed off.');
+            this.journal?.step({
+                stage: 'localLlm',
+                title: busy
+                    ? `Local LLM ${name}: busy with another question → handed off`
+                    : `Local LLM ${name}: handed off`,
+                ms,
+                data: { ...data, answer: ans },
+            });
         } catch (e) {
             this.log.info(`Local LLM gave no answer: ${(e as Error).message}`);
+            this.journal?.step({
+                stage: 'localLlm',
+                level: 'warn',
+                title: `Local LLM ${name}: ${(e as Error).message}`,
+                ms: Date.now() - start,
+                data: { ...data, error: errorInfo(e) },
+            });
         }
         return null;
     }
@@ -3054,36 +3421,30 @@ class Assistant extends Adapter {
         } else {
             // Switched off: do not keep what was recorded while it was on.
             await fs.promises.rm(file, { force: true }).catch(() => {});
+            await fs.promises.rm(traceDirFor(file), { recursive: true, force: true }).catch(() => {});
         }
     }
 
-    /** Wrap the MCP connection so every state the pipeline reads or writes lands in the journal entry. */
+    /**
+     * Wrap the MCP connection so every state the pipeline reads or writes lands in the journal entry — and a
+     * call the NLU makes directly, with its result, in the request's trace.
+     */
     private journalMcp(mcp: InProcessMcp): InProcessMcp {
         return {
             listTools: () => mcp.listTools(),
-            callTool: (name, args) => {
-                this.journal?.stateAccess(name, args);
-                return mcp.callTool(name, args);
-            },
+            callTool: (name, args) =>
+                this.journal
+                    ? this.journal.stateCall(name, args, () => mcp.callTool(name, args))
+                    : mcp.callTool(name, args),
             close: () => mcp.close(),
         };
     }
 
-    /** Wrap an LLM tool so its calls (arguments, result, duration) land in the journal entry. */
+    /** Wrap an LLM tool so its calls (arguments, result, duration) land in the journal entry and its trace. */
     private journalTool(tool: Tool): Tool {
         return {
             ...tool,
-            run: async args => {
-                const start = Date.now();
-                try {
-                    const result = await tool.run(args);
-                    this.journal?.tool(tool.name, args, Date.now() - start, result);
-                    return result;
-                } catch (e) {
-                    this.journal?.tool(tool.name, args, Date.now() - start, undefined, (e as Error).message);
-                    throw e;
-                }
-            },
+            run: args => (this.journal ? this.journal.toolCall(tool.name, args, () => tool.run(args)) : tool.run(args)),
         };
     }
 
@@ -3222,21 +3583,55 @@ class Assistant extends Adapter {
         }
         // Timer intents match device-independently (parse() checks them first), so build the NLU even
         // when no devices are known and always try timers before bailing out.
+        const start = Date.now();
         const { rooms, devices } = await this.getNluDevices();
-        const intents = new Nlu(rooms, devices, this.getNluAliases(), {
+        const aliases = this.getNluAliases();
+        const intents = new Nlu(rooms, devices, aliases, {
             weather: !!(this.config.weatherInstance || '').trim(),
         }).parseAll(question);
-        if (!intents.length || !intents.every(i => this.canExecuteNlu(i, devices.length))) {
+        const blockers = intents.map(i => this.nluBlocker(i, devices.length));
+        this.journal?.step({
+            stage: 'nlu',
+            title: !intents.length
+                ? `NLU: nothing recognised (${devices.length} devices, ${rooms.length} rooms known)`
+                : blockers.some(Boolean)
+                  ? `NLU: ${intents.map(i => i.action).join(' + ')} — cannot run here: ${blockers.filter(Boolean).join('; ')}`
+                  : `NLU: ${intents.map(describeIntent).join(' + ')}`,
+            level: intents.length && blockers.some(Boolean) ? 'warn' : undefined,
+            ms: Date.now() - start,
+            data: {
+                devices: devices.length,
+                rooms,
+                aliases: aliases.length ? aliases : undefined,
+                intents: intents.map((intent, i) => ({ ...intent, blockedBecause: blockers[i] || undefined })),
+            },
+        });
+        if (!intents.length || blockers.some(Boolean)) {
             return null; // nothing matched, or one part cannot run here → let the LLM answer the whole thing
         }
         this.journal?.note({ tier: 'nlu', detail: intents.map(i => i.action).join(' + ') });
         const answers: string[] = [];
         let failed = false;
         for (const intent of intents) {
+            const started = Date.now();
             try {
-                answers.push(await this.executeNluIntent(intent, source));
+                const answer = await this.executeNluIntent(intent, source);
+                answers.push(answer);
+                this.journal?.step({
+                    stage: 'nlu',
+                    title: `Executed ${describeIntent(intent)}`,
+                    ms: Date.now() - started,
+                    data: { answer },
+                });
             } catch (e) {
                 failed = true;
+                this.journal?.step({
+                    stage: 'nlu',
+                    level: 'error',
+                    title: `${describeIntent(intent)} failed: ${(e as Error).message}${answers.length ? '' : ' → the LLM takes over'}`,
+                    ms: Date.now() - started,
+                    data: errorInfo(e),
+                });
                 // Nothing executed yet → hand the whole utterance to the LLM. Afterwards a state has already
                 // been written and the LLM would repeat it, so report the failed part instead of bailing out.
                 if (!answers.length) {
@@ -3261,43 +3656,46 @@ class Assistant extends Adapter {
             (await this.playConfirmationTone(source))
         ) {
             this.log.debug(`NLU confirmed with a tone instead of "${answer}".`);
+            this.journal?.step({ stage: 'nlu', title: 'Confirmed with a tone instead of words', data: { answer } });
             return '';
         }
         return answer;
     }
 
     /**
-     * Can this intent run locally at all? Checked for **every** part of a combined command before anything
-     * is executed: a missing manager, no known devices or disabled writes send the whole utterance to the
-     * LLM (which can explain why) instead of silently doing nothing — or only half of it.
+     * Why this intent cannot run locally ('' = it can). Checked for **every** part of a combined command
+     * before anything is executed: a missing manager, no known devices or disabled writes send the whole
+     * utterance to the LLM (which can explain why) instead of silently doing nothing — or only half of it.
      */
-    private canExecuteNlu(intent: NluIntent, deviceCount: number): boolean {
+    private nluBlocker(intent: NluIntent, deviceCount: number): string {
         switch (intent.action) {
             case 'timerSet':
             case 'timerQuery':
             case 'timerCancel':
-                return !!this.timers;
+                return this.timers ? '' : 'timers are not running';
             case 'alarmSet':
             case 'alarmQuery':
             case 'alarmCancel':
-                return !!this.alarms;
+                return this.alarms ? '' : 'alarms are not running';
             case 'timeQuery':
             case 'dateQuery':
-                return true;
+                return '';
             case 'weatherQuery':
-                return !!(this.config.weatherInstance || '').trim();
+                return (this.config.weatherInstance || '').trim() ? '' : 'no weather instance configured';
             case 'volumeSet':
-                return !!(this.voice || this.esphome || this.nativeSatFrom.size);
+                return this.voice || this.esphome || this.nativeSatFrom.size ? '' : 'no satellites';
             default:
                 // Device intents; writes additionally require the coarse "allow control" toggle.
-                return (
-                    deviceCount > 0 &&
-                    (!['on', 'off', 'level', 'color'].includes(intent.action) || !!this.config.allowWriteStates)
-                );
+                if (!deviceCount) {
+                    return 'no devices known';
+                }
+                return ['on', 'off', 'level', 'color'].includes(intent.action) && !this.config.allowWriteStates
+                    ? 'writing states is not allowed (allowWriteStates)'
+                    : '';
         }
     }
 
-    /** Execute one intent that {@link canExecuteNlu} accepted, and return its spoken answer. */
+    /** Execute one intent that {@link nluBlocker} accepted, and return its spoken answer. */
     private async executeNluIntent(intent: NluIntent, source: string): Promise<string> {
         switch (intent.action) {
             case 'timerSet':
@@ -4197,16 +4595,30 @@ class Assistant extends Adapter {
         if (!this.config.verifyWrites || !stateId) {
             return true;
         }
-        const deadline = Date.now() + ACK_TIMEOUT_MS;
+        const start = Date.now();
+        const deadline = start + ACK_TIMEOUT_MS;
         let last: ioBroker.State | null | undefined;
         while (Date.now() < deadline) {
             await this.delay(ACK_POLL_MS);
             last = await this.getForeignStateAsync(stateId).catch(() => null);
             if (last?.ack && valuesMatch(last.val, expected)) {
                 this.log.debug(`write to ${stateId} confirmed by the device.`);
+                this.journal?.step({
+                    stage: 'state',
+                    title: `${stateId} confirmed by the device`,
+                    ms: Date.now() - start,
+                    data: { expected, state: last },
+                });
                 return true;
             }
         }
+        this.journal?.step({
+            stage: 'state',
+            level: 'warn',
+            title: `${stateId}: no confirmation within ${ACK_TIMEOUT_MS} ms`,
+            ms: Date.now() - start,
+            data: { expected, state: last },
+        });
         this.log.warn(
             `No confirmation for ${stateId} within ${ACK_TIMEOUT_MS} ms ` +
                 `(last: ${JSON.stringify(last?.val)}, ack=${String(last?.ack)}). ` +
@@ -5527,11 +5939,25 @@ class Assistant extends Adapter {
      */
     private async runRoutine(routine: Routine, source: string): Promise<void> {
         const origin = this.announceTargetForSource(source);
-        for (const action of routine.actions) {
+        for (const [i, action] of routine.actions.entries()) {
+            const start = Date.now();
             try {
                 await this.runTriggerAction({ id: `routine:${routine.name}`, when: [] }, action, origin);
+                this.journal?.step({
+                    stage: 'routine',
+                    title: `Routine action ${i + 1}/${routine.actions.length}`,
+                    ms: Date.now() - start,
+                    data: action,
+                });
             } catch (e) {
                 this.log.warn(`Routine '${routine.name}': an action failed — ${(e as Error).message}`);
+                this.journal?.step({
+                    stage: 'routine',
+                    level: 'error',
+                    title: `Routine action ${i + 1}/${routine.actions.length} failed: ${(e as Error).message}`,
+                    ms: Date.now() - start,
+                    data: { action, error: errorInfo(e) },
+                });
             }
         }
     }

@@ -39,8 +39,13 @@ export interface VoiceServerOptions {
     language: string;
     stt: SttEngine;
     tts: TtsEngine;
-    /** Produce the assistant reply for a transcribed utterance. */
-    answer: (question: string, ctx: { device: string; room: string; sttMs: number }) => Promise<string>;
+    /** Produce the assistant reply for a transcribed utterance (`audioMs` = length of the recording). */
+    answer: (
+        question: string,
+        ctx: { device: string; room: string; sttMs: number; audioMs: number },
+    ) => Promise<string>;
+    /** The reply was synthesised: how long that took and how long it plays (for the request journal). */
+    onSpoken?: (device: string, info: { ms: number; audioMs: number }) => void;
     /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
     getHints?: () => string[] | Promise<string[]>;
     log: ioBroker.Logger;
@@ -207,7 +212,10 @@ export class VoiceServer {
                 return;
             }
 
-            const answer = (await this.opts.answer(text, { device: sat.device, room: sat.room, sttMs })).trim();
+            const audioMs = Math.round((pcm.length / 2 / AUDIO_SAMPLE_RATE) * 1000);
+            const answer = (
+                await this.opts.answer(text, { device: sat.device, room: sat.room, sttMs, audioMs })
+            ).trim();
             this.opts.log.info(`Voice A (${sat.device}): ${answer}`);
             if (!answer) {
                 this.setStatus(sat, 'idle');
@@ -215,10 +223,12 @@ export class VoiceServer {
             }
 
             this.setStatus(sat, 'speaking');
+            const ttsStart = Date.now();
             const { pcm: ttsPcm, sampleRate } = await this.opts.tts.synthesize(answer, this.opts.language);
+            playMs = (ttsPcm.length / 2 / sampleRate) * 1000;
+            this.opts.onSpoken?.(sat.device, { ms: Date.now() - ttsStart, audioMs: playMs });
             listen = this.opts.expectsFollowUp?.(answer, sat.device) === true;
             await this.streamTts(sat, ttsPcm, sampleRate, listen);
-            playMs = (ttsPcm.length / 2 / sampleRate) * 1000;
         } catch (e) {
             this.opts.log.error(`Voice pipeline failed (${sat.device}): ${(e as Error).message}`);
             listen = false;

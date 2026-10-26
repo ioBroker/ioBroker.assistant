@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { Journal, transportForSource } = require('../../build/lib/journal.js');
+const { Journal, transportForSource, snapshot, traceDirFor } = require('../../build/lib/journal.js');
 
 const log = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -98,6 +98,131 @@ test('entries survive a restart, an unfinished one is marked as interrupted, old
     assert.deepEqual(j2.list().map(e => e.question), ['offen', 'neu']);
     assert.deepEqual(j2.list(list[0].ts).map(e => e.question), ['neu']);
     fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the trace records each step with its timing, tokens and a snapshot of its data', async () => {
+    const j = new Journal({ hours: 24, file: '', log });
+    let id;
+    await j.run('wie warm ist es', 'chat', {}, async () => {
+        id = j.list()[0].id;
+        const messages = [{ role: 'user', content: 'x' }];
+        j.step({ stage: 'cloud', title: 'Round 1', ms: 5, tokens: { input: 100, output: 7, cacheRead: 90 }, data: { sent: messages } });
+        messages.push({ role: 'assistant', content: 'later change' });
+        j.step({ stage: 'cloud', title: 'Round 2', tokens: { input: 50, output: 3 } });
+        return '21 Grad';
+    });
+    const steps = await j.trace(id);
+    assert.deepEqual(steps.map(s => s.stage), ['request', 'cloud', 'cloud']);
+    assert.equal(steps[0].data.question, 'wie warm ist es');
+    assert.equal(steps[1].ms, 5);
+    assert.ok(steps[1].t <= steps[2].t, 't is the start of a step: its duration is subtracted');
+    assert.deepEqual(steps[1].data.sent, [{ role: 'user', content: 'x' }], 'data is copied when recorded');
+    assert.deepEqual(j.list()[0].tokens, { input: 150, output: 10, cacheRead: 90 });
+});
+
+test('a state call inside an LLM tool is that tool\'s step, a direct one is a step of its own', async () => {
+    const j = new Journal({ hours: 24, file: '', log });
+    let id;
+    await j.run('Licht an', 'chat', {}, async () => {
+        id = j.list()[0].id;
+        await j.stateCall('get_states', { ids: ['a.0.x'] }, async () => ({ 'a.0.x': 1 }));
+        await j.toolCall('set_state', { id: 'a.0.y', value: true }, () =>
+            j.stateCall('set_state', { id: 'a.0.y', value: true }, async () => ({ ok: true })),
+        );
+        await assert.rejects(j.toolCall('get_logs', {}, async () => {
+            throw new Error('denied');
+        }), /denied/);
+        return 'Ok.';
+    });
+    const steps = await j.trace(id);
+    assert.deepEqual(steps.map(s => `${s.stage}:${s.title}`), [
+        'request:Request from chat (chat)',
+        'state:get_states',
+        'tool:Tool set_state',
+        'tool:Tool get_logs failed: denied',
+    ]);
+    assert.deepEqual(steps[1].data.result, { 'a.0.x': 1 });
+    assert.equal(steps[3].level, 'error');
+    const [entry] = j.list();
+    assert.deepEqual(entry.read, ['a.0.x']);
+    assert.deepEqual(entry.written, [{ id: 'a.0.y', value: true }]);
+    assert.deepEqual(entry.tools.map(t => t.name), ['set_state', 'get_logs']);
+    assert.equal(entry.tools[1].error, 'denied');
+});
+
+test('a failure ends the trace with the error and its stack', async () => {
+    const j = new Journal({ hours: 24, file: '', log });
+    const err = Object.assign(new Error('429 rate limited'), { status: 429, error: { type: 'rate_limit' } });
+    await assert.rejects(j.run('q', 'chat', {}, async () => {
+        throw err;
+    }));
+    const steps = await j.trace(j.list()[0].id);
+    const last = steps.at(-1);
+    assert.equal(last.stage, 'error');
+    assert.equal(last.data.status, 429);
+    assert.deepEqual(last.data.error, { type: 'rate_limit' });
+    assert.match(last.data.stack, /429 rate limited/);
+});
+
+test('the synthesis of a reply is added to the latest request of its source', async () => {
+    const seen = [];
+    const j = new Journal({ hours: 24, file: '', log, onChange: e => seen.push(e.ttsMs) });
+    await j.run('erste', 'Kitchen', { sttMs: 300, audioMs: 1800 }, async () => 'eins');
+    await j.run('zweite', 'Kitchen', {}, async () => 'zwei');
+    await j.run('andere', 'Office', {}, async () => 'drei');
+    j.spoken('Kitchen', { ms: 420, audioMs: 1234.5, provider: 'azure', voice: 'de-DE-KatjaNeural' });
+    j.spoken('Kitchen', { ms: 999, audioMs: 1, provider: 'azure' });
+    const [first, second, other] = j.list();
+    assert.equal(first.audioMs, 1800);
+    assert.equal(first.ttsMs, undefined);
+    assert.equal(second.ttsMs, 420, 'the newest one, and only once');
+    assert.equal(second.replyAudioMs, 1235);
+    assert.equal(other.ttsMs, undefined);
+    assert.equal(seen.at(-1), 420, 'published, so the chat updates');
+    const steps = await j.trace(second.id);
+    assert.equal(steps.at(-1).stage, 'tts');
+    assert.match(steps.at(-1).title, /azure \(de-DE-KatjaNeural\), 1\.2 s/);
+});
+
+test('long strings are cut and buffers summarised in a snapshot', () => {
+    const out = snapshot({ text: 'x'.repeat(100_010), pcm: Buffer.alloc(32000), n: 1n });
+    assert.match(out.text, /… \[\+10 chars\]$/);
+    assert.equal(out.pcm, '<32000 bytes>');
+    assert.equal(out.n, '1');
+});
+
+test('traces are kept in files, read back after a restart and deleted with their request', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'journal-'));
+    const file = path.join(dir, 'journal.json');
+    const j = new Journal({ hours: 24, file, log });
+    await j.run('Licht an', 'chat', {}, async () => {
+        j.step({ stage: 'nlu', title: 'NLU: on Licht' });
+        return 'Ok.';
+    });
+    const { id } = j.list()[0];
+    await j.flush();
+    assert.ok(fs.existsSync(path.join(traceDirFor(file), `${id}.json`)));
+
+    const j2 = new Journal({ hours: 24, file, log });
+    await j2.load();
+    assert.deepEqual((await j2.trace(id)).map(s => s.stage), ['request', 'nlu']);
+    assert.equal(await j2.trace('../journal'), null, 'an id is never a path');
+    assert.equal(await j2.trace('unknown'), null);
+
+    j2.clear();
+    await j2.flush();
+    assert.deepEqual(fs.readdirSync(traceDirFor(file)), []);
+    fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('only the newest traces stay in memory when there is no file to read the others back from', async () => {
+    const j = new Journal({ hours: 24, file: '', log });
+    for (let i = 0; i < 205; i++) {
+        await j.run(`q${i}`, 'chat', {}, async () => 'a');
+    }
+    const entries = j.list();
+    assert.equal(await j.trace(entries[0].id), null);
+    assert.ok(await j.trace(entries.at(-1).id));
 });
 
 test('transport is derived from the source', () => {

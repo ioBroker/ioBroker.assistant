@@ -99,6 +99,27 @@ test('audio-start/chunk/stop → transcript + spoken reply', async () => {
     });
 });
 
+test('the journal learns the recording length and the synthesis of a reply — not of a bare synthesize', async () => {
+    const got = { spoken: [] };
+    const opts = {
+        answer: async (q, sttMs, audioMs) => ((got.sttMs = sttMs), (got.audioMs = audioMs), `Antwort: ${q}`),
+        onSpoken: info => got.spoken.push(info),
+    };
+    await withServer(opts, async sock => {
+        sock.write(encode('audio-start', { rate: 16000, width: 2, channels: 1 }));
+        sock.write(encode('audio-chunk', { rate: 16000, width: 2, channels: 1 }, Buffer.alloc(6400, 3)));
+        sock.write(encode('audio-stop'));
+        await delay(300);
+        assert.equal(got.audioMs, 200, '6400 bytes at 16 kHz');
+        assert.equal(typeof got.sttMs, 'number');
+        assert.equal(got.spoken.length, 1);
+        assert.equal(Math.round(got.spoken[0].audioMs), 417, '20000 bytes at 24 kHz');
+        sock.write(encode('synthesize', { text: 'Hallo' }));
+        await delay(200);
+        assert.equal(got.spoken.length, 1, 'a client-side synthesize is no request of ours');
+    });
+});
+
 test('synthesize → audio-* (text to speech only)', async () => {
     await withServer({}, async (sock, events) => {
         sock.write(encode('synthesize', { text: 'Hallo' }));

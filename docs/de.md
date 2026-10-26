@@ -123,6 +123,14 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
 - Oder aus einem Skript: `sendTo('assistant.0', 'ask', { text: 'Ist ein Fenster offen?' }, cb)`.
 - Oder den **Test-Chat**-Reiter in den Adapter-Einstellungen nutzen (funktioniert bei laufender Instanz).
 
+Der Chat zeigt live alle Anfragen — auch die von Satelliten, Telegram und Skripten. **Ein Klick auf eine
+Frage oder Antwort** öffnet die Details zur Fehlersuche: Spracherkennung (Aufnahmelänge, Dauer,
+Pegel), welche Stufe geantwortet hat und warum die vorherigen nicht (z. B. welcher Teil eines Befehls
+lokal nicht ausführbar war), der komplette Prompt und jede Runde des Sprachmodells mit Token-Zahlen,
+alle Tool-Aufrufe mit vollständigen Argumenten und Ergebnissen, gelesene und geschriebene States sowie
+die Sprachausgabe — mit Zeitleiste und als JSON zum Kopieren oder Herunterladen. Die Details werden für
+die letzten 200 Anfragen aufbewahrt.
+
 ### Wetter
 
 Wetterfragen (*„Wie ist das Wetter?"*, *„Regnet es morgen?"*) beantwortet der Assistent aus einem
@@ -359,7 +367,7 @@ aus setzen. Jeder Satellit bekommt dafür zwei States:
 
 | State                                |                                                                                                                                      |
 |--------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| `satellites.<id>.availableWakeWords` | nur lesbar, JSON: alle Modelle der Firmware mit gesprochener Phrase, trainierten Sprachen und wie viele gleichzeitig lauschen dürfen |
+| `satellites.<id>.availableWakeWords` | nur lesbar, JSON: alle Modelle der Firmware (und hochgeladene, `custom: true`) mit gesprochener Phrase, trainierten Sprachen und wie viele gleichzeitig lauschen dürfen |
 | `satellites.<id>.wakeWords`          | schreibbar, ids kommagetrennt, z. B. `okay_nabu,hey_jarvis`                                                                          |
 
 Du schreibst die gewünschten ids hinein, das Gerät stellt um — und der Wert wird vom Gerät
@@ -377,6 +385,42 @@ sendTo('assistant.0', 'setWakeWords', { device: '3RSPK-…', wakeWords: ['okay_n
 Ein ThirdReality-Lautsprecher bringt neun Modelle mit, aktiv ist `okay_nabu`, zwei Plätze sind frei.
 Wichtig vor dem Umstellen: **nur `okay_nabu` ist auf mehr als Englisch trainiert** (en, nl, fr, de, it,
 es, sv) — auf einem deutschen System ist die Werkseinstellung also zugleich die beste Wahl.
+
+#### Eigenes Wake-Word hochladen
+
+Neben den eingebauten Modellen kannst du eigene **microWakeWord-Modelle** auf die ESPHome-Satelliten
+bringen, z. B. ein selbst trainiertes „Hey Hannah". In den Geräte-Einstellungen (Zahnrad im Reiter
+**Satelliten**) unter den Wake-Word-Chips **Eigenes Wake-Word hochladen** klicken, die `.tflite`-Datei
+auswählen (am besten zusammen mit ihrer `.json`), die Phrase prüfen und hochladen. Das Wort erscheint
+dann bei allen ESPHome-Satelliten als Chip mit Personen-Symbol. Erst wenn du es dort **aktivierst**, lädt
+das Gerät das Modell über den Media-Server (`esphomeMediaPort`) herunter — danach behält es das Modell
+dauerhaft.
+
+- Nur **microWakeWord** (`.tflite`, Typ `micro`) — mehr nimmt die Firmware von außen nicht an.
+  openWakeWord- oder Porcupine-Modelle lassen sich so nicht installieren. Fertige Modelle gibt es bei
+  [esphome/micro-wake-word-models](https://github.com/esphome/micro-wake-word-models), eigene trainierst
+  du mit [microWakeWord](https://github.com/kahrendt/microWakeWord).
+- Ohne `.json` nimmt der Adapter die Phrase aus dem Dateinamen, die Sprache aus `voiceLanguage` und die
+  übliche Schwelle 0,97. Die Empfindlichkeit stellst du danach am Gerät mit
+  `wake_word_1_sensitivity`/`wake_word_2_sensitivity` nach.
+- Gespeichert wird im Dateispeicher der Instanz unter `assistant.0/wakewords/`. Die id enthält einen Teil
+  der Modell-Prüfsumme, ein neu trainiertes Modell ist also ein **neues** Wake-Word — ein Gerät, das das
+  alte schon hat, würde ein geändertes Modell unter derselben id nie neu laden.
+- **Löschen** (✕ am Chip) nimmt das Wort aus dem Angebot. Ein Gerät, das es schon heruntergeladen hat,
+  behält seine Kopie: Die ESPHome-API kann keine Modelle vom Gerät entfernen.
+- Kann das Gerät das Modell nicht laden (Media-Server nicht erreichbar, kein microWakeWord-Modell), bleibt
+  die bisherige Auswahl aktiv und im Log steht eine Warnung.
+
+Aus einem Skript (`model` = die `.tflite` als Base64, `config` = der Text der `.json`, beides optional außer
+`model`):
+
+```js
+sendTo('assistant.0', 'uploadWakeWord', { model, fileName: 'hey_hannah.tflite', config, phrase: 'Hey Hannah' }, r =>
+    log(JSON.stringify(r)), // { ok, id, phrase, languages, size, devices } oder { error }
+);
+sendTo('assistant.0', 'listWakeWords', {}, r => log(JSON.stringify(r)));
+sendTo('assistant.0', 'deleteWakeWord', { id: 'hey_hannah_1a2b3c4d' });
+```
 
 #### Geräte-Einstellungen
 
@@ -889,6 +933,7 @@ Alles, was der Assistent kann, ist aus einem Skript erreichbar. Die Antwort komm
 | `getWeather`                                         | `{ when? }`                                                              | das Wetter aus deinem Wetter-Adapter (§4)                                    |
 | `playYouTube` | `{ query, kind?: 'channel'/'video'/'playlist', player? }` | `{ ok, text, title?, id? }` — suchen, Fernseher einschalten, abspielen (§4) |
 | `getWakeWords` / `setWakeWords`                      | `{}` / `{ device, wakeWords }`                                           | §6                                                                           |
+| `uploadWakeWord` / `listWakeWords` / `deleteWakeWord` | `{ model, fileName?, config?, phrase?, languages? }` / `{}` / `{ id }`  | §6, eigenes Wake-Word                                                        |
 | `getControls` / `setControl`                         | `{}` / `{ device, control, value }`                                      | §6                                                                           |
 | `getDevices` / `setDeviceName` / `translateName`     | `{ language? }` / `{ stateId, name, language }` / …                      | die Geräteliste, die der Assistent sieht, und ihre Namen (§5)                |
 | `clearCache`                                         | `{}`                                                                     | Geräte, Räume und Funktionen jetzt neu einlesen                              |

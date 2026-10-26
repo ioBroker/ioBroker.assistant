@@ -22,8 +22,10 @@ export interface WyomingServerOptions {
     language: string;
     stt: SttEngine;
     tts: TtsEngine;
-    /** `sttMs`: how long recognition took (for the journal). */
-    answer: (question: string, sttMs: number) => Promise<string>;
+    /** `sttMs`: how long recognition took, `audioMs`: length of the recording (both for the journal). */
+    answer: (question: string, sttMs: number, audioMs: number) => Promise<string>;
+    /** The reply was synthesised: how long that took and how long it plays (for the request journal). */
+    onSpoken?: (info: { ms: number; audioMs: number }) => void;
     /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
     getHints?: () => string[] | Promise<string[]>;
     log: ioBroker.Logger;
@@ -218,10 +220,13 @@ class WyomingConnection {
             if (!text) {
                 return;
             }
-            const answer = (await this.opts.answer(text, sttMs)).trim();
+            const audioMs = Math.round((pcm.length / 2 / this.audioRate) * 1000);
+            const answer = (await this.opts.answer(text, sttMs, audioMs)).trim();
             this.opts.log.info(`Wyoming A: ${answer}`);
-            if (answer) {
-                await this.speak(answer);
+            const spoken = answer ? await this.speak(answer) : null;
+            if (spoken) {
+                // Only a reply counts — a bare `synthesize` from the client is no request of ours.
+                this.opts.onSpoken?.(spoken);
             }
         } catch (e) {
             this.opts.log.error(`Wyoming pipeline failed: ${(e as Error).message}`);
@@ -229,21 +234,26 @@ class WyomingConnection {
         }
     }
 
-    private async speak(text: string): Promise<void> {
+    /** Synthesise and stream `text`; returns how long synthesis took and how long the audio plays. */
+    private async speak(text: string): Promise<{ ms: number; audioMs: number } | null> {
         if (!text) {
-            return;
+            return null;
         }
         try {
+            const ttsStart = Date.now();
             const { pcm, sampleRate } = await this.opts.tts.synthesize(text, this.lang);
+            const spoken = { ms: Date.now() - ttsStart, audioMs: (pcm.length / 2 / sampleRate) * 1000 };
             const meta = { rate: sampleRate, width: 2, channels: 1 };
             this.write('audio-start', meta);
             for (let off = 0; off < pcm.length; off += AUDIO_CHUNK) {
                 this.write('audio-chunk', meta, pcm.subarray(off, off + AUDIO_CHUNK));
             }
             this.write('audio-stop', {});
+            return spoken;
         } catch (e) {
             this.opts.log.error(`Wyoming TTS failed: ${(e as Error).message}`);
             this.write('error', { text: (e as Error).message });
+            return null;
         }
     }
 

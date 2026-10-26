@@ -103,8 +103,13 @@ export class LocalLlm {
 
     constructor(private readonly opts: LocalLlmOptions) {}
 
+    /** A prompt is running, so {@link ask} would hand off at once. */
+    get running(): boolean {
+        return this.busy;
+    }
+
     /** Full system prompt = the strict HANDOFF rule (device work must escalate to the tool-enabled cloud LLM). */
-    private systemPrompt(): string {
+    systemPrompt(): string {
         // The local model has NO tools and cannot touch the smart home. Anything device-related MUST hand off,
         // including control commands — otherwise a small model tends to "helpfully" refuse instead of escalating.
         return (

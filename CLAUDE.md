@@ -19,6 +19,54 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Eigene Wake-Words für ESPHome-Satelliten** — `src/lib/voice/wakeWords.ts` (`prepareWakeWord`/
+  `loadWakeWord`/`slugify`). Die ESPHome-API hat **keine Upload-Nachricht**: der Client listet Modelle in
+  **jedem** `VoiceAssistantConfigurationRequest` (`external_wake_words`: id, Phrase, Sprachen, `model_type`,
+  Größe, SHA-256, URL der JSON), das Gerät zeigt sie als verfügbar und lädt erst **beim Aktivieren** (im
+  `SetConfiguration`-Handler, blockierend per curl) `<url>` → `<id>.json` und das Modell aus **demselben
+  Ordner** als `<id>.tflite` (Query wird abgeschnitten). Verifiziert in der Firmware
+  (`thirdreality/voice-music-assistant`, `buildroot/package/thirdreality/linux-voice-assistant-cpp/src/`
+  `satellite/Satellite.cpp` `ResolveWakeWordConfig` + `audio/ExternalWakeWord.cpp`). Daraus folgt:
+  nur `model_type:"micro"` (Rest wird übersprungen); das Gerät lädt das Modell aus dem `model`-Feld der JSON
+  → wir **schreiben `model` auf `<id>.tflite` um**; jede ConfigurationRequest **leert** die externe Liste des
+  Geräts → `esphome.ts.requestWakeWordConfig()` hängt die Angebote **immer** an (auch Handshake und
+  Read-back); ein heruntergeladenes Modell ist danach **lokal** und gewinnt per id gegen das Angebot →
+  die id enthält `sha256[0..8]`, sonst käme ein neu trainiertes Modell nie an; heruntergeladen = bleibt auf
+  dem Gerät (keine Lösch-API), und es steht dann doppelt in `available_wake_words` (lokal + Angebot) →
+  Dedupe in `esphome.ts`. Das Gerät meldet einen fehlgeschlagenen Download nicht → `configChecks`-FIFO
+  vergleicht die angeforderten ids mit dem Read-back und warnt. Ablage im Dateispeicher
+  `assistant.0/wakewords/<id>.{json,tflite}`, ausgeliefert vom `MediaServer` (neu: `serve`/`unserve` für
+  feste Pfade, `/wakeword/<id>.…`). `main.ts`: `loadCustomWakeWords` (in `startEsphome`), `addCustomWakeWord`/
+  `deleteCustomWakeWord`, sendTo `uploadWakeWord`/`listWakeWords`/`deleteWakeWord`, `availableWakeWords`-JSON
+  markiert eigene mit `custom: true`. GUI: `SatelliteSettingsDialog` (Upload-Button → Phrase prüfen →
+  hochladen, ✕ am Chip mit Bestätigung; bekommt dafür `sendTo` von `SatellitesComponent`). Tests:
+  `test/integration/wakeWords.test.js` + Fake-Gerät in `esphome.test.js` lädt wie die Firmware herunter.
+  ⚠️ Noch nicht am echten Gerät getestet (war beim Bau per `EHOSTUNREACH` nicht erreichbar).
+- **Anfrage-Details zum Debuggen im Chat** — Klick auf Frage/Antwort (oder den Detailblock) öffnet
+  `src-admin/src/RequestDetailsDialog.tsx`. Datenquelle ist ein **Trace pro Journal-Eintrag**
+  (`journal.ts`: `JournalStep {t, ms, stage, title, level, tokens, data}`, `Journal.step()`): **nicht**
+  in `journal.last`/`journal.json` (zu groß), sondern sendTo `getJournalTrace {id}` → `{entry, steps}`;
+  eine Datei pro Anfrage in `<Datenverzeichnis>/journal-trace/<id>.json`, nur für die neuesten
+  `MAX_TRACES` (200), im Speicher die neuesten 30; `trace(id)` prüft die id (`ID_RE`), bevor sie ein
+  Dateiname wird. `data` wird beim Aufzeichnen per `snapshot()` kopiert (die Message-Liste des Modells
+  wächst und `markLastMessageForCache` verschiebt Marker), Strings >100 000 Zeichen gekürzt, Buffer
+  zusammengefasst. `t` = **Start** des Schritts (`ms` wird abgezogen) → STT steht bei negativem `t`.
+  Aufgezeichnet: Anfrage+Herkunft, STT (Anbieter, Aufnahmelänge `audioMs`, ESPHome-VAD-Pegel), Kontext-
+  Verlauf, Stopwort/Rückfrage, Routine (Treffer/kein Treffer, jede Aktion), YouTube, **NLU-Parse mit
+  Intents und `nluBlocker`-Grund** (ersetzt `canExecuteNlu`), jede NLU-Ausführung, lokales LLM (Prompt,
+  Rohantwort, HANDOFF/busy/Timeout, übersprungen-Grund), Prompt-Bausteine, Cloud-LLM (`LlmAgent` hat
+  `trace`-Option: Eröffnung mit System-Prompt+Tool-Namen, **pro Runde nur die neu gesendeten Nachrichten**
+  + Antwort + normalisierte Tokens, Fehler mit `errorInfo` inkl. API-Status/Body), Tool-Aufrufe voll
+  (`Journal.toolCall`), direkte MCP-State-Aufrufe (`Journal.stateCall`; innerhalb eines Tools kein
+  eigener Schritt, `toolDepth`), Ack-Prüfung, Antwort (roh mit `[[LISTEN]]`), Fehler mit Stack.
+  **TTS kommt nach der Antwort**: Transporte melden per `onSpoken` (UDP/ESPHome/Wyoming, nativ direkt) →
+  `main.reportSpoken` → `Journal.spoken(source, …)` hängt `ttsMs`/`replyAudioMs` an den letzten Eintrag
+  der Quelle (≤2 min). Wyoming meldet nur Antworten, kein reines `synthesize`. Neue Entry-Felder
+  `audioMs`, `ttsMs`, `replyAudioMs`, `tokens` (Summe). Dialog: Kopf (Herkunft, Frage/Antwort, Zeiten,
+  Tokens), Tab **Ablauf** (Wasserfall-Balken, aufklappbar; LLM-Nachrichten/Content-Blöcke/`tool_calls`
+  lesbar statt Roh-JSON, `cache_control` als Chip), **Tools & States**, **JSON** (kopieren/herunterladen).
+  Live-Nachladen, solange der Eintrag sich ändert (max. ein Fetch gleichzeitig). Gemeinsame Typen/Labels
+  in `src-admin/src/journal.ts`. Schritt-Titel kommen englisch aus dem Backend (Debug-Text).
 - **Sprachpfad schneller (Issue #3, znyde87)** — sechs Teile, Assistant + Satelliten-Lib + Wrapper:
   (1) **NLU-Gerätemodell gecacht** (`main.ts.getNluDevices` → `nluDevices`, TTL `NLU_DEVICES_TTL_MS`=60 s,
   gleichzeitige Anfragen teilen sich den Build, leeres Ergebnis wird nicht gehalten). Vorher pro Sprachbefehl

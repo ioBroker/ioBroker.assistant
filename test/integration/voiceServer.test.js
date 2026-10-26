@@ -100,6 +100,28 @@ test('audio → audio_end runs STT→answer→TTS and streams the reply', async 
     });
 });
 
+test('the journal learns the recording length and how the reply was synthesised', async () => {
+    const seen = {};
+    const opts = {
+        answer: async (_q, ctx) => ((seen.ctx = ctx), 'Licht ist an'),
+        onSpoken: (device, info) => (seen.spoken = { device, ...info }),
+    };
+    await withServer(opts, async (_server, sat) => {
+        sat.send(ctrl({ type: 'register', device: 'wz', listen_port: SAT }));
+        await delay(60);
+        for (let i = 0; i < 5; i++) {
+            sat.send(audio(Buffer.alloc(3200, i + 1)));
+            await delay(5);
+        }
+        sat.send(ctrl({ type: 'audio_end', device: 'wz' }));
+        await delay(250);
+        assert.equal(seen.ctx.audioMs, 500, '5 × 3200 bytes at 16 kHz');
+        assert.equal(seen.spoken.device, 'wz');
+        assert.equal(seen.spoken.audioMs, 500, '24000 bytes at 24 kHz');
+        assert.equal(typeof seen.spoken.ms, 'number');
+    });
+});
+
 test('announce plays PCM on a specific device and on all', async () => {
     await withServer({}, async (server, sat) => {
         sat.send(ctrl({ type: 'register', device: 'wz', listen_port: SAT }));

@@ -31,6 +31,17 @@ import {
 import { ConfigGeneric, type ConfigGenericProps, type ConfigGenericState } from '@iobroker/json-config';
 import { I18n } from '@iobroker/gui-components';
 
+import {
+    TIER_COLORS,
+    TIER_LABELS,
+    TRANSPORT_LABELS,
+    formatMs,
+    formatTokens,
+    formatValue,
+    type JournalEntry,
+} from './journal';
+import RequestDetailsDialog, { type TraceResponse } from './RequestDetailsDialog';
+
 // Register this component's translations into the shared admin I18n so the `custom_assistant_*`
 // keys resolve (instance-config custom components don't auto-load admin/custom/i18n).
 const translations: Record<string, Record<string, string>> = {};
@@ -52,29 +63,6 @@ interface ChatMessage {
     ts: number;
 }
 
-/** One request as recorded by the adapter's journal (mirrors `src/lib/journal.ts`). */
-interface JournalEntry {
-    id: string;
-    ts: number;
-    done: boolean;
-    ms?: number;
-    source: string;
-    transport: 'chat' | 'script' | 'state' | 'telegram' | 'esphome' | 'udp' | 'native' | 'wyoming';
-    satellite?: string;
-    room?: string;
-    wakeWord?: string;
-    sttMs?: number;
-    question: string;
-    answer?: string;
-    error?: string;
-    tier?: 'stop' | 'askReply' | 'routine' | 'nlu' | 'localLlm' | 'cloud' | 'none';
-    detail?: string;
-    tools: { name: string; args: Record<string, unknown>; ms: number; result?: string; error?: string }[];
-    read: string[];
-    written: { id: string; value: unknown }[];
-    followUp?: boolean;
-}
-
 interface ChatState extends ConfigGenericState {
     /** Local-only messages: info notices, errors without a journal entry, and everything when the journal is off. */
     messages: ChatMessage[];
@@ -84,6 +72,8 @@ interface ChatState extends ConfigGenericState {
     journalEnabled: boolean | null;
     /** Show tier/tools/state ids under every exchange. */
     showDetails: boolean;
+    /** Request whose full details are open in a dialog ('' = none). */
+    detailsId: string;
     /** '' = all sources, else a {@link sourceKey}. */
     filter: string;
     confirmClear: boolean;
@@ -113,51 +103,9 @@ interface SpeechRecognitionLike {
     stop(): void;
 }
 
-const TRANSPORT_LABELS: Record<JournalEntry['transport'], string> = {
-    chat: 'Chat',
-    script: 'custom_assistant_Script',
-    state: 'custom_assistant_State',
-    telegram: 'Telegram',
-    esphome: 'ESPHome',
-    udp: 'UDP',
-    native: 'ioBroker',
-    wyoming: 'Wyoming',
-};
-
-const TIER_LABELS: Record<NonNullable<JournalEntry['tier']>, string> = {
-    stop: 'custom_assistant_Stop word',
-    askReply: 'custom_assistant_Reply to a question',
-    routine: 'custom_assistant_Routine',
-    nlu: 'custom_assistant_Rule-based NLU',
-    localLlm: 'custom_assistant_Local LLM',
-    cloud: 'custom_assistant_Cloud LLM',
-    none: 'custom_assistant_Not understood',
-};
-
-const TIER_COLORS: Record<NonNullable<JournalEntry['tier']>, string> = {
-    stop: '#78909c',
-    askReply: '#78909c',
-    routine: '#00897b',
-    nlu: '#43a047',
-    localLlm: '#8e24aa',
-    cloud: '#1e88e5',
-    none: '#e53935',
-};
-
 /** Who asked: the satellite for voice, else the source ("telegram:Max", "chat", a script name). */
 function sourceKey(e: JournalEntry): string {
     return e.satellite || e.source || e.transport;
-}
-
-function formatValue(v: unknown): string {
-    return typeof v === 'string' ? `"${v}"` : JSON.stringify(v);
-}
-
-function formatMs(ms: number | undefined): string {
-    if (ms === undefined) {
-        return '';
-    }
-    return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
 /**
@@ -187,6 +135,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             entries: {},
             journalEnabled: null,
             showDetails,
+            detailsId: '',
             filter: '',
             confirmClear: false,
             input: '',
@@ -203,8 +152,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
     private async checkTtsAvailable(): Promise<void> {
         try {
             const res = (await this.props.oContext.socket.sendTo(this.instanceId, 'ttsAvailable', {})) as
-                | { available?: boolean }
-                | undefined;
+                { available?: boolean } | undefined;
             this.setState({ ttsAvailable: !!res?.available });
         } catch {
             this.setState({ ttsAvailable: false });
@@ -215,8 +163,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
     private async loadJournal(): Promise<void> {
         try {
             const res = (await this.props.oContext.socket.sendTo(this.instanceId, 'getJournal', {})) as
-                | { enabled?: boolean; entries?: JournalEntry[] }
-                | undefined;
+                { enabled?: boolean; entries?: JournalEntry[] } | undefined;
             if (!res || res.enabled === undefined) {
                 // An older adapter version without a journal.
                 this.setState({ journalEnabled: false });
@@ -384,8 +331,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         this.setState({ ttsPlaying: key });
         try {
             const res = (await this.props.oContext.socket.sendTo(this.instanceId, 'tts', { text })) as
-                | { audio?: string; mime?: string; error?: string }
-                | undefined;
+                { audio?: string; mime?: string; error?: string } | undefined;
             if (res?.audio) {
                 const audio = new Audio(`data:${res.mime || 'audio/wav'};base64,${res.audio}`);
                 audio.onended = () => this.setState({ ttsPlaying: '' });
@@ -452,8 +398,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
 
         try {
             const res = (await this.props.oContext.socket.sendTo(this.instanceId, 'ask', { text })) as
-                | { answer?: string; error?: string; journaled?: boolean }
-                | undefined;
+                { answer?: string; error?: string; journaled?: boolean } | undefined;
             // A journaled exchange shows up through `journal.last`; add only what the journal does not have.
             if (res?.error !== undefined) {
                 if (!res.journaled) {
@@ -503,6 +448,22 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         }
     };
 
+    /** The request-details dialog loads the full processing trace of one request. */
+    private fetchTrace = async (id: string): Promise<TraceResponse> => {
+        const res = (await this.props.oContext.socket.sendTo(this.instanceId, 'getJournalTrace', { id })) as
+            TraceResponse | undefined;
+        // An adapter without this command does not answer at all.
+        return res || { error: 'no answer from the adapter' };
+    };
+
+    /** Open the details of a request — unless the click ended a text selection (copying a reply). */
+    private openDetails(id: string): void {
+        if (window.getSelection()?.toString()) {
+            return;
+        }
+        this.setState({ detailsId: id });
+    }
+
     private toggleDetails(): void {
         const showDetails = !this.state.showDetails;
         this.setState({ showDetails });
@@ -532,7 +493,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         role: ChatMessage['role'],
         text: React.ReactNode,
         ts: number,
-        opts: { header?: React.ReactNode; footer?: React.ReactNode; playText?: string } = {},
+        opts: { header?: React.ReactNode; footer?: React.ReactNode; playText?: string; onClick?: () => void } = {},
     ): React.JSX.Element {
         const isUser = role === 'user';
         const { bg, color } = this.bubbleColors(role);
@@ -543,6 +504,8 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             >
                 <Paper
                     elevation={1}
+                    onClick={opts.onClick}
+                    title={opts.onClick ? I18n.t('custom_assistant_Click for details') : undefined}
                     sx={{
                         px: 1.5,
                         py: 1,
@@ -552,6 +515,10 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
                         borderRadius: 2,
                         whiteSpace: 'pre-wrap',
                         wordBreak: 'break-word',
+                        cursor: opts.onClick ? 'pointer' : undefined,
+                        outline: '2px solid transparent',
+                        transition: 'outline-color 0.15s',
+                        '&:hover': opts.onClick ? { outlineColor: 'rgba(127,127,127,0.45)' } : undefined,
                     }}
                 >
                     {opts.header}
@@ -569,7 +536,10 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
                                     <IconButton
                                         size="small"
                                         disabled={!this.ready || this.state.ttsPlaying === key}
-                                        onClick={() => void this.playViaBackend(key, opts.playText || '')}
+                                        onClick={e => {
+                                            e.stopPropagation(); // not a click on the bubble
+                                            void this.playViaBackend(key, opts.playText || '');
+                                        }}
                                         sx={{ p: 0.25, color: 'inherit', opacity: 0.7 }}
                                     >
                                         {this.state.ttsPlaying === key ? (
@@ -653,7 +623,10 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             chips.push(
                 e.wakeWord
                     ? this.chip(`🎙 ${e.wakeWord}`, I18n.t('custom_assistant_Wake word'))
-                    : this.chip(`🎙 ${I18n.t('custom_assistant_follow-up')}`, I18n.t('custom_assistant_Mic re-opened without wake word')),
+                    : this.chip(
+                          `🎙 ${I18n.t('custom_assistant_follow-up')}`,
+                          I18n.t('custom_assistant_Mic re-opened without wake word'),
+                      ),
             );
         }
         if (e.sttMs !== undefined) {
@@ -701,7 +674,19 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             );
         }
         return (
-            <Box sx={{ ml: 1, mb: 1.5, pl: 1, borderLeft: '2px solid rgba(127,127,127,0.35)', opacity: 0.85 }}>
+            <Box
+                onClick={() => this.openDetails(e.id)}
+                title={I18n.t('custom_assistant_Click for details')}
+                sx={{
+                    ml: 1,
+                    mb: 1.5,
+                    pl: 1,
+                    borderLeft: '2px solid rgba(127,127,127,0.35)',
+                    opacity: 0.85,
+                    cursor: 'pointer',
+                    '&:hover': { opacity: 1, borderLeftColor: 'rgba(127,127,127,0.8)' },
+                }}
+            >
                 <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.25 }}>
                     {e.tier ? this.chip(I18n.t(TIER_LABELS[e.tier]), undefined, TIER_COLORS[e.tier]) : null}
                     {e.detail ? (
@@ -715,11 +700,22 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
                     {e.done ? (
                         <Typography
                             variant="caption"
-                            sx={{ opacity: 0.7 }}
+                            sx={{ opacity: 0.7, mr: 1 }}
                         >
                             {formatMs(e.ms)}
                         </Typography>
                     ) : null}
+                    {e.tokens ? (
+                        <Typography
+                            variant="caption"
+                            sx={{ opacity: 0.6, mr: 1 }}
+                        >
+                            {formatTokens(e.tokens)}
+                        </Typography>
+                    ) : null}
+                    {e.ttsMs !== undefined
+                        ? this.chip(`TTS ${formatMs(e.ttsMs)}`, I18n.t('custom_assistant_Speech synthesis'))
+                        : null}
                     {e.followUp ? this.chip(I18n.t('custom_assistant_waits for reply')) : null}
                 </Box>
                 {lines}
@@ -728,33 +724,34 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
     }
 
     private renderEntry(e: JournalEntry): React.JSX.Element {
+        const onClick = (): void => this.openDetails(e.id);
         let answer: React.JSX.Element;
         if (!e.done) {
             answer = (
                 <Box
                     key={`${e.id}a`}
-                    sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, opacity: 0.7 }}
+                    onClick={onClick}
+                    title={I18n.t('custom_assistant_Click for details')}
+                    sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, opacity: 0.7, cursor: 'pointer' }}
                 >
                     <CircularProgress size={16} />
                     <Typography variant="body2">{I18n.t('custom_assistant_Thinking…')}</Typography>
                 </Box>
             );
         } else if (e.error) {
-            answer = this.renderBubble(`${e.id}a`, 'error', e.error, e.ts + (e.ms || 0));
+            answer = this.renderBubble(`${e.id}a`, 'error', e.error, e.ts + (e.ms || 0), { onClick });
         } else {
             answer = this.renderBubble(
                 `${e.id}a`,
                 'assistant',
-                e.answer || (
-                    <i style={{ opacity: 0.6 }}>{I18n.t('custom_assistant_(no spoken answer)')}</i>
-                ),
+                e.answer || <i style={{ opacity: 0.6 }}>{I18n.t('custom_assistant_(no spoken answer)')}</i>,
                 e.ts + (e.ms || 0),
-                { playText: e.answer || undefined },
+                { playText: e.answer || undefined, onClick },
             );
         }
         return (
             <React.Fragment key={e.id}>
-                {this.renderBubble(`${e.id}q`, 'user', e.question, e.ts, { header: this.renderOrigin(e) })}
+                {this.renderBubble(`${e.id}q`, 'user', e.question, e.ts, { header: this.renderOrigin(e), onClick })}
                 {answer}
                 {this.renderDetails(e)}
             </React.Fragment>
@@ -807,8 +804,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
 
     renderItem(): React.JSX.Element {
         const dark = this.props.oContext.themeType === 'dark';
-        const { alive, messages, entries, sending, input, listening, speak, journalEnabled, showDetails } =
-            this.state;
+        const { alive, messages, entries, sending, input, listening, speak, journalEnabled, showDetails } = this.state;
         const ready = this.ready;
         const timeline = this.renderTimeline();
         const empty = !messages.length && !Object.keys(entries).length;
@@ -817,13 +813,17 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 300px)' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
                     <Box>
-                        <Typography variant="h6">{I18n.t(journalEnabled ? 'custom_assistant_Chat' : 'custom_assistant_Test chat')}</Typography>
+                        <Typography variant="h6">
+                            {I18n.t(journalEnabled ? 'custom_assistant_Chat' : 'custom_assistant_Test chat')}
+                        </Typography>
                         {journalEnabled ? (
                             <Typography
                                 variant="caption"
                                 sx={{ opacity: 0.7 }}
                             >
-                                {I18n.t('custom_assistant_Shows all requests live: satellites, Telegram, scripts and this chat.')}
+                                {I18n.t(
+                                    'custom_assistant_Shows all requests live: satellites, Telegram, scripts and this chat.',
+                                )}
                             </Typography>
                         ) : null}
                     </Box>
@@ -885,7 +885,9 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
                                     size="small"
                                     disabled={empty}
                                     onClick={() =>
-                                        journalEnabled ? this.setState({ confirmClear: true }) : void this.clearHistory()
+                                        journalEnabled
+                                            ? this.setState({ confirmClear: true })
+                                            : void this.clearHistory()
                                     }
                                 >
                                     <ClearIcon />
@@ -941,9 +943,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
                 <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 1 }}>
                     {this.speechSupported ? (
                         <Tooltip
-                            title={I18n.t(
-                                listening ? 'custom_assistant_Stop listening' : 'custom_assistant_Speak',
-                            )}
+                            title={I18n.t(listening ? 'custom_assistant_Stop listening' : 'custom_assistant_Speak')}
                         >
                             <span>
                                 <IconButton
@@ -978,6 +978,15 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
                         <SendIcon />
                     </IconButton>
                 </Box>
+
+                {this.state.detailsId && entries[this.state.detailsId] ? (
+                    <RequestDetailsDialog
+                        entry={entries[this.state.detailsId]}
+                        fetchTrace={this.fetchTrace}
+                        dark={dark}
+                        onClose={() => this.setState({ detailsId: '' })}
+                    />
+                ) : null}
 
                 <Dialog
                     open={this.state.confirmClear}

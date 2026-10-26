@@ -110,11 +110,23 @@ export interface EsphomeSatellitesOptions {
     language: string;
     stt: SttEngine;
     tts: TtsEngine;
-    /** Produce the assistant reply for a transcribed utterance. */
+    /**
+     * Produce the assistant reply for a transcribed utterance. `audioMs` is the length of the recording,
+     * `vad` what the voice activity detection made of it (both for the request journal).
+     */
     answer: (
         question: string,
-        ctx: { device: string; room: string; wakeWord: string; sttMs: number },
+        ctx: {
+            device: string;
+            room: string;
+            wakeWord: string;
+            sttMs: number;
+            audioMs: number;
+            vad: { peak: number; noiseFloor: number; startLevel: number; endLevel: number };
+        },
     ) => Promise<string>;
+    /** The reply was synthesised: how long that took and how long it plays (for the request journal). */
+    onSpoken?: (device: string, info: { ms: number; audioMs: number }) => void;
     /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
     getHints?: () => string[] | Promise<string[]>;
     /** Where spoken replies are published for the device to fetch. */
@@ -137,13 +149,31 @@ export interface EsphomeSatellitesOptions {
     onEntityState?: (device: string, room: string, entity: EsphomeEntity) => void;
     /** True when the reply asks something back, so the device should re-open its mic without a wake word. */
     expectsFollowUp?: (answer: string, device: string) => boolean;
+    /**
+     * Custom wake words to offer the devices, re-read for every configuration request. The device lists
+     * them next to its own and downloads one (from the media server) only when it is selected.
+     */
+    externalWakeWords?: () => ExternalWakeWordOffer[];
 }
 
-/** What a device reports about its wake words. Which ones exist is fixed by the firmware. */
+/** A custom wake word as offered to the devices; the files are on the media server under `path`. */
+export interface ExternalWakeWordOffer {
+    id: string;
+    phrase: string;
+    languages: string[];
+    /** Size of the `.tflite` in bytes. */
+    size: number;
+    /** SHA-256 of the `.tflite`, lower-case hex. */
+    sha256: string;
+    /** URL path of the JSON config, e.g. `/wakeword/hey_hannah_1a2b3c4d.json`; the model sits next to it. */
+    path: string;
+}
+
+/** What a device reports about its wake words: what the firmware ships plus the custom ones we offered. */
 export interface WakeWordConfig {
     /** Ids currently listening, e.g. `['okay_nabu']`. */
     active: string[];
-    /** Everything the firmware ships, with the spoken phrase and the languages it was trained on. */
+    /** Every wake word the device can use, with the spoken phrase and the languages it was trained on. */
     available: { id: string; phrase: string; languages: string[] }[];
     /** How many may listen at once — 2 on the ThirdReality speaker, which has a sensitivity per slot. */
     max: number;
@@ -221,6 +251,16 @@ export class EsphomeSatellites {
         return true;
     }
 
+    /**
+     * Offer the current custom wake words to every connected satellite again — after one was uploaded
+     * or deleted. Each device answers with its new configuration (→ `onWakeWords`).
+     */
+    refreshWakeWords(): number {
+        const online = this.connections.filter(c => c.online);
+        online.forEach(c => c.requestWakeWordConfig());
+        return online.length;
+    }
+
     /** Everything one satellite exposes besides the voice pipeline (gain, noise suppression, …). */
     entities(device: string): EsphomeEntity[] {
         return this.connections.find(c => c.online && c.deviceName === device)?.entities.list() ?? [];
@@ -286,6 +326,12 @@ class EsphomeConnection {
     online = false;
     /** Last wake-word configuration the device reported; null until the handshake answers. */
     wakeWordConfig: WakeWordConfig | null = null;
+    /**
+     * One entry per configuration request in flight, in send order (the device answers each one, in
+     * order): the ids a preceding `SetConfiguration` asked for, or null. The read-back is the only
+     * failure signal the device gives.
+     */
+    private configChecks: (string[] | null)[] = [];
     /** Everything else the device exposes — rebuilt from scratch on every reconnect. */
     readonly entities = new EntityRegistry();
 
@@ -347,6 +393,7 @@ class EsphomeConnection {
         // The device re-announces everything after a reconnect, and the keys are not stable across
         // reboots, so starting from a clean slate is the only safe option.
         this.entities.clear();
+        this.configChecks = [];
 
         const socket = net.createConnection({ host: this.host, port: this.port }, () => {
             this.opts.log.debug(`ESPHome ${this.host}:${this.port} connected`);
@@ -479,7 +526,7 @@ class EsphomeConnection {
         subscribe.setFlags(SUBSCRIBE_API_AUDIO);
         this.send(subscribe);
 
-        this.send(new pb.VoiceAssistantConfigurationRequest());
+        this.requestWakeWordConfig();
 
         this.pingTimer = setInterval(() => {
             if (++this.missedPings > 2) {
@@ -524,13 +571,19 @@ class EsphomeConnection {
 
             case 'VoiceAssistantConfigurationResponse': {
                 const config = message as VoiceAssistantConfigurationResponse;
+                // A custom wake word the device already downloaded is listed twice: once from its own
+                // model folder and once from our offer.
+                const seen = new Set<string>();
                 this.wakeWordConfig = {
                     active: config.getActiveWakeWordsList(),
-                    available: config.getAvailableWakeWordsList().map(w => ({
-                        id: w.getId(),
-                        phrase: w.getWakeWord(),
-                        languages: w.getTrainedLanguagesList(),
-                    })),
+                    available: config
+                        .getAvailableWakeWordsList()
+                        .map(w => ({
+                            id: w.getId(),
+                            phrase: w.getWakeWord(),
+                            languages: w.getTrainedLanguagesList(),
+                        }))
+                        .filter(w => !seen.has(w.id) && !!seen.add(w.id)),
                     max: config.getMaxActiveWakeWords(),
                 };
                 const active = this.wakeWordConfig.active.join(', ') || '(none active)';
@@ -538,6 +591,16 @@ class EsphomeConnection {
                 this.opts.log.info(
                     `ESPHome ${this.deviceName}: wake words ${active}${available.length ? ` (available: ${available.join(', ')})` : ''}`,
                 );
+                const requested = this.configChecks.shift();
+                const missing = requested?.filter(id => !this.wakeWordConfig?.active.includes(id)) ?? [];
+                if (missing.length) {
+                    // The device answers a model it cannot fetch or load with silence, not an error.
+                    this.opts.log.warn(
+                        `ESPHome ${this.deviceName}: could not activate wake word(s) ${missing.join(', ')}. ` +
+                            `For an uploaded wake word the device must reach ${this.mediaUrl('/')} and the model ` +
+                            `must be a microWakeWord .tflite.`,
+                    );
+                }
                 this.opts.onWakeWords?.(this.deviceName, this.room, this.wakeWordConfig);
                 return;
             }
@@ -757,6 +820,13 @@ class EsphomeConnection {
                     room: this.room,
                     wakeWord: capture.wakeWord,
                     sttMs,
+                    audioMs: Math.round(seconds * 1000),
+                    vad: {
+                        peak: Math.round(capture.detector.peak),
+                        noiseFloor: Math.round(capture.detector.noiseFloor),
+                        startLevel: Math.round(capture.detector.startLevel),
+                        endLevel: Math.round(capture.detector.endLevel),
+                    },
                 })
             ).trim();
             const followUp = !!answer && this.opts.expectsFollowUp?.(answer, this.deviceName) === true;
@@ -768,7 +838,12 @@ class EsphomeConnection {
                 return;
             }
 
+            const ttsStart = Date.now();
             const { pcm: ttsPcm, sampleRate } = await this.opts.tts.synthesize(answer, this.opts.language);
+            this.opts.onSpoken?.(this.deviceName, {
+                ms: Date.now() - ttsStart,
+                audioMs: (ttsPcm.length / 2 / sampleRate) * 1000,
+            });
             const url = this.publish(ttsPcm, sampleRate);
 
             this.status('speaking');
@@ -819,8 +894,40 @@ class EsphomeConnection {
         message.setActiveWakeWordsList(valid);
         this.send(message);
         this.opts.log.info(`ESPHome ${this.deviceName}: wake words set to ${valid.join(', ') || '(none)'}`);
-        // Read back, so the reported state is the device's and not our guess.
-        this.send(new pb.VoiceAssistantConfigurationRequest());
+        // Read back, so the reported state is the device's and not our guess. The device resolves a
+        // custom wake word (and downloads it) while handling the SetConfiguration, so this answer
+        // already tells whether that worked.
+        this.requestWakeWordConfig(valid);
+    }
+
+    /**
+     * Ask the device for its wake-word configuration. The request always carries the current custom
+     * wake words: the firmware replaces its list of offered models with every request, so one sent
+     * without them would make an uploaded wake word vanish from the device until the next offer.
+     *
+     * @param check ids a SetConfiguration just asked for — warned about if the answer lacks them
+     */
+    requestWakeWordConfig(check: string[] | null = null): void {
+        const request = new pb.VoiceAssistantConfigurationRequest();
+        const offers = this.opts.externalWakeWords?.() ?? [];
+        request.setExternalWakeWordsList(
+            offers.map(offer => {
+                const w = new pb.VoiceAssistantExternalWakeWord();
+                w.setId(offer.id);
+                w.setWakeWord(offer.phrase);
+                w.setTrainedLanguagesList(offer.languages);
+                w.setModelType('micro');
+                w.setModelSize(offer.size);
+                w.setModelHash(offer.sha256);
+                w.setUrl(this.mediaUrl(offer.path));
+                return w;
+            }),
+        );
+        // A device that never answers must not let this grow without bound.
+        if (this.configChecks.length < 16) {
+            this.configChecks.push(check);
+        }
+        this.send(request);
     }
 
     /** Drop a half-finished capture (device went away, or told us to stop). */
@@ -864,7 +971,11 @@ class EsphomeConnection {
      * addresses, and the local end of *this* socket is by definition one it can talk to.
      */
     private publish(pcm: Buffer, sampleRate: number): string {
-        const path = this.opts.media.publish(pcmToWav(pcm, sampleRate), 'audio/wav');
+        return this.mediaUrl(this.opts.media.publish(pcmToWav(pcm, sampleRate), 'audio/wav'));
+    }
+
+    /** Absolute URL of a path on the media server, with a host this device can reach. */
+    private mediaUrl(path: string): string {
         const local = (this.socket?.localAddress || '').replace(/^::ffff:/, '');
         const host = this.opts.mediaHost?.trim() || local || '127.0.0.1';
         // An IPv6 literal has to be bracketed in a URL.

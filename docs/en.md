@@ -117,6 +117,13 @@ satellites stay simple. See §7.
 - Or from a script: `sendTo('assistant.0', 'ask', { text: 'Is a window open?' }, cb)`.
 - Or use the **Test chat** tab in the adapter settings (works while the instance is running).
 
+The chat shows every request live — also those from satellites, Telegram and scripts. **Click a question
+or an answer** to open its details for debugging: speech recognition (recording length, duration,
+levels), which tier answered and why the earlier ones did not (e.g. which part of a command could not
+run locally), the full prompt and every round of the language model with token counts, all tool calls
+with complete arguments and results, the states read and written, and speech synthesis — as a timeline,
+and as JSON to copy or download. Details are kept for the latest 200 requests.
+
 ### Weather
 
 Weather questions (*"What's the weather like?"*, *"Will it rain tomorrow?"*) are answered from a weather
@@ -349,7 +356,7 @@ satellite gets two states:
 
 | State | |
 |---|---|
-| `satellites.<id>.availableWakeWords` | read-only JSON: every model the firmware ships, with the spoken phrase, the languages it was trained on, and how many may listen at once |
+| `satellites.<id>.availableWakeWords` | read-only JSON: every model the firmware ships (plus uploaded ones, `custom: true`), with the spoken phrase, the languages it was trained on, and how many may listen at once |
 | `satellites.<id>.wakeWords` | writable, comma-separated ids, e.g. `okay_nabu,hey_jarvis` |
 
 Write the ids you want and the device switches over; the value is read back from the device, so what you
@@ -367,6 +374,41 @@ sendTo('assistant.0', 'setWakeWords', { device: '3RSPK-…', wakeWords: ['okay_n
 A ThirdReality speaker ships nine models with `okay_nabu` active and two slots. Worth knowing before you
 switch: **`okay_nabu` is the only one trained on anything but English** (en, nl, fr, de, it, es, sv), so
 on a German setup the factory default is also the best choice.
+
+#### Uploading your own wake word
+
+Besides the built-in models you can put your own **microWakeWord models** on the ESPHome satellites, e.g.
+a "Hey Hannah" you trained yourself. In the device settings (gear button in the **Satellites** tab), click
+**Upload own wake word** below the wake-word chips, pick the `.tflite` file (ideally together with its
+`.json`), check the phrase and upload. The word then shows up on every ESPHome satellite as a chip with a
+person icon. Only when you **activate** it there does the device download the model from the media server
+(`esphomeMediaPort`) — and from then on it keeps the model.
+
+- **microWakeWord only** (`.tflite`, type `micro`) — that is all the firmware accepts from outside.
+  openWakeWord or Porcupine models cannot be installed this way. Ready-made models are in
+  [esphome/micro-wake-word-models](https://github.com/esphome/micro-wake-word-models); to train your own,
+  use [microWakeWord](https://github.com/kahrendt/microWakeWord).
+- Without a `.json` the adapter takes the phrase from the file name, the language from `voiceLanguage` and
+  the usual 0.97 cutoff. Fine-tune the sensitivity on the device afterwards with
+  `wake_word_1_sensitivity`/`wake_word_2_sensitivity`.
+- The files are stored in the instance's file storage under `assistant.0/wakewords/`. The id contains part
+  of the model's checksum, so a retrained model is a **new** wake word — a device that already has the old
+  one would never fetch a changed model under the same id.
+- **Deleting** (✕ on the chip) stops offering the word. A device that already downloaded it keeps its
+  copy: the ESPHome API cannot remove models from a device.
+- If the device cannot load the model (media server unreachable, not a microWakeWord model), the previous
+  selection stays active and a warning is logged.
+
+From a script (`model` = the `.tflite` as base64, `config` = the text of the `.json`; everything but `model`
+is optional):
+
+```js
+sendTo('assistant.0', 'uploadWakeWord', { model, fileName: 'hey_hannah.tflite', config, phrase: 'Hey Hannah' }, r =>
+    log(JSON.stringify(r)), // { ok, id, phrase, languages, size, devices } or { error }
+);
+sendTo('assistant.0', 'listWakeWords', {}, r => log(JSON.stringify(r)));
+sendTo('assistant.0', 'deleteWakeWord', { id: 'hey_hannah_1a2b3c4d' });
+```
 
 #### Device settings
 
@@ -868,6 +910,7 @@ Everything the assistant can do is reachable from a script. The reply always arr
 | `getWeather` | `{ when? }` | the weather from your weather adapter (§4) |
 | `playYouTube` | `{ query, kind?: 'channel'/'video'/'playlist', player? }` | `{ ok, text, title?, id? }` — search, switch the TV on, play (§4) |
 | `getWakeWords` / `setWakeWords` | `{}` / `{ device, wakeWords }` | §6 |
+| `uploadWakeWord` / `listWakeWords` / `deleteWakeWord` | `{ model, fileName?, config?, phrase?, languages? }` / `{}` / `{ id }` | §6, own wake word |
 | `getControls` / `setControl` | `{}` / `{ device, control, value }` | §6 |
 | `getDevices` / `setDeviceName` / `translateName` | `{ language? }` / `{ stateId, name, language }` / … | the device list the assistant sees, and its names (§5) |
 | `clearCache` | `{}` | re-read devices, rooms and functions now |
