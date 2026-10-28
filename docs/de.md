@@ -61,10 +61,15 @@ Jede Anfrage läuft durch bis zu drei Stufen und stoppt bei der ersten, die antw
 
 ### Anbieter
 
-Ein aktiver LLM-Anbieter: **OpenAI, Anthropic (Claude), Google Gemini, DeepSeek** oder ein beliebiger
+Ein aktiver LLM-Anbieter: **OpenAI, Anthropic (Claude), Google Gemini, DeepSeek, OpenRouter** oder ein beliebiger
 **OpenAI-kompatibler** Endpunkt (z. B. Groq, ein lokaler Server) über eine eigene Basis-URL. Bei einem
 lokalen Server dürfen API-Schlüssel und Modell leer bleiben: das Modell wird dann aus der Modell-Liste des
 Servers genommen.
+
+**Systemweite KI-Einstellungen (Admin)** — der Standard für neue Instanzen — nimmt Anbieter, Modell und
+API-Schlüssel aus den Systemeinstellungen von Admin (Reiter „KI“, ab Admin 8.3.5), wo sie einmal für alle Adapter
+eingerichtet werden. Eine Änderung dort startet die Instanz neu. Eine Instanz mit Anbieter, aber ohne eigenen
+Schlüssel nimmt sie ebenfalls. Die maximale Antwortlänge bleibt die dieses Adapters.
 
 **Keiner (nur lokal)** läuft ganz ohne Cloud-LLM. Dann antworten nur die lokalen Stufen — Routinen, die
 regelbasierten Befehle, Timer und Wecker sowie das lokale Modell, falls aktiviert; alles andere bekommt ein
@@ -98,8 +103,8 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
 - Eine **ioBroker**-Installation mit aktuellem Admin und js-controller (≥ 7.2 empfohlen, nötig für den
   zentralen Zugangsdaten-Speicher).
 - **Eines** von:
-  - einen **API-Schlüssel** für einen LLM-Anbieter (OpenAI, Anthropic, Gemini, DeepSeek oder ein eigener
-    Endpunkt), **oder**
+  - einen **API-Schlüssel** für einen LLM-Anbieter (OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter oder ein
+    eigener Endpunkt) — hier oder einmal in den systemweiten KI-Einstellungen von Admin —, **oder**
   - genug CPU/RAM für das **lokale LLM** (auf Raspberry Pi / arm64 kleine Modelle empfohlen).
 
 **Zusätzlich für Sprache / Satelliten:**
@@ -116,7 +121,9 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
 
 1. Installiere den **ioBroker.assistant**-Adapter aus dem ioBroker-Admin und lege eine Instanz an.
 2. Öffne die Instanz-Einstellungen → Reiter **Settings**:
-   - **Anbieter** — wähle deinen LLM-Anbieter.
+   - **Anbieter** — *Systemweite KI-Einstellungen (Admin)*, wenn Anbieter und Schlüssel in den
+     Systemeinstellungen von Admin (Reiter „KI“) eingerichtet sind; dann ist sonst nichts nötig. Andernfalls
+     wähle deinen LLM-Anbieter.
    - **Schlüssel-Quelle** — *Schlüssel im Adapter speichern* (am einfachsten) oder *Zentraler Zugangsdaten-
      Speicher* (js-controller ≥ 7.2; der Adapter speichert nur die Zugangsdaten-ID, der Schlüssel bleibt im
      Speicher).

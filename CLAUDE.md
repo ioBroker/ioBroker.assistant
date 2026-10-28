@@ -19,6 +19,21 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Systemweite KI-Einstellungen von Admin (Provider `system`) + OpenRouter** — `src/lib/systemAi.ts`
+  (`systemAiSelection`, `systemAiFingerprint`, `usesSystemAi`, `resolveSystemLlm`, `resolveLlm` → `ResolvedLlm`).
+  Provider `system` (Default für **neue** Instanzen, `io-package` `native.provider`) nimmt Provider/Modell/
+  `credentialId`/`baseUrl` aus `system.ai` (Admin ≥ 8.3.5, Reiter „KI“), Key immer aus dem Credential-Store.
+  Gleiche Regel wie `@iobroker/ai-core` `usesSystemAiSettings`: auch eine Instanz mit Key-Provider, aber **ohne
+  eigenen Key/Credential** nimmt `system.ai` (nicht `custom` — lokale Server haben oft keinen Key). Bewusst als
+  **Provider**-Option statt `credentialType:'system'`: der Provider steuert hier auch none/pi-agent und die
+  Sichtbarkeit der Felder. `maxTokens` bleibt die eigene (Sprachantworten). `main.ts`: `this.llm` = effektiver
+  LLM (auch Log/Journal-Detail), `watchSystemAi()` abonniert `system.ai` **und** die Credential → `restart()`
+  bei Änderung der vier Felder bzw. der Credential (auch wenn `system.ai` noch leer ist, damit das Einrichten
+  startet). `openAiLlmKey()` = Key nur, wenn der effektive LLM OpenAI ist (Sprach-Fallback;
+  `resolveVoiceCredentials` akzeptiert dafür auch `provider==='system'`). Test-Button prüft im System-Modus
+  `system.ai`. **OpenRouter** (`llm.ts` Preset `https://openrouter.ai/api/v1`, Default `openai/gpt-4o-mini`,
+  Attribution-Header wie ai-core, `testConnection` über `/key`, weil `/models` öffentlich ist und jeden Key
+  annimmt). Test: `test/integration/systemAi.test.js`.
 - **Eigene Wake-Words für ESPHome-Satelliten** — `src/lib/voice/wakeWords.ts` (`prepareWakeWord`/
   `loadWakeWord`/`slugify`). Die ESPHome-API hat **keine Upload-Nachricht**: der Client listet Modelle in
   **jedem** `VoiceAssistantConfigurationRequest` (`external_wake_words`: id, Phrase, Sprachen, `model_type`,

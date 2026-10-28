@@ -198,5 +198,9 @@
   "Adapter pi-agent": "pi-agent 适配器",
   "pi-agent instance": "pi-agent 实例",
   "pi-agent timeout (s)": "pi-agent 超时（秒）",
-  "Everything the local tiers cannot answer goes to the adapter pi-agent: its model and key (also the system-wide AI settings of admin), its tools and its write permissions. Every request source gets a conversation of its own there. The tools of this adapter (timers, memory, announcements, YouTube) are not available to it; the rule-based commands still handle timers and alarms.": "本地层级无法回答的所有内容都会交给 pi-agent 适配器：使用它的模型和密钥（也可以是 admin 的系统级 AI 设置）、它的工具和写入权限。每个请求来源在那里都有自己的对话。本适配器的工具（计时器、记忆、广播、YouTube）在那里不可用；计时器和闹钟仍由基于规则的命令处理。"
+  "Everything the local tiers cannot answer goes to the adapter pi-agent: its model and key (also the system-wide AI settings of admin), its tools and its write permissions. Every request source gets a conversation of its own there. The tools of this adapter (timers, memory, announcements, YouTube) are not available to it; the rule-based commands still handle timers and alarms.": "本地层级无法回答的所有内容都会交给 pi-agent 适配器：使用它的模型和密钥（也可以是 admin 的系统级 AI 设置）、它的工具和写入权限。每个请求来源在那里都有自己的对话。本适配器的工具（计时器、记忆、广播、YouTube）在那里不可用；计时器和闹钟仍由基于规则的命令处理。",
+  "System-wide AI settings (admin)": "系统级 AI 设置（admin）",
+  "OpenRouter": "OpenRouter",
+  "Provider, model and API key come from the system settings of admin (tab \"AI\"). A change there restarts this instance.": "提供商、模型和 API 密钥来自 admin 的系统设置（“AI”选项卡）。在那里更改会重启此实例。",
+  "Empty: the system-wide AI settings of admin are used": "留空：使用 admin 的系统级 AI 设置"
 }

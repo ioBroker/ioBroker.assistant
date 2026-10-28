@@ -86,14 +86,16 @@ function str(v: unknown): string {
  *  - 'manager': the central credential store, keyed by the *CredentialId fields
  *               (azure values: { key, region }; aws values: { accessKeyId, secretAccessKey, region }).
  * `mainApiKey` is reused for OpenAI speech when no dedicated OpenAI speech credential is set and the
- * LLM provider is already OpenAI.
+ * LLM provider is already OpenAI (also the one of the system-wide AI settings: then the caller passes the
+ * key only when it is an OpenAI key).
  */
 export async function resolveVoiceCredentials(
     adapter: ioBroker.Adapter,
     config: AdapterConfig,
     mainApiKey: string,
 ): Promise<VoiceCredentials> {
-    const openaiFallback = config.provider === 'openai' ? mainApiKey : '';
+    // `system`: the caller passes the key only when the system-wide AI settings name OpenAI
+    const openaiFallback = config.provider === 'openai' || config.provider === 'system' ? mainApiKey : '';
 
     if (config.voiceCredentialType === 'manager') {
         const openaiKey = config.voiceCredentialId

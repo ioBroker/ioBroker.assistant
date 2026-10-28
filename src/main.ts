@@ -107,6 +107,16 @@ import {
     type SpeechProvider,
 } from './lib/voice/engines';
 import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
+import {
+    SYSTEM_AI_ID,
+    readSystemAi,
+    resolveLlm,
+    resolveSystemLlm,
+    systemAiFingerprint,
+    systemAiSelection,
+    usesSystemAi,
+    type ResolvedLlm,
+} from './lib/systemAi';
 import type { SttEngine } from './lib/voice/stt';
 import type { TtsEngine } from './lib/voice/tts';
 import type { SatelliteState } from './lib/voice/protocol';
@@ -312,6 +322,10 @@ class Assistant extends Adapter {
     private agent: LlmAgent | null = null;
     /** Provider "pi-agent": the cloud tier is a pi-agent instance instead of {@link agent}. */
     private piAgent: PiAgentHarness | null = null;
+    /** The cloud LLM of the instance (own or system-wide settings); `null` without one. */
+    private llm: ResolvedLlm | null = null;
+    /** What of `system.ai` this instance depends on, while it takes the system-wide AI settings. */
+    private systemAiWatch: { fingerprint: string; credentialId: string } | null = null;
     /** Set once `onReady` initialised the pipeline — with or without a cloud {@link agent}. */
     private ready = false;
     private mcp: InProcessMcp | null = null;
@@ -426,7 +440,13 @@ class Assistant extends Adapter {
         const localOnly = provider === 'none';
         // Provider "pi-agent": the adapter pi-agent is the cloud tier, with its own model, key and tools.
         const harness = provider === 'pi-agent';
-        const apiKey = localOnly || harness ? '' : effectiveApiKey(cfg.provider, await resolveApiKey(this, cfg));
+        // Provider "system" (or no key of its own): provider, model and key of the system-wide AI settings.
+        if (!localOnly && !harness && usesSystemAi(cfg)) {
+            await this.watchSystemAi();
+        }
+        const resolved = localOnly || harness ? null : await resolveLlm(this, cfg);
+        this.llm = resolved && !('error' in resolved) ? resolved : null;
+        const apiKey = this.llm?.provider === 'openai' ? this.llm.apiKey : '';
         await this.setupJournal();
 
         if (harness && !(cfg.piAgentInstance || '').trim()) {
@@ -436,14 +456,13 @@ class Assistant extends Adapter {
             await this.setStateAsync('info.connection', { val: false, ack: true });
             return;
         }
-        if (!localOnly && !harness && !apiKey) {
-            this.log.warn(
-                cfg.credentialType === 'manager'
-                    ? 'No credential selected (manager mode) — pick an API-key credential in the adapter settings.'
-                    : 'No API key configured — open the adapter settings and enter your LLM API key.',
-            );
+        if (resolved && 'error' in resolved) {
+            this.log.warn(resolved.error);
             await this.setStateAsync('info.connection', { val: false, ack: true });
             return;
+        }
+        if (this.llm?.system) {
+            this.log.info(`LLM from the system-wide AI settings: ${this.llm.provider} · ${this.llm.model || 'auto'}`);
         }
 
         try {
@@ -500,13 +519,12 @@ class Assistant extends Adapter {
                     cfg.piAgentInstance.trim(),
                     Math.max(5, Number(cfg.piAgentTimeoutSec) || PI_AGENT_TIMEOUT_SEC) * 1000,
                 );
-            } else if (provider !== 'none') {
-                const prov = resolveProvider(provider, cfg.baseUrl);
+            } else if (this.llm) {
                 this.agent = new LlmAgent({
-                    provider,
-                    apiKey,
-                    model: cfg.model || prov.defaultModel,
-                    baseUrl: prov.baseUrl,
+                    provider: this.llm.provider,
+                    apiKey: this.llm.apiKey,
+                    model: this.llm.model,
+                    baseUrl: this.llm.baseUrl,
                     systemPrompt: cfg.systemPrompt || '',
                     maxTokens: cfg.maxTokens || 1024,
                     tools: tools.map(t => this.journalTool(t)),
@@ -559,7 +577,7 @@ class Assistant extends Adapter {
         await this.setupTriggers();
         this.log.info(
             this.agent
-                ? `Assistant ready (provider=${cfg.provider}, model=${this.agent.model || 'auto'}).`
+                ? `Assistant ready (provider=${this.llm?.provider}, model=${this.agent.model || 'auto'}).`
                 : this.piAgent
                   ? `Assistant ready (cloud tier: ${this.piAgent.instance}).`
                   : 'Assistant ready without an LLM provider — answering locally only.',
@@ -896,7 +914,7 @@ class Assistant extends Adapter {
             return this.speechEngines;
         }
         const cfg = this.config;
-        const mainKey = await resolveApiKey(this, cfg);
+        const mainKey = await this.openAiLlmKey();
         const creds = await resolveVoiceCredentials(this, cfg, mainKey);
         const ctx = this.voiceContext(cfg, creds);
         const language = cfg.voiceLanguage || this.language || '';
@@ -1015,7 +1033,7 @@ class Assistant extends Adapter {
             const cfg = { ...this.config, ...overrides };
             const provider = msg.ttsProvider || cfg.ttsProvider || 'openai';
             const language = msg.language || cfg.voiceLanguage || this.language || '';
-            const mainKey = await resolveApiKey(this, this.config);
+            const mainKey = await this.openAiLlmKey();
             const creds = await resolveVoiceCredentials(this, cfg, mainKey);
             return await listVoices(provider, this.voiceContext(cfg, creds), language);
         } catch (e) {
@@ -2000,7 +2018,39 @@ class Assistant extends Adapter {
     }
 
     /** Invalidate the cached device/room/function listings when a room/function enum changes. */
-    private onObjectChange(id: string, _obj: ioBroker.Object | null | undefined): void {
+    /** The key of the cloud LLM if it is OpenAI: speech reuses it when it has no key of its own. */
+    private async openAiLlmKey(): Promise<string> {
+        const provider = this.config.provider || 'openai';
+        const llm =
+            this.llm ?? (provider === 'none' || provider === 'pi-agent' ? null : await resolveLlm(this, this.config));
+        return llm && !('error' in llm) && llm.provider === 'openai' ? llm.apiKey : '';
+    }
+
+    /**
+     * Restart when the system-wide AI settings this instance takes change — also when they are still empty, so
+     * setting them up in admin starts the instance. The credential is watched too: a new key needs no new id.
+     */
+    private async watchSystemAi(): Promise<void> {
+        const native = await readSystemAi(this);
+        const credentialId = systemAiSelection(native)?.credentialId || '';
+        this.systemAiWatch = { fingerprint: systemAiFingerprint(native), credentialId };
+        await this.subscribeForeignObjectsAsync(SYSTEM_AI_ID);
+        if (credentialId) {
+            await this.subscribeForeignObjectsAsync(credentialId);
+        }
+    }
+
+    private onObjectChange(id: string, obj: ioBroker.Object | null | undefined): void {
+        if (this.systemAiWatch && (id === SYSTEM_AI_ID || id === this.systemAiWatch.credentialId)) {
+            // A credential has no fingerprint: a change of it is a new key.
+            if (id === SYSTEM_AI_ID && systemAiFingerprint(obj?.native) === this.systemAiWatch.fingerprint) {
+                return;
+            }
+            this.log.info(`The system-wide AI settings changed (${id}) — restarting.`);
+            this.systemAiWatch = null;
+            this.restart();
+            return;
+        }
         if (this.listCache && (id.startsWith('enum.rooms.') || id.startsWith('enum.functions.'))) {
             this.listCache.clear();
             this.log.debug(`list cache cleared (object changed: ${id})`);
@@ -3245,7 +3295,7 @@ class Assistant extends Adapter {
         const questionForLlm = [time, weather, question].filter(Boolean).join('\n\n');
         this.journal?.note({
             tier: 'cloud',
-            detail: `${this.config.provider || 'openai'} · ${this.agent.model || 'auto'}`,
+            detail: `${this.llm?.provider || this.config.provider || 'openai'} · ${this.agent.model || 'auto'}`,
         });
         // What went into the prompt, piece by piece. The device list is only counted: the model's opening
         // step carries the whole system prompt, and with it the list.
@@ -6606,7 +6656,7 @@ class Assistant extends Adapter {
     /** Build the configured TTS engine (throws when no voice key is available). */
     private async buildTtsEngine(): Promise<TtsEngine> {
         const cfg = this.config;
-        const mainApiKey = (await resolveApiKey(this, cfg)) || '';
+        const mainApiKey = await this.openAiLlmKey();
         const creds = await resolveVoiceCredentials(this, cfg, mainApiKey);
         return createTtsEngine(cfg.ttsProvider || 'openai', this.voiceContext(cfg, creds));
     }
@@ -6672,7 +6722,8 @@ class Assistant extends Adapter {
     }): Promise<string[]> {
         const cfg = this.config;
         const provider = msg.provider || cfg.provider || 'openai';
-        if (provider === 'none' || provider === 'pi-agent') {
+        // `system`: the model is chosen in the system settings of admin
+        if (provider === 'none' || provider === 'pi-agent' || provider === 'system') {
             return [];
         }
         const apiKey = effectiveApiKey(
@@ -6719,6 +6770,16 @@ class Assistant extends Adapter {
         }
         if (provider === 'pi-agent') {
             return { error: 'pi-agent has its own connection test in its instance settings.' };
+        }
+        if (provider === 'system') {
+            const llm = await resolveSystemLlm(this, await readSystemAi(this), true);
+            if ('error' in llm) {
+                return { error: llm.error };
+            }
+            const res = await new LlmAgent({ ...llm, maxTokens: 16, tools: [], log: this.log }).testConnection();
+            return res.ok
+                ? { result: `Connection OK (${llm.provider} · ${llm.model || 'auto'})` }
+                : { error: res.error || 'unknown error' };
         }
         const apiKey = effectiveApiKey(
             provider,

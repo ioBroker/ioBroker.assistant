@@ -3,8 +3,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { Tool } from './tools';
 import { errorInfo, type JournalTokens, type TraceFn } from './journal';
 
-/** All selectable LLM providers. gemini/deepseek/custom all use the OpenAI-compatible SDK path. */
-export type Provider = 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'custom';
+/** All selectable LLM providers. gemini/deepseek/openrouter/custom all use the OpenAI-compatible SDK path. */
+export type Provider = 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openrouter' | 'custom';
 
 interface ProviderPreset {
     /** Which vendor SDK to use. */
@@ -25,6 +25,8 @@ export const PROVIDER_PRESETS: Record<Provider, ProviderPreset> = {
         defaultModel: 'gemini-2.0-flash',
     },
     deepseek: { sdk: 'openai', baseUrl: 'https://api.deepseek.com', defaultModel: 'deepseek-chat' },
+    // OpenRouter names a model with its vendor in front
+    openrouter: { sdk: 'openai', baseUrl: 'https://openrouter.ai/api/v1', defaultModel: 'openai/gpt-4o-mini' },
     custom: { sdk: 'openai', baseUrl: '', defaultModel: '' },
 };
 
@@ -133,7 +135,15 @@ export class LlmAgent {
         if (this.provider === 'anthropic') {
             this.anthropic = new Anthropic({ apiKey: opts.apiKey, baseURL: opts.baseUrl || undefined });
         } else {
-            this.openai = new OpenAI({ apiKey: opts.apiKey, baseURL: opts.baseUrl || undefined });
+            this.openai = new OpenAI({
+                apiKey: opts.apiKey,
+                baseURL: opts.baseUrl || undefined,
+                // OpenRouter shows the calling app in its statistics (same attribution as @iobroker/ai-core)
+                defaultHeaders:
+                    opts.provider === 'openrouter'
+                        ? { 'HTTP-Referer': 'https://www.iobroker.net', 'X-Title': 'ioBroker' }
+                        : undefined,
+            });
         }
     }
 
@@ -360,7 +370,12 @@ export class LlmAgent {
                 });
             } else {
                 const client = this.openai as OpenAI;
-                await client.models.list();
+                if (this.providerName === 'openrouter') {
+                    // its model list is public and accepts any key; /key needs a valid one
+                    await client.get('/key');
+                } else {
+                    await client.models.list();
+                }
             }
             return { ok: true };
         } catch (e) {

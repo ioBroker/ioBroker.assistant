@@ -175,7 +175,7 @@
     }
   },
   "native": {
-    "provider": "openai",
+    "provider": "system",
     "piAgentInstance": "",
     "piAgentTimeoutSec": 60,
     "credentialType": "manual",

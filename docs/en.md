@@ -59,9 +59,14 @@ Every request runs through up to three tiers, stopping at the first that can ans
 
 ### Providers
 
-One active LLM provider: **OpenAI, Anthropic (Claude), Google Gemini, DeepSeek**, or any
+One active LLM provider: **OpenAI, Anthropic (Claude), Google Gemini, DeepSeek, OpenRouter**, or any
 **OpenAI-compatible** endpoint (e.g. Groq, a local server) via a custom base URL. For a local server
 the API key and the model may stay empty: the model is then taken from the server's model list.
+
+**System-wide AI settings (admin)** — the default for new instances — takes provider, model and API key from
+the system settings of admin (tab "AI", admin 8.3.5 and newer), where they are set up once for all adapters. A
+change there restarts the instance. An instance that has a provider but no key of its own uses them as well.
+The maximum answer length stays the one of this adapter.
 
 **None (local only)** runs without any cloud LLM. Then only the local tiers answer — routines, the
 rule-based commands, timers and alarms, and the local model if enabled; everything else gets a short
@@ -95,7 +100,8 @@ satellites stay simple. See §7.
 - An **ioBroker** installation with a recent Admin and js-controller (≥ 7.2 recommended, needed for the
   central credential store).
 - **One** of:
-  - an **API key** for an LLM provider (OpenAI, Anthropic, Gemini, DeepSeek, or a custom endpoint), **or**
+  - an **API key** for an LLM provider (OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, or a custom endpoint)
+    — here or once in the system-wide AI settings of admin —, **or**
   - enough CPU/RAM to run the **local LLM** (small models recommended on Raspberry Pi / arm64).
 
 **Additionally for voice / satellites:**
@@ -112,7 +118,8 @@ satellites stay simple. See §7.
 
 1. Install the **ioBroker.assistant** adapter from the ioBroker admin and create an instance.
 2. Open the instance settings → **Settings** tab:
-   - **Provider** — pick your LLM provider.
+   - **Provider** — *System-wide AI settings (admin)* if provider and key are set up in the system settings
+     of admin (tab "AI"); nothing else is needed then. Otherwise pick your LLM provider.
    - **Credential mode** — *Store key in adapter* (simplest) or *Central credential store* (js-controller
      ≥ 7.2; the adapter only stores the credential id, the key stays in the store).
    - **API key** (or select the credential).

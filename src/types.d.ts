@@ -3,9 +3,10 @@ import type { TriggerDef } from './lib/triggers';
 export interface AdapterConfig {
     /**
      * `none` = no cloud LLM, only the local tiers answer. `pi-agent` = the adapter pi-agent is the cloud tier
-     * (its model, key, tools and write permissions; see `lib/piAgent.ts`).
+     * (its model, key, tools and write permissions; see `lib/piAgent.ts`). `system` = provider, model and key
+     * of the system-wide AI settings of admin (`system.ai`; see `lib/systemAi.ts`).
      */
-    provider: 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'custom' | 'none' | 'pi-agent';
+    provider: 'system' | 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openrouter' | 'custom' | 'none' | 'pi-agent';
     /** pi-agent instance for provider `pi-agent`, e.g. `pi-agent.0`. */
     piAgentInstance: string;
     /** How long to wait for pi-agent's answer, in seconds (default 60). */
