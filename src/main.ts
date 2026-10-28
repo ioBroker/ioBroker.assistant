@@ -3580,10 +3580,11 @@ class Assistant extends Adapter {
             const room = d.room ? `${d.room}, ` : '';
             lines.push(`- ${d.name} (${room}${d.type}): ${ids.join(', ')}`);
         }
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        lines.push(...this.satelliteVolumeLines(lang));
         if (!lines.length) {
             return '';
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
         const header =
             lang === 'ru'
                 ? 'Известные устройства — «имя (комната, тип): stateId». Используй эти stateId напрямую с set_state/get_states; вызывай list_devices только если нужного устройства здесь нет.'
@@ -3591,6 +3592,45 @@ class Assistant extends Adapter {
                   ? 'Bekannte Geräte — "Name (Raum, Typ): stateId". Nutze diese stateIds direkt mit set_state/get_states; rufe list_devices nur, wenn ein Gerät hier fehlt.'
                   : 'Known devices — "name (room, type): stateId". Use these stateIds directly with set_state/get_states; only call list_devices if a needed device is missing here.';
         return `${header}\n${lines.join('\n')}`;
+    }
+
+    /**
+     * The playback volume of every voice satellite as a line of the device list. Without it, "Lautstärke auf 50
+     * Prozent" that the rules miss reaches the LLM (or pi-agent) with only the media devices of the room in view, and
+     * the model turns those up instead of the speaker that heard the request. The scales differ per transport.
+     */
+    private satelliteVolumeLines(lang: string): string[] {
+        const label = (satId: string): string =>
+            lang === 'ru'
+                ? `Громкость голосового спутника ${satId}`
+                : lang === 'de'
+                  ? `Lautstärke des Sprachsatelliten ${satId}`
+                  : `Volume of the voice satellite ${satId}`;
+        const lines: string[] = [];
+        const seen = new Set<string>();
+        for (const [satId, instance] of this.nativeSatFrom) {
+            seen.add(satId);
+            lines.push(`- ${label(satId)} (${satId}, level.volume 0-100): ${instance}.volume`);
+        }
+        for (const [satId, device] of this.satDeviceById) {
+            if (seen.has(satId)) {
+                continue;
+            }
+            const player = this.esphome?.entities(device).find(e => e.kind === 'mediaPlayer');
+            if (player) {
+                seen.add(satId);
+                const id = `${this.namespace}.satellites.${satId}.controls.${player.objectId}.volume`;
+                lines.push(`- ${label(satId)} (${satId}, level.volume 0-1): ${id}`);
+            }
+        }
+        for (const satId of this.satVolumeEnsured) {
+            if (!seen.has(satId)) {
+                lines.push(
+                    `- ${label(satId)} (${satId}, level.volume 0-100): ${this.namespace}.satellites.${satId}.volume`,
+                );
+            }
+        }
+        return lines;
     }
 
     /**

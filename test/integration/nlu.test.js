@@ -2,7 +2,7 @@
 // Integration test: rule-based NLU (device command parsing) — the offline fast-path.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Nlu, normalize, splitCommands } = require('../../build/lib/nlu.js');
+const { Nlu, normalize, splitCommands, spelledNumbersToDigits } = require('../../build/lib/nlu.js');
 
 const light = {
     name: 'Licht',
@@ -697,6 +697,27 @@ test('volume: absolute levels on a 1–10 scale or in percent', () => {
     assert.deepEqual(v('volume 7'), { value: 70, delta: undefined, room: undefined });
     assert.deepEqual(v('громкость на 4'), { value: 40, delta: undefined, room: undefined });
     assert.equal(v('Wie ist die Lautstärke?'), null, 'a question is no command');
+});
+
+test('volume and levels: spelled-out numbers above twelve (as speech recognition writes them)', () => {
+    const v = text => wxNlu.parse(text)?.value;
+    // the real sentence from the satellite, with the recognition error "Setzer"
+    assert.equal(v('Setzer Lautstärke auf fünfzig Prozent.'), 50);
+    assert.equal(v('Lautstärke auf fünfundzwanzig Prozent'), 25);
+    assert.equal(v('Lautstärke auf einundsiebzig Prozent'), 71);
+    assert.equal(v('Lautstärke auf hundert Prozent'), 100);
+    assert.equal(v('volume to twenty five percent'), 25);
+    assert.equal(v('volume to forty-two percent'), 42);
+    assert.equal(v('громкость на тридцать процентов'), 30);
+    assert.equal(v('громкость на двадцать пять процентов'), 25);
+});
+
+test('spelledNumbersToDigits: only number words, articles and punctuation stay', () => {
+    assert.equal(spelledNumbersToDigits('licht auf fuenfzig prozent.'), 'licht auf 50 prozent.');
+    assert.equal(spelledNumbersToDigits('ein bisschen lauter'), 'ein bisschen lauter');
+    assert.equal(spelledNumbersToDigits('a hundred percent'), '100 percent');
+    assert.equal(spelledNumbersToDigits('twenty, five'), '20, 5', 'a comma ends the number');
+    assert.equal(spelledNumbersToDigits('dreizehn und zwanzig'), '13 und 20');
 });
 
 test('volume: louder / quieter are relative steps', () => {

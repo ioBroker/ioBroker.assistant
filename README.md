@@ -241,6 +241,7 @@ train it twice.
 * (@GermanBluefox) OpenRouter for speech recognition and voice: one key for the speech models of many vendors (Whisper, Deepgram, ElevenLabs, Gemini TTS, …), models and voices are listed in the settings (default voice model: ElevenLabs Flash v2.5)
 * (@GermanBluefox) Voice test on the Voice tab: speak a test sentence, and test speech recognition with the browser microphone, an audio file or a round trip, all with the unsaved settings
 * (@GermanBluefox) "Confirm switch commands with a tone" now also covers commands the AI (or pi-agent) carried out
+* (@GermanBluefox) Spelled-out numbers up to 100 in commands ("Lautstärke auf fünfzig Prozent", "twenty five percent", "двадцать пять процентов"), and the AI sees the volume of each voice satellite, so it no longer turns up a media device of the room instead
 * (@GermanBluefox) New provider "Adapter pi-agent": the durable agent of the pi-agent adapter answers what the local tiers cannot, with one conversation per satellite/chat
 
 ### 1.2.0 (2026-10-26)

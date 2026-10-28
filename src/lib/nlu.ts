@@ -396,6 +396,161 @@ const NUMBER_WORDS: Record<string, string> = {
     девять: '9',
     десять: '10',
 };
+/** Units 1–9 (normalized), de/en/ru — the parts of a spelled-out number above twelve */
+const UNIT_WORDS: Record<string, number> = {
+    eins: 1,
+    zwei: 2,
+    drei: 3,
+    vier: 4,
+    fuenf: 5,
+    sechs: 6,
+    sieben: 7,
+    acht: 8,
+    neun: 9,
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    один: 1,
+    одна: 1,
+    одно: 1,
+    два: 2,
+    две: 2,
+    три: 3,
+    четыре: 4,
+    пять: 5,
+    шесть: 6,
+    семь: 7,
+    восемь: 8,
+    девять: 9,
+};
+/** 10–19, de/en/ru */
+const TEEN_WORDS: Record<string, number> = {
+    zehn: 10,
+    elf: 11,
+    zwoelf: 12,
+    dreizehn: 13,
+    vierzehn: 14,
+    fuenfzehn: 15,
+    sechzehn: 16,
+    siebzehn: 17,
+    achtzehn: 18,
+    neunzehn: 19,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+    thirteen: 13,
+    fourteen: 14,
+    fifteen: 15,
+    sixteen: 16,
+    seventeen: 17,
+    eighteen: 18,
+    nineteen: 19,
+    десять: 10,
+    одиннадцать: 11,
+    двенадцать: 12,
+    тринадцать: 13,
+    четырнадцать: 14,
+    пятнадцать: 15,
+    шестнадцать: 16,
+    семнадцать: 17,
+    восемнадцать: 18,
+    девятнадцать: 19,
+};
+/** Tens 20–90, de/en/ru */
+const TEN_WORDS: Record<string, number> = {
+    zwanzig: 20,
+    dreissig: 30,
+    vierzig: 40,
+    fuenfzig: 50,
+    sechzig: 60,
+    siebzig: 70,
+    achtzig: 80,
+    neunzig: 90,
+    twenty: 20,
+    thirty: 30,
+    forty: 40,
+    fifty: 50,
+    sixty: 60,
+    seventy: 70,
+    eighty: 80,
+    ninety: 90,
+    двадцать: 20,
+    тридцать: 30,
+    сорок: 40,
+    пятьдесят: 50,
+    шестьдесят: 60,
+    семьдесят: 70,
+    восемьдесят: 80,
+    девяносто: 90,
+};
+const HUNDRED_WORDS = new Set(['hundert', 'einhundert', 'hundred', 'сто']);
+
+/** Value of one spelled-out number word ("fuenfundzwanzig", "twenty-five", "fünfzig"), or null */
+function numberWordValue(word: string): number | null {
+    if (HUNDRED_WORDS.has(word)) {
+        return 100;
+    }
+    const direct = TEN_WORDS[word] ?? TEEN_WORDS[word] ?? UNIT_WORDS[word];
+    if (direct !== undefined) {
+        return direct;
+    }
+    // de "fünfundzwanzig" (unit first, "ein" as in "einundzwanzig"), en "twenty-five"
+    const de = /^(\p{L}+?)und(\p{L}+)$/u.exec(word);
+    if (de && TEN_WORDS[de[2]] !== undefined && (de[1] === 'ein' || UNIT_WORDS[de[1]] !== undefined)) {
+        return TEN_WORDS[de[2]] + (UNIT_WORDS[de[1]] ?? 1);
+    }
+    const en = /^(\p{L}+)-(\p{L}+)$/u.exec(word);
+    if (en && TEN_WORDS[en[1]] !== undefined && UNIT_WORDS[en[2]] !== undefined) {
+        return TEN_WORDS[en[1]] + UNIT_WORDS[en[2]];
+    }
+    return null;
+}
+
+/**
+ * Spelled-out whole numbers up to 100 → digits in normalized text (de/en/ru): "fuenfzig prozent" → "50 prozent",
+ * "twenty five" → "25", "двадцать пять" → "25", "one hundred" → "100". Speech recognition writes numbers as words
+ * often enough that a level command would otherwise miss. Articles ("ein", "a") stay words.
+ *
+ * @param text normalized text
+ */
+export function spelledNumbersToDigits(text: string): string {
+    const words = text.split(/\s+/).filter(Boolean);
+    const out: string[] = [];
+    for (let i = 0; i < words.length; i++) {
+        const [, word, tail] = /^(.*?)([.,!?;:]*)$/u.exec(words[i])!;
+        let value = numberWordValue(word);
+        if (value === null) {
+            // "one hundred", "a hundred", "ein hundert"
+            const next = words[i + 1]?.replace(/[.,!?;:]+$/u, '');
+            if (['one', 'a', 'ein'].includes(word) && next && HUNDRED_WORDS.has(next)) {
+                out.push(`100${/[.,!?;:]+$/u.exec(words[i + 1])?.[0] || ''}`);
+                i++;
+                continue;
+            }
+            out.push(words[i]);
+            continue;
+        }
+        let end = tail;
+        // en "twenty five", ru "двадцать пять": a ten followed by a unit
+        if (TEN_WORDS[word] !== undefined && !tail && i + 1 < words.length) {
+            const [, nextWord, nextTail] = /^(.*?)([.,!?;:]*)$/u.exec(words[i + 1])!;
+            if (UNIT_WORDS[nextWord] !== undefined) {
+                value += UNIT_WORDS[nextWord];
+                end = nextTail;
+                i++;
+            }
+        }
+        out.push(`${value}${end}`);
+    }
+    return out.join(' ');
+}
+
 /** Fixed phrases replaced up front so their fractions don't collide with the general number-word pass. */
 const DURATION_PHRASES: [RegExp, string][] = [
     [/(?<![\p{L}])dreiviertelstunde(?![\p{L}])/iu, '45 minuten'],
@@ -1256,7 +1411,8 @@ export class Nlu {
         }
         const percent = /(?:prozent|percent|процент\p{L}*|%)/u.test(p.norm);
         // "ein bisschen lauter" is no step count — only digits and the number words from two upwards count.
-        const num = p.tokens
+        const num = spelledNumbersToDigits(p.tokens.join(' '))
+            .split(' ')
             .map(w => (/^\d+$/.test(w) ? w : ['ein', 'eine', 'einen'].includes(w) ? '' : NUMBER_WORDS[w] || ''))
             .find(w => /^\d+$/.test(w));
         const n = num === undefined ? null : parseInt(num, 10);
@@ -1367,7 +1523,7 @@ export class Nlu {
     }
 
     private findLevel(text: string): number | null {
-        const m = text.match(/(\d+(?:[.,]\d+)?)\s*(?:prozent|percent|процент\w*|%)/u);
+        const m = spelledNumbersToDigits(text).match(/(\d+(?:[.,]\d+)?)\s*(?:prozent|percent|процент\w*|%)/u);
         return m ? parseFloat(m[1].replace(',', '.')) : null;
     }
 
