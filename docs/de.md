@@ -70,6 +70,18 @@ Servers genommen.
 regelbasierten Befehle, Timer und Wecker sowie das lokale Modell, falls aktiviert; alles andere bekommt ein
 kurzes „Das habe ich nicht verstanden“.
 
+**Adapter pi-agent** gibt alles, was die lokalen Stufen nicht beantworten können, an eine Instanz des Adapters
+[pi-agent](https://github.com/sadam6752-tech/ioBroker.pi-agent), statt eine eigene Tool-Schleife zu fahren.
+pi-agent speichert jeden Modell- und Tool-Aufruf, bevor er läuft (eine durch einen Neustart unterbrochene Anfrage
+läuft weiter, ein Schreibzugriff wird nie wiederholt), hat eigene Schreibrechte mit Bestätigung und kann die
+systemweiten KI-Einstellungen von Admin nutzen (Systemeinstellungen, Reiter „KI“). Modell und Schlüssel werden
+dort eingestellt, nicht hier. Jede Anfragequelle (Satellit, Chat, Telegram-Nutzer) bekommt in pi-agent eine eigene
+Unterhaltung; Stil, Rückfrage-Marker, Gedächtnis und Geräteliste gehen als deren Anweisungen mit, Uhrzeit, Wetter
+und Anwesenheit vor jeder Frage. Die Tools dieses Adapters (Timer, Gedächtnis, Durchsagen, YouTube) stehen
+pi-agent nicht zur Verfügung — Timer und Wecker erledigen weiterhin die regelbasierten Befehle. Getrennte
+Unterhaltungen brauchen ein pi-agent mit `conversation` in `ask` (neuer als 0.3.0); ältere Versionen beantworten
+alles in einer Unterhaltung. Läuft pi-agent nicht oder schlägt fehl, antwortet das lokale Modell, falls aktiviert.
+
 ### Satelliten (Sprache)
 
 Ein **Satellit** ist ein Mikrofon + Lautsprecher in einem Raum. Das **Wake-Word** („Hey Jarvis" …) wird

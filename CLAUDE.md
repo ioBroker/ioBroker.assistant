@@ -19,6 +19,26 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **pi-agent als Harness (Provider `pi-agent`)** — `src/lib/piAgent.ts` (`PiAgentHarness`, `composeInstructions`,
+  `conversationOf`) + `main.ts.askPiAgent`. Statt `LlmAgent` beantwortet eine Instanz des Adapters
+  **pi-agent** (`C:\pWork\ioBroker.pi-agent`, Fork `GermanBluefox/ioBroker.pi-agent`, Branch
+  `system-ai-and-harness`) die Cloud-Stufe per `sendToAsync(<inst>,'ask',{text,conversation,instructions,
+  requestId},{timeout})`. **Eine pi-agent-Konversation pro Quelle** (`conversation` = Satellit/`chat`/
+  `telegram:<user>`, `/`→`_`, weil pi-agent `/` als Trenner im Key nutzt); die History liegt dort, der
+  `ConversationStore` wird **nicht** mitgeschickt. **Instruktionen** = Systemprompt + `[[LISTEN]]`-Hinweis
+  (Pflicht) + Gedächtnis + Geräteliste (optional, von hinten weggelassen bis ≤ 20 000 Zeichen = pi-agents
+  Cap) — pi-agent rekonfiguriert die Konversation nur bei Änderung; Zeit/Wetter/Präsenz vor die Frage.
+  Vorher `system.adapter.<inst>.alive` prüfen (sonst wartet man den ganzen Timeout), `{error}`/leere Antwort
+  → Exception → lokales LLM als Fallback. `this.agent` bleibt `null` → `rephrase`/`classify`/`translate`/
+  `rewordNotification` fallen wie bei `none` weg; die eigenen Tools (Timer, Memory, Announce, YouTube) hat
+  pi-agent nicht. Config `piAgentInstance` (`type:"instance"`), `piAgentTimeoutSec` (Default 60).
+  **In pi-agent dazu gebaut** (gleicher Branch): Key-Quelle `system` = **systemweite KI-Einstellungen von
+  Admin** (`system.ai`: provider/model/credentialId/baseUrl; `gemini`→pi-ai `google`, neu als Provider),
+  Default für neue Instanzen, und eine Instanz ohne eigenen Key nimmt sie auch (wie `@iobroker/ai-core`
+  `usesSystemAiSettings`); Änderung dieser vier Felder → Neustart (`hideFab` u. ä. nicht). `ask` kennt
+  `conversation`/`instructions` (Key `sendTo:<caller>/<conversation>` in `telegram.chats`). Tests:
+  `test/integration/piAgent.test.js` hier, `test/system-ai.test.js` dort.
+  ⚠️ Noch nicht gegen eine laufende pi-agent-Instanz durchgespielt.
 - **Sprachpfad schneller (Issue #3, znyde87)** — sechs Teile, Assistant + Satelliten-Lib + Wrapper:
   (1) **NLU-Gerätemodell gecacht** (`main.ts.getNluDevices` → `nluDevices`, TTL `NLU_DEVICES_TTL_MS`=60 s,
   gleichzeitige Anfragen teilen sich den Build, leeres Ergebnis wird nicht gehalten). Vorher pro Sprachbefehl

@@ -188,6 +188,7 @@ each one shows up under `assistant.0.satellites.*` like any other.
 * (@GermanBluefox) When an answer asks back, UDP satellites now keep the microphone open for the reply too (needs `@iobroker/assistant-satellite` 0.2.0)
 * (@GermanBluefox) "Louder", "quieter", "volume 5" change the volume of the satellite that heard it - ESPHome, ioBroker-native and UDP satellites
 * (@GermanBluefox) "How's the weather tomorrow?" is answered from the weather adapter without an LLM
+* (@GermanBluefox) New provider "Adapter pi-agent": the durable agent of the pi-agent adapter answers what the local tiers cannot, with one conversation per satellite/chat
 * (@GermanBluefox) Fixed: Russian questions with "будет" ("will it be …") were taken for alarm queries
 
 ### 1.1.0 (2026-10-25)

@@ -97,6 +97,7 @@ import {
     type VoiceCredentials,
     type SpeechProvider,
 } from './lib/voice/engines';
+import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
 import type { SttEngine } from './lib/voice/stt';
 import type { TtsEngine } from './lib/voice/tts';
 import type { SatelliteState } from './lib/voice/protocol';
@@ -282,6 +283,8 @@ class Assistant extends Adapter {
     declare config: AdapterConfig;
     /** Cloud LLM; `null` with provider "none" (local tiers only) or before `onReady` finished. */
     private agent: LlmAgent | null = null;
+    /** Provider "pi-agent": the cloud tier is a pi-agent instance instead of {@link agent}. */
+    private piAgent: PiAgentHarness | null = null;
     /** Set once `onReady` initialised the pipeline — with or without a cloud {@link agent}. */
     private ready = false;
     private mcp: InProcessMcp | null = null;
@@ -390,10 +393,19 @@ class Assistant extends Adapter {
         // alarms, the local model) answer. The ioBroker tools are still built: the NLU switches through them.
         const provider = cfg.provider || 'openai';
         const localOnly = provider === 'none';
-        const apiKey = localOnly ? '' : effectiveApiKey(cfg.provider, await resolveApiKey(this, cfg));
+        // Provider "pi-agent": the adapter pi-agent is the cloud tier, with its own model, key and tools.
+        const harness = provider === 'pi-agent';
+        const apiKey = localOnly || harness ? '' : effectiveApiKey(cfg.provider, await resolveApiKey(this, cfg));
         await this.setupJournal();
 
-        if (!localOnly && !apiKey) {
+        if (harness && !(cfg.piAgentInstance || '').trim()) {
+            this.log.warn(
+                'Provider "pi-agent" without an instance — choose the pi-agent instance in the adapter settings.',
+            );
+            await this.setStateAsync('info.connection', { val: false, ack: true });
+            return;
+        }
+        if (!localOnly && !harness && !apiKey) {
             this.log.warn(
                 cfg.credentialType === 'manager'
                     ? 'No credential selected (manager mode) — pick an API-key credential in the adapter settings.'
@@ -451,7 +463,13 @@ class Assistant extends Adapter {
             this.subscribeForeignObjects('enum.rooms.*');
             this.subscribeForeignObjects('enum.functions.*');
 
-            if (provider !== 'none') {
+            if (harness) {
+                this.piAgent = new PiAgentHarness(
+                    this,
+                    cfg.piAgentInstance.trim(),
+                    Math.max(5, Number(cfg.piAgentTimeoutSec) || PI_AGENT_TIMEOUT_SEC) * 1000,
+                );
+            } else if (provider !== 'none') {
                 const prov = resolveProvider(provider, cfg.baseUrl);
                 this.agent = new LlmAgent({
                     provider,
@@ -510,7 +528,9 @@ class Assistant extends Adapter {
         this.log.info(
             this.agent
                 ? `Assistant ready (provider=${cfg.provider}, model=${this.agent.model || 'auto'}).`
-                : 'Assistant ready without an LLM provider — answering locally only.',
+                : this.piAgent
+                  ? `Assistant ready (cloud tier: ${this.piAgent.instance}).`
+                  : 'Assistant ready without an LLM provider — answering locally only.',
         );
 
         if (cfg.useLocalLlm) {
@@ -2860,8 +2880,9 @@ class Assistant extends Adapter {
         // the thread and the tools) handle follow-ups instead. Without a cloud LLM there is nobody to hand
         // follow-ups to, so the local model takes them too.
         const useLocal = !!(this.config.useLocalLlm && this.localLlm);
-        const localFirst = useLocal && (!this.agent || !!this.config.localLlmFirst);
-        if (localFirst && (!history.length || !this.agent)) {
+        const cloud = !!(this.agent || this.piAgent);
+        const localFirst = useLocal && (!cloud || !!this.config.localLlmFirst);
+        if (localFirst && (!history.length || !cloud)) {
             const ans = await this.askLocalLlm(question, weather, source);
             if (ans) {
                 return ans;
@@ -2871,6 +2892,9 @@ class Assistant extends Adapter {
         }
         // Tier 2: cloud LLM with full tool access. Inject a compact device list into the system prompt so
         // the model can act without a first `list_devices` round-trip (kept cached via prompt caching).
+        if (this.piAgent) {
+            return this.askPiAgent(this.piAgent, question, weather, source, useLocal && !localFirst);
+        }
         if (!this.agent) {
             // Provider "none": no tier further down. Say so instead of failing — over voice an error is
             // read out as a technical message.
@@ -2900,6 +2924,48 @@ class Assistant extends Adapter {
             // Offline, quota, outage: the local model is the fallback — unless it was already asked above.
             if (useLocal && !localFirst) {
                 this.log.warn(`Cloud LLM failed (${(e as Error).message}) — asking the local LLM instead.`);
+                const ans = await this.askLocalLlm(question, weather, source);
+                if (ans) {
+                    return ans;
+                }
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Cloud tier through the adapter pi-agent: one pi-agent conversation per source. The style, the
+     * follow-up marker, the memory and the device list are the instructions of that conversation (pi-agent
+     * re-configures it only when they change); time, weather and presence change every turn and go in front
+     * of the question. The history stays in pi-agent, so nothing of {@link ConversationStore} is sent.
+     */
+    private async askPiAgent(
+        harness: PiAgentHarness,
+        question: string,
+        weather: string,
+        source: string,
+        localFallback: boolean,
+    ): Promise<string> {
+        const followUp = this.config.voiceEnabled ? this.followUpHint() : '';
+        // The device list maps names to state ids, so pi-agent can act without searching first. It is the
+        // first to go when the instructions get too long — pi-agent can still search.
+        const { text: instructions, dropped } = composeInstructions(
+            [this.config.systemPrompt || '', followUp],
+            [this.buildMemoryContext(), await this.buildDeviceContext()],
+        );
+        if (dropped) {
+            this.log.debug(`pi-agent: ${dropped} context block(s) left out, the instructions would be too long.`);
+        }
+        const text = [this.buildTimeContext(), weather, this.buildPresenceContext(), question]
+            .filter(Boolean)
+            .join('\n\n');
+        this.log.info(`Cloud tier ${harness.instance} (source='${source}') — asking pi-agent…`);
+        this.journal?.note({ tier: 'cloud', detail: harness.instance });
+        try {
+            return await harness.ask({ text, conversation: source, instructions });
+        } catch (e) {
+            if (localFallback) {
+                this.log.warn(`pi-agent failed (${(e as Error).message}) — asking the local LLM instead.`);
                 const ans = await this.askLocalLlm(question, weather, source);
                 if (ans) {
                     return ans;
@@ -6171,7 +6237,7 @@ class Assistant extends Adapter {
     }): Promise<string[]> {
         const cfg = this.config;
         const provider = msg.provider || cfg.provider || 'openai';
-        if (provider === 'none') {
+        if (provider === 'none' || provider === 'pi-agent') {
             return [];
         }
         const apiKey = effectiveApiKey(
@@ -6215,6 +6281,9 @@ class Assistant extends Adapter {
         const provider = msg.provider || cfg.provider || 'openai';
         if (provider === 'none') {
             return { error: 'No LLM provider selected.' };
+        }
+        if (provider === 'pi-agent') {
+            return { error: 'pi-agent has its own connection test in its instance settings.' };
         }
         const apiKey = effectiveApiKey(
             provider,

@@ -67,6 +67,18 @@ the API key and the model may stay empty: the model is then taken from the serve
 rule-based commands, timers and alarms, and the local model if enabled; everything else gets a short
 "I didn't understand that".
 
+**Adapter pi-agent** hands everything the local tiers cannot answer to an instance of the adapter
+[pi-agent](https://github.com/sadam6752-tech/ioBroker.pi-agent) instead of running an own tool loop. pi-agent
+stores every model and tool call before it runs (a request interrupted by a restart continues, a write is never
+repeated), has its own write permissions with confirmations, and can take the system-wide AI settings of admin
+(System settings, tab "AI"). Model and key are set up there, not here. Every request source (satellite, chat,
+Telegram user) gets a conversation of its own in pi-agent; style, follow-up marker, memory and device list go
+along as its instructions, time, weather and presence in front of each question. The tools of this adapter
+(timers, memory, announcements, YouTube) are not available to pi-agent — timers and alarms are still handled by
+the rule-based commands. Separate conversations need pi-agent with `conversation` support in `ask` (newer than
+0.3.0); older versions answer everything in one conversation. If pi-agent is not running or fails, the local
+model answers, if enabled.
+
 ### Satellites (voice)
 
 A **satellite** is a microphone + speaker in a room. The **wake word** ("Hey Jarvis" …) is detected
