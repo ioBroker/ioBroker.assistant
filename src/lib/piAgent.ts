@@ -93,7 +93,8 @@ export class PiAgentHarness {
             { timeout: this.timeoutMs },
         )) as { answer?: unknown; error?: unknown } | null | undefined;
         if (result?.error) {
-            throw new Error(`${this.instance}: ${String(result.error)}`);
+            const error = typeof result.error === 'string' ? result.error : JSON.stringify(result.error);
+            throw new Error(`${this.instance}: ${error}`);
         }
         const answer = typeof result?.answer === 'string' ? result.answer.trim() : '';
         if (!answer) {

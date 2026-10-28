@@ -30,7 +30,7 @@ export const PROVIDER_PRESETS: Record<Provider, ProviderPreset> = {
     custom: { sdk: 'openai', baseUrl: '', defaultModel: '' },
 };
 
-/** OpenRouter shows the calling app in its statistics (same attribution as @iobroker/ai-core) */
+/** OpenRouter shows the calling app in its statistics (same attribution as `@iobroker/ai-core`) */
 export const OPENROUTER_HEADERS = { 'HTTP-Referer': 'https://www.iobroker.net', 'X-Title': 'ioBroker' };
 
 /** Resolve the effective SDK, base URL and default model for a provider (custom uses `configBaseUrl`). */
