@@ -235,6 +235,9 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) New provider "Adapter pi-agent": the durable agent of the pi-agent adapter answers what the local tiers cannot, with one conversation per satellite/chat
+
 ### 1.2.0 (2026-10-26)
 * (@GermanBluefox) Own wake words for ESPHome satellites: upload a microWakeWord model in the satellite settings, the device downloads it when it is activated. Models the device cannot run (e.g. openWakeWord) are rejected on upload with the reason
 * (@GermanBluefox) Voice answers come faster: the device list for the offline rule engine is built once and shared for a minute instead of up to three times per spoken command

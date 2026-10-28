@@ -1,8 +1,15 @@
 import type { TriggerDef } from './lib/triggers';
 
 export interface AdapterConfig {
-    /** `none` = no cloud LLM, only the local tiers answer. */
-    provider: 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'custom' | 'none';
+    /**
+     * `none` = no cloud LLM, only the local tiers answer. `pi-agent` = the adapter pi-agent is the cloud tier
+     * (its model, key, tools and write permissions; see `lib/piAgent.ts`).
+     */
+    provider: 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'custom' | 'none' | 'pi-agent';
+    /** pi-agent instance for provider `pi-agent`, e.g. `pi-agent.0`. */
+    piAgentInstance: string;
+    /** How long to wait for pi-agent's answer, in seconds (default 60). */
+    piAgentTimeoutSec: number;
     /**
      * Where the API key comes from:
      *  - 'manual':  stored directly in `apiKey` (encryptedNative/protectedNative)
