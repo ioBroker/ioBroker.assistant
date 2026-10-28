@@ -106,7 +106,7 @@ satellites stay simple. See §7.
 
 **Additionally for voice / satellites:**
 
-- A **speech provider**: OpenAI, Azure or AWS (cloud), **or** local **Vosk** (STT) + **Piper** (TTS),
+- A **speech provider**: OpenAI, OpenRouter, Azure or AWS (cloud), **or** local **Vosk** (STT) + **Piper** (TTS),
   which install on demand — no cloud.
 - One or more **satellite devices** with a microphone and speaker (e.g. a Raspberry Pi with a USB
   speakerphone). **ffmpeg** is required on the satellite host (Windows and Linux).
@@ -315,10 +315,25 @@ Voice is optional and off by default. Turn on **Enable voice (STT/TTS)** on the 
 speech recognition/synthesis available; **it does not open any network port**. Then choose:
 
 - **Voice language** — used for STT and the spoken reply.
-- **Speech-to-text provider** — OpenAI, Azure, AWS, or **Vosk** (local, offline).
-- **Text-to-speech provider** — OpenAI, Azure, AWS, or **Piper** (local, offline).
+- **Speech-to-text provider** — OpenAI, OpenRouter, Azure, AWS, or **Vosk** (local, offline).
+- **Text-to-speech provider** — OpenAI, OpenRouter, Azure, AWS, or **Piper** (local, offline).
 - Provider keys (separate from the LLM key; a *Speech credential mode* mirrors manual/manager). Voices and
   local models load into dropdowns.
+
+**OpenRouter** gives one key for the speech models of many vendors: Whisper, Deepgram, ElevenLabs Scribe,
+Voxtral for recognition; ElevenLabs, Gemini TTS, Microsoft MAI-Voice, Deepgram Aura, Kokoro and more for the
+voice. The model fields list what OpenRouter offers (ids as `vendor/model`), and the voice field lists the
+voices of the chosen model. Defaults: `openai/whisper-large-v3-turbo` and `elevenlabs/eleven-flash-v2.5`.
+Without an OpenRouter key on the Voice tab, the key of the AI provider is used if that is OpenRouter (also
+from the system-wide AI settings). Unlike OpenAI, OpenRouter ignores vocabulary hints, so device and room
+names are not passed to recognition. MiniMax voices only come as mp3 and need **ffmpeg** on the ioBroker host.
+
+**Test voice and recognition** (at the bottom of the Voice tab, with the settings as they are in the form —
+also unsaved): *Speech output* speaks a test sentence in the browser and shows sample rate, length and
+synthesis time (a voice too high or too low means a wrong sample rate). *Speech recognition* records the
+browser microphone (only over https or on localhost), takes an audio file (wav, mp3, …; anything but wav needs
+ffmpeg), or speaks the test sentence and recognizes it again — that tests both engines without a microphone.
+The instance must be running.
 
 ### Kinds of satellites / transports
 
@@ -550,8 +565,10 @@ Four settings that mostly pay for themselves:
   directory, keyed by text, language, provider and voice — change the voice and nothing stale is served.
   Long one-off answers are not cached, and the cache prunes itself back to 64 MB.
 - **Confirm switch commands with a beep** (Settings tab) — a successful switch command answers with a
-  short tone instead of a sentence. Instant, where speaking costs a text-to-speech call. Questions,
-  errors and the text channels are unaffected, as are timers and alarms.
+  short tone instead of a sentence. Instant, where speaking costs a text-to-speech call. This also works
+  when the AI (or pi-agent) carried out the command: it is told to answer such a command with the marker
+  `[[DONE]]` alone, which becomes the tone; in the chat and in Telegram it becomes "Done.". Questions
+  and errors are unaffected, as are timers and alarms.
 - **Verify device feedback** (Settings tab) — after a switch command, wait up to 2 seconds for the device
   to acknowledge the value (`ack:true`) and say "did not respond" if it never does. Leave this **off** for
   devices that never acknowledge (MQTT, scripts, `0_userdata`): every command would look failed.

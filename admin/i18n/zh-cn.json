@@ -1,7 +1,7 @@
 {
   "A fired timer/alarm keeps ringing (looping the sound) for up to this long, or until you say 'stop'/'halt'/'aufhören'/'cancel' (or write the stopRinging state). 0 = play the sound once.": "触发的定时器/警报会持续响铃（循环播放声音），最长可达设定时间，或直到您说“停止”、“暂停”、“取消”（或写入 stopRinging 状态）。0 = 播放一次声音。",
   "A phrase that runs a list of actions: \"Gute Nacht\" switches off five things and answers once. Phrases: several separated by commas (matched anywhere in the sentence, upper/lower case and umlauts do not matter). Actions as JSON, same shape as a trigger: [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Reply: what the assistant answers (leave empty to stay silent). Matched before the offline rule engine and before the LLM, so a routine is never reinterpreted.": "一个执行一系列动作的短语：\"Gute Nacht\" 关闭五个设备并只回答一次。短语：多个短语用逗号分隔（在句子任意位置匹配，不区分大小写和变音符号）。动作为 JSON，格式与触发器相同：[{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]。回复：助手的回答（留空则不出声）。在离线规则引擎和 LLM 之前匹配，因此例程永远不会被重新解读。",
-  "A successful switch command is confirmed by a short tone on the satellite instead of a spoken sentence - instant, where speaking costs a text-to-speech call. Questions, errors and the text channels are unaffected.": "成功的开关命令会在卫星设备上以短促提示音确认，而不是说出一句话——即时完成，而语音播报需要一次文字转语音调用。问题、错误和文本通道不受影响。",
+  "A switch command that worked (on, off, set to a value) is confirmed by a short tone on the satellite instead of a spoken sentence, whether the offline rules or the AI carried it out. Questions, errors and the text channels are unaffected.": "执行成功的开关命令（开、关、设为某值）会在卫星设备上用一声短促的提示音确认，而不是说出一句话，无论是离线规则还是 AI 执行的。问题、错误和文本渠道不受影响。",
   "A trigger watches states or the clock and then speaks, writes a state, or asks you a question and acts on your answer. Switch single triggers off at runtime with triggers.items.<id>.enabled, test one with its fire button, and all of them with triggers.enabled.": "触发器监视状态或时钟，然后播报、写入状态，或向你提问并根据你的回答执行操作。运行时可通过 triggers.items.<id>.enabled 关闭单个触发器，用其 fire 按钮测试单个触发器，通过 triggers.enabled 控制全部触发器。",
   "API key": "API密钥",
   "API password (usually empty)": "API 密码（通常为空）",
@@ -202,5 +202,14 @@
   "System-wide AI settings (admin)": "系统级 AI 设置（admin）",
   "OpenRouter": "OpenRouter",
   "Provider, model and API key come from the system settings of admin (tab \"AI\"). A change there restarts this instance.": "提供商、模型和 API 密钥来自 admin 的系统设置（“AI”选项卡）。在那里更改会重启此实例。",
-  "Empty: the system-wide AI settings of admin are used": "留空：使用 admin 的系统级 AI 设置"
+  "Empty: the system-wide AI settings of admin are used": "留空：使用 admin 的系统级 AI 设置",
+  "OpenRouter key for speech (optional)": "用于语音的 OpenRouter 密钥（可选）",
+  "OpenRouter credential": "OpenRouter 凭据",
+  "Empty: the key of the AI provider is used if that is OpenRouter (also from the system-wide AI settings).": "留空：如果 AI 提供商是 OpenRouter（也包括系统级 AI 设置），则使用其密钥。",
+  "OpenRouter STT model (optional)": "OpenRouter STT 模型（可选）",
+  "Empty = openai/whisper-large-v3-turbo.": "留空 = openai/whisper-large-v3-turbo。",
+  "OpenRouter TTS model (optional)": "OpenRouter TTS 模型（可选）",
+  "Empty = elevenlabs/eleven-flash-v2.5.": "留空 = elevenlabs/eleven-flash-v2.5。",
+  "OpenRouter voice (optional)": "OpenRouter 语音（可选）",
+  "The voices depend on the model. Empty = the first voice of the model for the language.": "可用语音取决于模型。留空 = 该模型在此语言下的第一个语音。"
 }

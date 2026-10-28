@@ -109,7 +109,7 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
 
 **Zusätzlich für Sprache / Satelliten:**
 
-- Einen **Sprach-Anbieter**: OpenAI, Azure oder AWS (Cloud), **oder** lokal **Vosk** (STT) + **Piper**
+- Einen **Sprach-Anbieter**: OpenAI, OpenRouter, Azure oder AWS (Cloud), **oder** lokal **Vosk** (STT) + **Piper**
   (TTS), die bei Bedarf installiert werden — ohne Cloud.
 - Einen oder mehrere **Satelliten** mit Mikrofon und Lautsprecher (z. B. ein Raspberry Pi mit USB-
   Speakerphone). **ffmpeg** wird auf dem Satelliten-Host benötigt (Windows und Linux).
@@ -327,10 +327,27 @@ Sprache ist optional und standardmäßig aus. Aktiviere **Sprache aktivieren (ST
 wähle:
 
 - **Voice-Sprache** — für STT und die vorgelesene Antwort.
-- **Spracherkennungs-Anbieter** — OpenAI, Azure, AWS oder **Vosk** (lokal, offline).
-- **Sprachausgabe-Anbieter** — OpenAI, Azure, AWS oder **Piper** (lokal, offline).
+- **Spracherkennungs-Anbieter** — OpenAI, OpenRouter, Azure, AWS oder **Vosk** (lokal, offline).
+- **Sprachausgabe-Anbieter** — OpenAI, OpenRouter, Azure, AWS oder **Piper** (lokal, offline).
 - Anbieter-Schlüssel (getrennt vom LLM-Schlüssel; eine *Sprach-Schlüssel-Quelle* spiegelt manual/manager).
   Stimmen und lokale Modelle laden in Dropdowns.
+
+**OpenRouter** bietet mit einem Schlüssel die Sprachmodelle vieler Hersteller: Whisper, Deepgram,
+ElevenLabs Scribe und Voxtral für die Erkennung; ElevenLabs, Gemini TTS, Microsoft MAI-Voice, Deepgram Aura,
+Kokoro und weitere für die Stimme. Die Modellfelder listen, was OpenRouter anbietet (IDs als
+`hersteller/modell`), das Stimmenfeld die Stimmen des gewählten Modells. Vorgaben:
+`openai/whisper-large-v3-turbo` und `elevenlabs/eleven-flash-v2.5`. Ohne OpenRouter-Schlüssel im
+Reiter Voice wird der Schlüssel des KI-Anbieters verwendet, wenn das OpenRouter ist (auch aus den
+systemweiten KI-Einstellungen). Anders als OpenAI ignoriert OpenRouter Vokabel-Hinweise, Geräte- und
+Raumnamen gehen also nicht an die Erkennung. MiniMax-Stimmen gibt es nur als mp3; dafür braucht es
+**ffmpeg** auf dem ioBroker-Host.
+
+**Stimme und Erkennung testen** (unten im Reiter Voice, mit den Einstellungen so, wie sie im Formular
+stehen — auch ungespeichert): *Sprachausgabe* spricht einen Testsatz im Browser und zeigt Abtastrate,
+Länge und Synthesezeit (eine zu hohe oder zu tiefe Stimme heißt: falsche Abtastrate). *Spracherkennung*
+nimmt das Browser-Mikrofon auf (nur über https oder auf localhost), nimmt eine Audiodatei (wav, mp3, …;
+alles außer wav braucht ffmpeg) oder spricht den Testsatz und erkennt ihn wieder — das testet beide
+Engines ohne Mikrofon. Die Instanz muss laufen.
 
 ### Arten von Satelliten / Transporten
 
@@ -566,7 +583,9 @@ Vier Einstellungen, die sich meist selbst bezahlen:
   selbst auf 64 MB zurück.
 - **Schaltbefehle mit einem Ton bestätigen** (Tab Einstellungen) — ein erfolgreicher Schaltbefehl
   antwortet mit einem kurzen Ton statt mit einem Satz. Sofort, während Sprechen einen
-  Text-to-Speech-Aufruf kostet. Fragen, Fehler und die Textkanäle sind davon unberührt, Timer und Wecker
+  Text-to-Speech-Aufruf kostet. Das gilt auch, wenn die KI (oder pi-agent) den Befehl ausgeführt hat: Sie
+  soll einen solchen Befehl nur mit dem Marker `[[DONE]]` beantworten, daraus wird der Ton; im Chat und in
+  Telegram wird daraus „Erledigt.“. Fragen und Fehler sind davon unberührt, Timer und Wecker
   ebenfalls.
 - **Geräte-Rückmeldung prüfen** (Tab Einstellungen) — nach einem Schaltbefehl bis zu 2 Sekunden auf die
   Bestätigung des Geräts warten (`ack:true`) und "hat nicht reagiert" sagen, wenn sie ausbleibt. Bei

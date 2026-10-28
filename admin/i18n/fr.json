@@ -1,7 +1,7 @@
 {
   "A fired timer/alarm keeps ringing (looping the sound) for up to this long, or until you say 'stop'/'halt'/'aufhören'/'cancel' (or write the stopRinging state). 0 = play the sound once.": "Une alarme/minuterie déclenchée continue de sonner (en boucle) pendant une durée maximale, ou jusqu'à ce que vous disiez « stop », « halt », « aufhören » ou « cancel » (ou que vous écriviez l'état stopRinging). 0 = le son est joué une seule fois.",
   "A phrase that runs a list of actions: \"Gute Nacht\" switches off five things and answers once. Phrases: several separated by commas (matched anywhere in the sentence, upper/lower case and umlauts do not matter). Actions as JSON, same shape as a trigger: [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Reply: what the assistant answers (leave empty to stay silent). Matched before the offline rule engine and before the LLM, so a routine is never reinterpreted.": "Une phrase qui exécute une liste d'actions : \"Gute Nacht\" éteint cinq appareils et répond une seule fois. Phrases : plusieurs, séparées par des virgules (reconnues n'importe où dans la phrase, majuscules/minuscules et trémas sans importance). Actions en JSON, même format qu'un déclencheur : [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Réponse : ce que répond l'assistant (laisser vide pour rester silencieux). Vérifiée avant le moteur de règles hors ligne et avant le LLM, une routine n'est donc jamais réinterprétée.",
-  "A successful switch command is confirmed by a short tone on the satellite instead of a spoken sentence - instant, where speaking costs a text-to-speech call. Questions, errors and the text channels are unaffected.": "Une commande de commutation réussie est confirmée par un bref signal sonore sur le satellite au lieu d'une phrase parlée - instantané, alors que parler coûte un appel de synthèse vocale. Les questions, les erreurs et les canaux texte ne sont pas concernés.",
+  "A switch command that worked (on, off, set to a value) is confirmed by a short tone on the satellite instead of a spoken sentence, whether the offline rules or the AI carried it out. Questions, errors and the text channels are unaffected.": "Une commande de commutation réussie (allumer, éteindre, régler une valeur) est confirmée par un bref signal sonore sur le satellite au lieu d'une phrase prononcée, qu'elle ait été exécutée par les règles hors ligne ou par l'IA. Les questions, les erreurs et les canaux texte ne sont pas concernés.",
   "A trigger watches states or the clock and then speaks, writes a state, or asks you a question and acts on your answer. Switch single triggers off at runtime with triggers.items.<id>.enabled, test one with its fire button, and all of them with triggers.enabled.": "Un déclencheur surveille des états ou l'horloge, puis parle, écrit un état ou vous pose une question et agit selon votre réponse. Désactivez un déclencheur pendant l'exécution avec triggers.items.<id>.enabled, testez-le avec son bouton fire, et tous à la fois avec triggers.enabled.",
   "API key": "Clé API",
   "API password (usually empty)": "Mot de passe API (généralement vide)",
@@ -202,5 +202,14 @@
   "System-wide AI settings (admin)": "Paramètres IA du système (admin)",
   "OpenRouter": "OpenRouter",
   "Provider, model and API key come from the system settings of admin (tab \"AI\"). A change there restarts this instance.": "Le fournisseur, le modèle et la clé API proviennent des paramètres système d'admin (onglet « IA »). Une modification à cet endroit redémarre cette instance.",
-  "Empty: the system-wide AI settings of admin are used": "Vide : les paramètres IA du système d'admin sont utilisés"
+  "Empty: the system-wide AI settings of admin are used": "Vide : les paramètres IA du système d'admin sont utilisés",
+  "OpenRouter key for speech (optional)": "Clé OpenRouter pour la voix (facultatif)",
+  "OpenRouter credential": "Identifiants OpenRouter",
+  "Empty: the key of the AI provider is used if that is OpenRouter (also from the system-wide AI settings).": "Vide : la clé du fournisseur d'IA est utilisée s'il s'agit d'OpenRouter (y compris depuis les paramètres d'IA du système).",
+  "OpenRouter STT model (optional)": "Modèle STT OpenRouter (facultatif)",
+  "Empty = openai/whisper-large-v3-turbo.": "Vide = openai/whisper-large-v3-turbo.",
+  "OpenRouter TTS model (optional)": "Modèle TTS OpenRouter (facultatif)",
+  "Empty = elevenlabs/eleven-flash-v2.5.": "Vide = elevenlabs/eleven-flash-v2.5.",
+  "OpenRouter voice (optional)": "Voix OpenRouter (facultatif)",
+  "The voices depend on the model. Empty = the first voice of the model for the language.": "Les voix dépendent du modèle. Vide = la première voix du modèle pour la langue."
 }

@@ -9,6 +9,14 @@ import { AzureStt, AzureTts, listAzureVoices } from './azure';
 import { AwsStt, AwsTts, listPollyVoices, type AwsCreds } from './aws';
 import { VoskStt, listVoskModels } from './vosk';
 import { PiperTts, listPiperVoices } from './piper';
+import {
+    OpenRouterStt,
+    OpenRouterTts,
+    listOpenRouterSpeechModels,
+    voicesForLanguage,
+    DEFAULT_OPENROUTER_TTS_MODEL,
+    type AudioDecoder,
+} from './openrouter';
 import * as path from 'node:path';
 
 import { CachedTts } from './ttsCache';
@@ -16,11 +24,12 @@ import { FallbackStt, FallbackTts, type NamedEngine } from './fallback';
 import { isoToLocale } from './lang';
 import type { VoiceLogger } from './download';
 
-export type SpeechProvider = 'openai' | 'azure' | 'aws' | 'vosk' | 'piper';
+export type SpeechProvider = 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk' | 'piper';
 
 /** All speech credentials, resolved from config (or the central credential store). */
 export interface VoiceCredentials {
     openaiKey: string;
+    openrouterKey: string;
     azureKey: string;
     azureRegion: string;
     aws: AwsCreds;
@@ -32,6 +41,7 @@ export interface VoiceNames {
     azure: string; // e.g. de-DE-KatjaNeural
     aws: string; // e.g. Vicki
     piper: string; // e.g. de_DE-thorsten-medium
+    openrouter: string; // depends on the model, e.g. Kore, george
 }
 
 /** Everything the factory needs to build any engine. */
@@ -50,6 +60,11 @@ export interface EngineContext {
     sttModel: string;
     /** OpenAI TTS model ('' → 'tts-1'; e.g. 'gpt-4o-mini-tts'). */
     ttsModel: string;
+    /** OpenRouter models ('' → the defaults of openrouter.ts) */
+    openrouterSttModel: string;
+    openrouterTtsModel: string;
+    /** Decoder for compressed speech (OpenRouter models that only return mp3); absent → those models fail */
+    decodeAudio?: AudioDecoder;
 }
 
 function requireAzure(creds: VoiceCredentials): void {
@@ -67,6 +82,12 @@ function requireAws(creds: VoiceCredentials): void {
 function requireOpenAi(creds: VoiceCredentials): void {
     if (!creds.openaiKey) {
         throw new Error('OpenAI speech needs an API key');
+    }
+}
+
+function requireOpenRouter(creds: VoiceCredentials): void {
+    if (!creds.openrouterKey) {
+        throw new Error('OpenRouter speech needs an API key');
     }
 }
 
@@ -94,6 +115,9 @@ function buildSttEngine(provider: SpeechProvider, ctx: EngineContext): SttEngine
             return new AwsStt(ctx.creds.aws);
         case 'vosk':
             return new VoskStt(ctx.dataDir, ctx.voskModel, ctx.log);
+        case 'openrouter':
+            requireOpenRouter(ctx.creds);
+            return new OpenRouterStt(ctx.creds.openrouterKey, ctx.openrouterSttModel);
         case 'piper':
             throw new Error('Piper is a text-to-speech engine, not speech-to-text');
         default:
@@ -131,7 +155,9 @@ function cachedTts(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
               ? ctx.voices.aws
               : provider === 'piper'
                 ? ctx.voices.piper
-                : ctx.voices.openai;
+                : provider === 'openrouter'
+                  ? `${ctx.openrouterTtsModel || DEFAULT_OPENROUTER_TTS_MODEL}-${ctx.voices.openrouter}`
+                  : ctx.voices.openai;
     const dir = path.join(ctx.dataDir, 'ttscache', `${provider}-${(voice || 'default').replace(/[^\w.-]/g, '_')}`);
     return new CachedTts(buildTtsEngine(provider, ctx), { dir, log: ctx.log });
 }
@@ -148,6 +174,14 @@ function buildTtsEngine(provider: SpeechProvider, ctx: EngineContext): TtsEngine
             return new PiperTts(ctx.dataDir, ctx.voices.piper, ctx.log);
         case 'vosk':
             throw new Error('Vosk is a speech-to-text engine, not text-to-speech');
+        case 'openrouter':
+            requireOpenRouter(ctx.creds);
+            return new OpenRouterTts(
+                ctx.creds.openrouterKey,
+                ctx.openrouterTtsModel,
+                ctx.voices.openrouter,
+                ctx.decodeAudio,
+            );
         default:
             requireOpenAi(ctx.creds);
             return new OpenAiTts(
@@ -172,12 +206,26 @@ export async function listVoices(provider: SpeechProvider, ctx: EngineContext, l
             return listPollyVoices(ctx.creds.aws, isoToLocale(language));
         case 'piper':
             return listPiperVoices();
+        case 'openrouter': {
+            // public list, no key needed: the voices of the chosen model
+            const model = ctx.openrouterTtsModel || DEFAULT_OPENROUTER_TTS_MODEL;
+            const models = await listOpenRouterSpeechModels('speech');
+            return voicesForLanguage(models.find(m => m.id === model)?.voices || [], language);
+        }
         default:
             return OPENAI_VOICES;
     }
 }
 
-/** Suggested STT model names for the settings dropdown. Only Vosk has a local model catalogue. */
-export function listSttModels(provider: SpeechProvider, language: string): string[] {
+/** Suggested STT model names for the settings dropdown: the local Vosk catalogue, or the models of OpenRouter. */
+export async function listSttModels(provider: SpeechProvider, language: string): Promise<string[]> {
+    if (provider === 'openrouter') {
+        return (await listOpenRouterSpeechModels('transcription')).map(m => m.id);
+    }
     return provider === 'vosk' ? listVoskModels(language) : [];
+}
+
+/** TTS model names for the settings dropdown — only OpenRouter has a choice worth listing. */
+export async function listTtsModels(provider: SpeechProvider): Promise<string[]> {
+    return provider === 'openrouter' ? (await listOpenRouterSpeechModels('speech')).map(m => m.id) : [];
 }

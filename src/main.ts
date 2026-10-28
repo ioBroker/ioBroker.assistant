@@ -37,7 +37,7 @@ import {
 } from './lib/weather';
 import { Journal, errorInfo, traceDirFor, type JournalOrigin } from './lib/journal';
 import { LocalLlm, installLocalLlm, isLocalLlmInstalled, isHandoff, DEFAULT_LOCAL_MODEL_URL } from './lib/localLlm';
-import { resolveApiKey, resolveVoiceCredentials } from './lib/credentials';
+import { resolveApiKey, resolveVoiceCredentials, type LlmKey } from './lib/credentials';
 import { ConversationStore, type ConversationTurn } from './lib/context';
 import { PendingQuestions, ANY_SOURCE, ASK_TIMEOUT_MS } from './lib/ask';
 import { PresenceTracker, buildPresencePrompt, parsePresenceRows, type PresenceInfo } from './lib/presence';
@@ -102,10 +102,12 @@ import {
     createTtsEngine,
     listVoices,
     listSttModels,
+    listTtsModels,
     type EngineContext,
     type VoiceCredentials,
     type SpeechProvider,
 } from './lib/voice/engines';
+import { pcmFromResponse } from './lib/voice/openrouter';
 import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
 import {
     SYSTEM_AI_ID,
@@ -148,6 +150,37 @@ const LOCAL_LLM_MAX_TOKENS = 256;
  * The replies the assistant speaks verbatim, whatever the question was. They are pre-synthesised into
  * the TTS cache at startup; everything else is cached on first use.
  */
+/** Fields of the Voice tab the voice test takes from the unsaved form (everything an STT or TTS engine is built from). */
+const VOICE_FORM_FIELDS = [
+    'voiceLanguage',
+    'sttProvider',
+    'sttModel',
+    'openrouterSttModel',
+    'voskModel',
+    'ttsProvider',
+    'ttsVoice',
+    'ttsModel',
+    'voiceCredentialType',
+    'voiceApiKey',
+    'voiceCredentialId',
+    'openrouterSpeechKey',
+    'openrouterCredentialId',
+    'openrouterTtsModel',
+    'openrouterVoice',
+    'azureSpeechKey',
+    'azureSpeechRegion',
+    'azureCredentialId',
+    'azureVoice',
+    'awsAccessKeyId',
+    'awsSecretAccessKey',
+    'awsRegion',
+    'awsCredentialId',
+    'awsVoice',
+    'piperVoice',
+];
+/** Of those, the protected ones: the browser never gets them, so an empty value there means "keep the saved one" */
+const VOICE_FORM_SECRETS = ['voiceApiKey', 'openrouterSpeechKey', 'azureSpeechKey', 'awsSecretAccessKey'];
+
 /** How long to wait for a device to confirm a write, and how often to look. */
 const ACK_TIMEOUT_MS = 2000;
 const ACK_POLL_MS = 150;
@@ -446,7 +479,8 @@ class Assistant extends Adapter {
         }
         const resolved = localOnly || harness ? null : await resolveLlm(this, cfg);
         this.llm = resolved && !('error' in resolved) ? resolved : null;
-        const apiKey = this.llm?.provider === 'openai' ? this.llm.apiKey : '';
+        // speech of the same vendor reuses the key of the LLM
+        const llmKey: LlmKey | null = this.llm ? { provider: this.llm.provider, apiKey: this.llm.apiKey } : null;
         await this.setupJournal();
 
         if (harness && !(cfg.piAgentInstance || '').trim()) {
@@ -592,23 +626,23 @@ class Assistant extends Adapter {
             // Subscribe regardless of the UDP server so writes are always handled (and logged if unroutable).
             this.subscribeStates('tts.text');
             if (cfg.udpServerEnabled) {
-                await this.startVoiceServer(apiKey);
+                await this.startVoiceServer(llmKey);
             }
         }
 
         if (cfg.wyomingEnabled) {
-            await this.startWyoming(apiKey);
+            await this.startWyoming(llmKey);
         }
 
         if (cfg.esphomeEnabled) {
-            await this.startEsphome(apiKey);
+            await this.startEsphome(llmKey);
         }
     }
 
     /** Start the Wyoming TCP endpoint, bridging to the same STT/answer/TTS pipeline as the UDP server. */
-    private async startWyoming(mainApiKey: string): Promise<void> {
+    private async startWyoming(llmKey: LlmKey | null): Promise<void> {
         const cfg = this.config;
-        const creds = await resolveVoiceCredentials(this, cfg, mainApiKey);
+        const creds = await resolveVoiceCredentials(this, cfg, llmKey);
         const ctx = this.voiceContext(cfg, creds);
         const language = cfg.voiceLanguage || this.language || '';
         let stt: SttEngine;
@@ -649,7 +683,7 @@ class Assistant extends Adapter {
      * linux-voice-assistant). The adapter is the client here — the devices listen on TCP 6053 — and the
      * spoken reply is handed over as a URL, so the little media server comes up together with them.
      */
-    private async startEsphome(mainApiKey: string): Promise<void> {
+    private async startEsphome(llmKey: LlmKey | null): Promise<void> {
         const cfg = this.config;
         const devices = (cfg.esphomeDevices || []).filter(d => d?.ip?.trim());
         if (!devices.length) {
@@ -657,7 +691,7 @@ class Assistant extends Adapter {
             return;
         }
 
-        const creds = await resolveVoiceCredentials(this, cfg, mainApiKey);
+        const creds = await resolveVoiceCredentials(this, cfg, llmKey);
         const ctx = this.voiceContext(cfg, creds);
         const language = cfg.voiceLanguage || this.language || '';
         let stt: SttEngine;
@@ -758,6 +792,7 @@ class Assistant extends Adapter {
                 azure: (cfg.azureVoice || '').trim(),
                 aws: (cfg.awsVoice || '').trim(),
                 piper: (cfg.piperVoice || '').trim(),
+                openrouter: (cfg.openrouterVoice || '').trim(),
             },
             sttFallback: cfg.sttFallback || '',
             ttsFallback: cfg.ttsFallback || '',
@@ -766,6 +801,9 @@ class Assistant extends Adapter {
             voskModel: (cfg.voskModel || '').trim(),
             sttModel: (cfg.sttModel || '').trim(),
             ttsModel: (cfg.ttsModel || '').trim(),
+            openrouterSttModel: (cfg.openrouterSttModel || '').trim(),
+            openrouterTtsModel: (cfg.openrouterTtsModel || '').trim(),
+            decodeAudio: audio => this.decodeAudioBufferToPcm(audio),
         };
     }
 
@@ -774,9 +812,9 @@ class Assistant extends Adapter {
      * AWS cloud, or Vosk / Piper locally); credentials come from the encrypted config fields or the
      * central credential store (voiceCredentialType).
      */
-    private async startVoiceServer(mainApiKey: string): Promise<void> {
+    private async startVoiceServer(llmKey: LlmKey | null): Promise<void> {
         const cfg = this.config;
-        const creds = await resolveVoiceCredentials(this, cfg, mainApiKey);
+        const creds = await resolveVoiceCredentials(this, cfg, llmKey);
         const ctx = this.voiceContext(cfg, creds);
         // Raw language (e.g. 'de' or 'zh-cn') — each engine normalises it (ISO for cloud, model per lang for local).
         const language = cfg.voiceLanguage || this.language || '';
@@ -892,6 +930,7 @@ class Assistant extends Adapter {
             azure: cfg.azureVoice,
             aws: cfg.awsVoice,
             piper: cfg.piperVoice,
+            openrouter: cfg.openrouterVoice,
         };
         this.journal?.spoken(source, {
             ...info,
@@ -914,8 +953,7 @@ class Assistant extends Adapter {
             return this.speechEngines;
         }
         const cfg = this.config;
-        const mainKey = await this.openAiLlmKey();
-        const creds = await resolveVoiceCredentials(this, cfg, mainKey);
+        const creds = await resolveVoiceCredentials(this, cfg, await this.speechLlmKey());
         const ctx = this.voiceContext(cfg, creds);
         const language = cfg.voiceLanguage || this.language || '';
         try {
@@ -1024,6 +1062,9 @@ class Assistant extends Adapter {
         awsSecretAccessKey?: string;
         awsRegion?: string;
         awsCredentialId?: string;
+        openrouterSpeechKey?: string;
+        openrouterCredentialId?: string;
+        openrouterTtsModel?: string;
     }): Promise<string[]> {
         try {
             // Merge the form's config-shaped fields over the saved config (ttsProvider/language handled apart).
@@ -1033,8 +1074,7 @@ class Assistant extends Adapter {
             const cfg = { ...this.config, ...overrides };
             const provider = msg.ttsProvider || cfg.ttsProvider || 'openai';
             const language = msg.language || cfg.voiceLanguage || this.language || '';
-            const mainKey = await this.openAiLlmKey();
-            const creds = await resolveVoiceCredentials(this, cfg, mainKey);
+            const creds = await resolveVoiceCredentials(this, cfg, await this.speechLlmKey());
             return await listVoices(provider, this.voiceContext(cfg, creds), language);
         } catch (e) {
             this.log.warn(`getVoices failed: ${(e as Error).message}`);
@@ -2018,12 +2058,12 @@ class Assistant extends Adapter {
     }
 
     /** Invalidate the cached device/room/function listings when a room/function enum changes. */
-    /** The key of the cloud LLM if it is OpenAI: speech reuses it when it has no key of its own. */
-    private async openAiLlmKey(): Promise<string> {
+    /** Vendor and key of the cloud LLM: speech of the same vendor (OpenAI, OpenRouter) reuses the key. */
+    private async speechLlmKey(): Promise<LlmKey | null> {
         const provider = this.config.provider || 'openai';
         const llm =
             this.llm ?? (provider === 'none' || provider === 'pi-agent' ? null : await resolveLlm(this, this.config));
-        return llm && !('error' in llm) && llm.provider === 'openai' ? llm.apiKey : '';
+        return llm && !('error' in llm) ? { provider: llm.provider, apiKey: llm.apiKey } : null;
     }
 
     /**
@@ -2355,6 +2395,9 @@ class Assistant extends Adapter {
                     awsSecretAccessKey?: string;
                     awsRegion?: string;
                     awsCredentialId?: string;
+                    openrouterSpeechKey?: string;
+                    openrouterCredentialId?: string;
+                    openrouterTtsModel?: string;
                 },
             );
             if (obj.callback) {
@@ -2363,14 +2406,26 @@ class Assistant extends Adapter {
             return;
         }
 
-        // STT model dropdown (Vosk): suggest model names for the selected language.
-        if (obj.command === 'getSttModels') {
-            const msg = (obj.message || {}) as { sttProvider?: SpeechProvider; language?: string };
+        // STT/TTS model dropdowns (Vosk, OpenRouter): suggest model names for the selected provider.
+        if (obj.command === 'getSttModels' || obj.command === 'getTtsModels') {
+            const msg = (obj.message || {}) as {
+                sttProvider?: SpeechProvider;
+                ttsProvider?: SpeechProvider;
+                language?: string;
+            };
             const cfg = this.config;
-            const provider = msg.sttProvider || cfg.sttProvider || 'openai';
             const language = msg.language || cfg.voiceLanguage || this.language || '';
+            let models: string[] = [];
+            try {
+                models =
+                    obj.command === 'getSttModels'
+                        ? await listSttModels(msg.sttProvider || cfg.sttProvider || 'openai', language)
+                        : await listTtsModels(msg.ttsProvider || cfg.ttsProvider || 'openai');
+            } catch (e) {
+                this.log.warn(`${obj.command} failed: ${(e as Error).message}`);
+            }
             if (obj.callback) {
-                this.sendTo(obj.from, obj.command, listSttModels(provider, language), obj.callback);
+                this.sendTo(obj.from, obj.command, models, obj.callback);
             }
             return;
         }
@@ -2788,10 +2843,32 @@ class Assistant extends Adapter {
             return;
         }
 
-        // Chat: synthesize an answer to speech (WAV) via the configured TTS engine.
+        // Chat and the voice test of the settings: synthesize to speech (WAV) via the configured TTS engine,
+        // or via the unsaved settings of the Voice tab (`config`).
         if (obj.command === 'tts') {
-            const { text, language } = (obj.message || {}) as { text?: string; language?: string };
-            const result = await this.synthesizeToWav(String(text ?? ''), language);
+            const { text, language, config } = (obj.message || {}) as {
+                text?: string;
+                language?: string;
+                config?: Record<string, unknown>;
+            };
+            const cfg = config ? this.withVoiceForm(config) : this.config;
+            const result = await this.synthesizeToWav(String(text ?? ''), language, cfg);
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
+
+        // Voice test of the settings: recognize a recording with the (unsaved) speech-to-text settings.
+        if (obj.command === 'stt') {
+            const result = await this.transcribeForTest(
+                (obj.message || {}) as {
+                    audio?: string;
+                    format?: string;
+                    language?: string;
+                    config?: Record<string, unknown>;
+                },
+            );
             if (obj.callback) {
                 this.sendTo(obj.from, obj.command, result, obj.callback);
             }
@@ -3003,7 +3080,9 @@ class Assistant extends Adapter {
             data: {
                 provider,
                 fallback: cfg.sttFallback || undefined,
-                model: (cfg.sttModel || cfg.voskModel || '').trim() || undefined,
+                model:
+                    (provider === 'openrouter' ? cfg.openrouterSttModel : cfg.sttModel || cfg.voskModel || '').trim() ||
+                    undefined,
                 language: cfg.voiceLanguage || this.language || '',
                 audioMs: origin.audioMs,
                 wakeWord: origin.wakeWord,
@@ -3032,18 +3111,53 @@ class Assistant extends Adapter {
         if (followUp) {
             this.journal?.note({ followUp: true });
         }
-        const result = raw.replace(/\s*\[\[LISTEN\]\]\s*/gi, ' ').trim();
+        let result = raw.replace(/\s*\[\[(?:LISTEN|DONE)\]\]\s*/gi, ' ').trim();
+        // The LLM answers a switch command that worked with [[DONE]] alone (see doneHint): a beep on the satellite
+        // instead of a sentence. Where nothing can beep (chat, Telegram), a short word. With more text, that is said.
+        let toned = false;
+        if (!result && /\[\[DONE\]\]/i.test(raw)) {
+            toned = await this.playConfirmationTone(source);
+            if (!toned) {
+                result = this.doneText();
+            }
+        }
         this.journal?.step({
             stage: 'answer',
-            title: result
-                ? `Answer: ${result.length} characters${followUp ? ', waits for a reply' : ''}`
-                : 'No spoken answer',
-            data: { answer: result, raw: raw !== result ? raw : undefined, followUp },
+            title: toned
+                ? 'Confirmed with a tone instead of words'
+                : result
+                  ? `Answer: ${result.length} characters${followUp ? ', waits for a reply' : ''}`
+                  : 'No spoken answer',
+            data: { answer: result, raw: raw !== result ? raw : undefined, followUp, tone: toned || undefined },
         });
-        if (useCtx && result) {
-            this.context.add(source, question, result);
+        if (useCtx && (result || toned)) {
+            this.context.add(source, question, result || this.doneText());
         }
         return result;
+    }
+
+    /**
+     * System-prompt instruction for `confirmWithTone`: a switch command that worked is answered with [[DONE]]
+     * alone, which becomes a beep on the satellite. Empty when the option (or voice) is off.
+     */
+    private doneHint(): string {
+        if (!this.config.confirmWithTone || !this.config.voiceEnabled) {
+            return '';
+        }
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        if (lang === 'ru') {
+            return 'Если запрос был только командой включить, выключить или установить устройства на значение и всё получилось, ответь только управляющим маркером [[DONE]] (вместо фразы прозвучит короткий сигнал). На вопросы, при ошибках или если нужно что-то сообщить, отвечай как обычно.';
+        }
+        if (lang === 'de') {
+            return 'Wenn die Anfrage nur ein Befehl war, Geräte ein- oder auszuschalten oder auf einen Wert zu stellen, und alles geklappt hat, antworte ausschließlich mit dem Steuer-Marker [[DONE]] (statt eines Satzes ertönt ein kurzer Bestätigungston). Bei Fragen, bei Fehlern oder wenn du etwas mitteilen musst, antworte normal.';
+        }
+        return 'If the request was only a command to switch devices on or off or to set them to a value, and everything worked, answer with the control marker [[DONE]] alone (a short beep plays instead of a sentence). For questions, errors or when you have something to tell, answer normally.';
+    }
+
+    /** What [[DONE]] says where no beep can be played */
+    private doneText(): string {
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        return lang === 'ru' ? 'Готово.' : lang === 'de' ? 'Erledigt.' : 'Done.';
     }
 
     /** Per source: whether its last {@link answer} asked the user something (LLM-signalled via [[LISTEN]]). */
@@ -3284,7 +3398,8 @@ class Assistant extends Adapter {
         const mem = this.buildMemoryContext();
         // Only ask the model to emit the follow-up marker when satellites can actually re-open the mic.
         const followUp = this.config.voiceEnabled ? this.followUpHint() : '';
-        const parts = [this.config.systemPrompt || '', followUp, mem, ctx].filter(Boolean);
+        const done = this.doneHint();
+        const parts = [this.config.systemPrompt || '', followUp, done, mem, ctx].filter(Boolean);
         const sys = parts.length ? parts.join('\n\n') : undefined;
         this.log.info(
             `Cloud LLM [${this.agent.model || 'auto'}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}${weather ? ', weather' : ''}${this.presence?.configured ? ', presence' : ''}) — running tool loop…`,
@@ -3306,6 +3421,7 @@ class Assistant extends Adapter {
             data: {
                 systemPrompt: this.config.systemPrompt || '',
                 followUpHint: followUp || undefined,
+                doneHint: done || undefined,
                 memory: mem || undefined,
                 devices: deviceLines,
                 time,
@@ -3349,7 +3465,7 @@ class Assistant extends Adapter {
         // The device list maps names to state ids, so pi-agent can act without searching first. It is the
         // first to go when the instructions get too long — pi-agent can still search.
         const { text: instructions, dropped } = composeInstructions(
-            [this.config.systemPrompt || '', followUp],
+            [this.config.systemPrompt || '', followUp, this.doneHint()],
             [this.buildMemoryContext(), await this.buildDeviceContext()],
         );
         if (dropped) {
@@ -6653,12 +6769,58 @@ class Assistant extends Adapter {
         }
     }
 
-    /** Build the configured TTS engine (throws when no voice key is available). */
-    private async buildTtsEngine(): Promise<TtsEngine> {
-        const cfg = this.config;
-        const mainApiKey = await this.openAiLlmKey();
-        const creds = await resolveVoiceCredentials(this, cfg, mainApiKey);
+    /**
+     * The saved configuration with the speech settings of an unsaved form on top. Only the speech fields count,
+     * and a key only when one was typed: protected fields never reach the browser, so they are empty there.
+     * Without fallbacks: a test must show whether the chosen engine works, not whether the reserve does.
+     */
+    private withVoiceForm(form: Record<string, unknown>): AdapterConfig {
+        const cfg: Record<string, unknown> = { ...this.config, sttFallback: '', ttsFallback: '' };
+        for (const key of VOICE_FORM_FIELDS) {
+            const value = form[key];
+            if (typeof value !== 'string' || (VOICE_FORM_SECRETS.includes(key) && !value.trim())) {
+                continue;
+            }
+            cfg[key] = value;
+        }
+        return cfg as unknown as AdapterConfig;
+    }
+
+    /** Build the TTS engine of a configuration (throws when no voice key is available). */
+    private async buildTtsEngine(cfg: AdapterConfig = this.config): Promise<TtsEngine> {
+        const creds = await resolveVoiceCredentials(this, cfg, await this.speechLlmKey());
         return createTtsEngine(cfg.ttsProvider || 'openai', this.voiceContext(cfg, creds));
+    }
+
+    /**
+     * Speech recognition for the voice test of the settings: a recording of the browser, an uploaded file or the
+     * test sentence the TTS just spoke. WAV is read directly, anything else goes through ffmpeg.
+     */
+    private async transcribeForTest(msg: {
+        audio?: string;
+        format?: string;
+        language?: string;
+        config?: Record<string, unknown>;
+    }): Promise<{ text?: string; ms?: number; audioMs?: number; error?: string }> {
+        try {
+            if (!msg.audio) {
+                return { error: 'no audio' };
+            }
+            const cfg = msg.config ? this.withVoiceForm(msg.config) : this.config;
+            const data = Buffer.from(msg.audio, 'base64');
+            const { pcm, sampleRate } =
+                (msg.format || 'wav') === 'wav' && data.toString('latin1', 0, 4) === 'RIFF'
+                    ? pcmFromResponse(data, '')
+                    : await this.decodeAudioBufferToPcm(data);
+            const creds = await resolveVoiceCredentials(this, cfg, await this.speechLlmKey());
+            const stt = createSttEngine(cfg.sttProvider || 'openai', this.voiceContext(cfg, creds));
+            const language = msg.language || cfg.voiceLanguage || this.language || '';
+            const start = Date.now();
+            const text = await stt.transcribe(pcm, sampleRate, language, await this.buildSttHints());
+            return { text, ms: Date.now() - start, audioMs: Math.round((pcm.length / 2 / sampleRate) * 1000) };
+        } catch (e) {
+            return { error: (e as Error).message };
+        }
     }
 
     /** True if backend TTS can run (a voice key is configured) — drives the Chat play button. */
@@ -6675,15 +6837,24 @@ class Assistant extends Adapter {
     private async synthesizeToWav(
         text: string,
         language?: string,
-    ): Promise<{ audio?: string; mime?: string; error?: string }> {
+        cfg: AdapterConfig = this.config,
+    ): Promise<{ audio?: string; mime?: string; sampleRate?: number; audioMs?: number; ms?: number; error?: string }> {
         if (!text.trim()) {
             return { error: 'empty text' };
         }
         try {
-            const tts = await this.buildTtsEngine();
-            const lang = language || this.config.voiceLanguage || this.language || '';
+            const tts = await this.buildTtsEngine(cfg);
+            const lang = language || cfg.voiceLanguage || this.language || '';
+            const start = Date.now();
             const { pcm, sampleRate } = await tts.synthesize(text, lang);
-            return { audio: this.pcmToWav(pcm, sampleRate).toString('base64'), mime: 'audio/wav' };
+            return {
+                audio: this.pcmToWav(pcm, sampleRate).toString('base64'),
+                mime: 'audio/wav',
+                sampleRate,
+                // a wrong rate shows up as an implausible length of the spoken text
+                audioMs: Math.round((pcm.length / 2 / sampleRate) * 1000),
+                ms: Date.now() - start,
+            };
         } catch (e) {
             return { error: (e as Error).message };
         }

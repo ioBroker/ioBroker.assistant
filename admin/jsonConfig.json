@@ -204,9 +204,9 @@
                 "confirmWithTone": {
                     "type": "checkbox",
                     "label": "Confirm switch commands with a beep",
-                    "help": "A successful switch command is confirmed by a short tone on the satellite instead of a spoken sentence - instant, where speaking costs a text-to-speech call. Questions, errors and the text channels are unaffected.",
+                    "help": "A switch command that worked (on, off, set to a value) is confirmed by a short tone on the satellite instead of a spoken sentence, whether the offline rules or the AI carried it out. Questions, errors and the text channels are unaffected.",
                     "default": false,
-                    "hidden": "!data.useLocalNlu",
+                    "hidden": "!data.voiceEnabled",
                     "xs": 12,
                     "sm": 6,
                     "md": 4,
@@ -971,6 +971,7 @@
                     "label": "Speech-to-text provider",
                     "options": [
                         { "label": "OpenAI (Whisper)", "value": "openai" },
+                        { "label": "OpenRouter", "value": "openrouter" },
                         { "label": "Azure Speech", "value": "azure" },
                         { "label": "AWS Transcribe", "value": "aws" },
                         { "label": "Vosk (local)", "value": "vosk" }
@@ -988,6 +989,7 @@
                     "label": "Text-to-speech provider",
                     "options": [
                         { "label": "OpenAI", "value": "openai" },
+                        { "label": "OpenRouter", "value": "openrouter" },
                         { "label": "Azure Speech", "value": "azure" },
                         { "label": "AWS Polly", "value": "aws" },
                         { "label": "Piper (local)", "value": "piper" }
@@ -1008,6 +1010,7 @@
                     "options": [
                         { "label": "None", "value": "" },
                         { "label": "OpenAI (Whisper)", "value": "openai" },
+                        { "label": "OpenRouter", "value": "openrouter" },
                         { "label": "Azure Speech", "value": "azure" },
                         { "label": "AWS Transcribe", "value": "aws" },
                         { "label": "Vosk (local)", "value": "vosk" }
@@ -1027,6 +1030,7 @@
                     "options": [
                         { "label": "None", "value": "" },
                         { "label": "OpenAI", "value": "openai" },
+                        { "label": "OpenRouter", "value": "openrouter" },
                         { "label": "Azure Speech", "value": "azure" },
                         { "label": "AWS Polly", "value": "aws" },
                         { "label": "Piper (local)", "value": "piper" }
@@ -1125,6 +1129,87 @@
                     "label": "OpenAI TTS model (optional)",
                     "help": "Empty = tts-1. Also: tts-1-hd, gpt-4o-mini-tts.",
                     "hidden": "!data.voiceEnabled || data.ttsProvider !== 'openai'",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "_openrouterSpeechHeader": {
+                    "newLine": true,
+                    "type": "header",
+                    "size": 3,
+                    "text": "OpenRouter",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'openrouter' && data.ttsProvider !== 'openrouter' && data.sttFallback !== 'openrouter' && data.ttsFallback !== 'openrouter')",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                },
+                "openrouterSpeechKey": {
+                    "newLine": true,
+                    "type": "password",
+                    "label": "OpenRouter key for speech (optional)",
+                    "help": "Empty: the key of the AI provider is used if that is OpenRouter (also from the system-wide AI settings).",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'openrouter' && data.ttsProvider !== 'openrouter' && data.sttFallback !== 'openrouter' && data.ttsFallback !== 'openrouter') || data.voiceCredentialType === 'manager'",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 8,
+                    "lg": 8,
+                    "xl": 8
+                },
+                "openrouterCredentialId": {
+                    "newLine": true,
+                    "type": "credential",
+                    "credentialType": "ai",
+                    "label": "OpenRouter credential",
+                    "help": "Empty: the key of the AI provider is used if that is OpenRouter (also from the system-wide AI settings).",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'openrouter' && data.ttsProvider !== 'openrouter' && data.sttFallback !== 'openrouter' && data.ttsFallback !== 'openrouter') || data.voiceCredentialType !== 'manager'",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 6,
+                    "lg": 6,
+                    "xl": 6
+                },
+                "openrouterSttModel": {
+                    "newLine": true,
+                    "type": "autocompleteSendTo",
+                    "command": "getSttModels",
+                    "jsonData": "{\"sttProvider\":\"openrouter\",\"language\":\"${data.voiceLanguage}\"}",
+                    "freeSolo": true,
+                    "label": "OpenRouter STT model (optional)",
+                    "help": "Empty = openai/whisper-large-v3-turbo.",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'openrouter' && data.sttFallback !== 'openrouter')",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "openrouterTtsModel": {
+                    "type": "autocompleteSendTo",
+                    "command": "getTtsModels",
+                    "jsonData": "{\"ttsProvider\":\"openrouter\"}",
+                    "freeSolo": true,
+                    "label": "OpenRouter TTS model (optional)",
+                    "help": "Empty = elevenlabs/eleven-flash-v2.5.",
+                    "hidden": "!data.voiceEnabled || (data.ttsProvider !== 'openrouter' && data.ttsFallback !== 'openrouter')",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "openrouterVoice": {
+                    "type": "autocompleteSendTo",
+                    "command": "getVoices",
+                    "jsonData": "{\"ttsProvider\":\"openrouter\",\"language\":\"${data.voiceLanguage}\",\"openrouterTtsModel\":\"${data.openrouterTtsModel}\"}",
+                    "alsoDependsOn": ["openrouterTtsModel", "voiceLanguage"],
+                    "freeSolo": true,
+                    "label": "OpenRouter voice (optional)",
+                    "help": "The voices depend on the model. Empty = the first voice of the model for the language.",
+                    "hidden": "!data.voiceEnabled || (data.ttsProvider !== 'openrouter' && data.ttsFallback !== 'openrouter')",
                     "xs": 12,
                     "sm": 6,
                     "md": 4,
@@ -1334,6 +1419,21 @@
                     "md": 5,
                     "lg": 5,
                     "xl": 5
+                },
+                "_voiceTest": {
+                    "newLine": true,
+                    "type": "custom",
+                    "i18n": true,
+                    "url": "custom/customComponents.js",
+                    "name": "ConfigCustomAssistant/Components/VoiceTestComponent",
+                    "bundlerType": "module",
+                    "guiApi": 2,
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 8,
+                    "lg": 8,
+                    "xl": 8
                 }
             }
         },

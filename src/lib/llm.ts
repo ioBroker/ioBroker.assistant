@@ -30,6 +30,9 @@ export const PROVIDER_PRESETS: Record<Provider, ProviderPreset> = {
     custom: { sdk: 'openai', baseUrl: '', defaultModel: '' },
 };
 
+/** OpenRouter shows the calling app in its statistics (same attribution as @iobroker/ai-core) */
+export const OPENROUTER_HEADERS = { 'HTTP-Referer': 'https://www.iobroker.net', 'X-Title': 'ioBroker' };
+
 /** Resolve the effective SDK, base URL and default model for a provider (custom uses `configBaseUrl`). */
 export function resolveProvider(
     provider: string | undefined,
@@ -138,11 +141,7 @@ export class LlmAgent {
             this.openai = new OpenAI({
                 apiKey: opts.apiKey,
                 baseURL: opts.baseUrl || undefined,
-                // OpenRouter shows the calling app in its statistics (same attribution as @iobroker/ai-core)
-                defaultHeaders:
-                    opts.provider === 'openrouter'
-                        ? { 'HTTP-Referer': 'https://www.iobroker.net', 'X-Title': 'ioBroker' }
-                        : undefined,
+                defaultHeaders: opts.provider === 'openrouter' ? OPENROUTER_HEADERS : undefined,
             });
         }
     }

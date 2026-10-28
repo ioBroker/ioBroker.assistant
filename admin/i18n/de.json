@@ -1,7 +1,7 @@
 {
   "A fired timer/alarm keeps ringing (looping the sound) for up to this long, or until you say 'stop'/'halt'/'aufhören'/'cancel' (or write the stopRinging state). 0 = play the sound once.": "Ein abgelaufener Timer/Wecker klingelt (Sound in Schleife) bis zu so lange, oder bis du 'Stop'/'Halt'/'Aufhören'/'Cancel' sagst (oder den State stopRinging schreibst). 0 = Sound einmal abspielen.",
   "A phrase that runs a list of actions: \"Gute Nacht\" switches off five things and answers once. Phrases: several separated by commas (matched anywhere in the sentence, upper/lower case and umlauts do not matter). Actions as JSON, same shape as a trigger: [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Reply: what the assistant answers (leave empty to stay silent). Matched before the offline rule engine and before the LLM, so a routine is never reinterpreted.": "Eine Phrase, die eine Liste von Aktionen ausführt: \"Gute Nacht\" schaltet fünf Dinge aus und antwortet einmal. Phrasen: mehrere mit Komma getrennt (werden irgendwo im Satz erkannt, Groß-/Kleinschreibung und Umlaute sind egal). Aktionen als JSON, gleiche Form wie bei einem Trigger: [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Antwort: was der Assistent sagt (leer lassen = nichts sagen). Wird vor der Offline-Regel-Engine und vor dem LLM geprüft, eine Routine wird also nie umgedeutet.",
-  "A successful switch command is confirmed by a short tone on the satellite instead of a spoken sentence - instant, where speaking costs a text-to-speech call. Questions, errors and the text channels are unaffected.": "Ein erfolgreicher Schaltbefehl wird mit einem kurzen Ton auf dem Satelliten bestätigt statt mit einem gesprochenen Satz - sofort, während Sprechen einen Text-to-Speech-Aufruf kostet. Fragen, Fehler und die Textkanäle sind davon unberührt.",
+  "A switch command that worked (on, off, set to a value) is confirmed by a short tone on the satellite instead of a spoken sentence, whether the offline rules or the AI carried it out. Questions, errors and the text channels are unaffected.": "Ein Schaltbefehl, der geklappt hat (an, aus, auf einen Wert), wird statt mit einem gesprochenen Satz mit einem kurzen Ton am Satelliten bestätigt, egal ob die Offline-Regeln oder die KI ihn ausgeführt haben. Fragen, Fehler und die Textkanäle bleiben unverändert.",
   "A trigger watches states or the clock and then speaks, writes a state, or asks you a question and acts on your answer. Switch single triggers off at runtime with triggers.items.<id>.enabled, test one with its fire button, and all of them with triggers.enabled.": "Ein Trigger beobachtet States oder die Uhr und sagt dann etwas, schreibt einen State oder stellt dir eine Frage und handelt nach deiner Antwort. Einzelne Trigger lassen sich zur Laufzeit über triggers.items.<id>.enabled abschalten, über den fire-Knopf testen und alle gemeinsam über triggers.enabled.",
   "API key": "API-Schlüssel",
   "API password (usually empty)": "API-Passwort (meist leer)",
@@ -202,5 +202,14 @@
   "System-wide AI settings (admin)": "Systemweite KI-Einstellungen (Admin)",
   "OpenRouter": "OpenRouter",
   "Provider, model and API key come from the system settings of admin (tab \"AI\"). A change there restarts this instance.": "Provider, Modell und API-Schlüssel kommen aus den Systemeinstellungen von Admin (Reiter „KI“). Eine Änderung dort startet diese Instanz neu.",
-  "Empty: the system-wide AI settings of admin are used": "Leer: die systemweiten KI-Einstellungen von Admin werden verwendet"
+  "Empty: the system-wide AI settings of admin are used": "Leer: die systemweiten KI-Einstellungen von Admin werden verwendet",
+  "OpenRouter key for speech (optional)": "OpenRouter-Schlüssel für Sprache (optional)",
+  "OpenRouter credential": "OpenRouter-Zugangsdaten",
+  "Empty: the key of the AI provider is used if that is OpenRouter (also from the system-wide AI settings).": "Leer: Der Schlüssel des KI-Anbieters wird verwendet, wenn das OpenRouter ist (auch aus den systemweiten KI-Einstellungen).",
+  "OpenRouter STT model (optional)": "OpenRouter-STT-Modell (optional)",
+  "Empty = openai/whisper-large-v3-turbo.": "Leer = openai/whisper-large-v3-turbo.",
+  "OpenRouter TTS model (optional)": "OpenRouter-TTS-Modell (optional)",
+  "Empty = elevenlabs/eleven-flash-v2.5.": "Leer = elevenlabs/eleven-flash-v2.5.",
+  "OpenRouter voice (optional)": "OpenRouter-Stimme (optional)",
+  "The voices depend on the model. Empty = the first voice of the model for the language.": "Die Stimmen hängen vom Modell ab. Leer = die erste Stimme des Modells für die Sprache."
 }

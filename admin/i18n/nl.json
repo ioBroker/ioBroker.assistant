@@ -1,7 +1,7 @@
 {
   "A fired timer/alarm keeps ringing (looping the sound) for up to this long, or until you say 'stop'/'halt'/'aufhören'/'cancel' (or write the stopRinging state). 0 = play the sound once.": "Een geactiveerde timer/alarm blijft rinkelen (het geluid wordt herhaald) gedurende een bepaalde tijd, of totdat u 'stop'/'halt'/'aufhören'/'cancel' zegt (of de status 'stopRinging' schrijft). 0 = het geluid één keer afspelen.",
   "A phrase that runs a list of actions: \"Gute Nacht\" switches off five things and answers once. Phrases: several separated by commas (matched anywhere in the sentence, upper/lower case and umlauts do not matter). Actions as JSON, same shape as a trigger: [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Reply: what the assistant answers (leave empty to stay silent). Matched before the offline rule engine and before the LLM, so a routine is never reinterpreted.": "Een zin die een lijst met acties uitvoert: \"Gute Nacht\" schakelt vijf dingen uit en antwoordt één keer. Zinnen: meerdere, gescheiden door komma's (overal in de zin herkend, hoofdletters/kleine letters en umlauts maken niet uit). Acties als JSON, in dezelfde vorm als een trigger: [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Antwoord: wat de assistent antwoordt (leeg laten om stil te blijven). Wordt gecontroleerd vóór de offline regel-engine en vóór het LLM, zodat een routine nooit anders wordt geïnterpreteerd.",
-  "A successful switch command is confirmed by a short tone on the satellite instead of a spoken sentence - instant, where speaking costs a text-to-speech call. Questions, errors and the text channels are unaffected.": "Een geslaagd schakelcommando wordt bevestigd met een korte toon op de satelliet in plaats van een gesproken zin - direct, terwijl spreken een text-to-speech-aanroep kost. Vragen, fouten en de tekstkanalen worden niet beïnvloed.",
+  "A switch command that worked (on, off, set to a value) is confirmed by a short tone on the satellite instead of a spoken sentence, whether the offline rules or the AI carried it out. Questions, errors and the text channels are unaffected.": "Een geslaagd schakelcommando (aan, uit, op een waarde zetten) wordt met een korte toon op de satelliet bevestigd in plaats van met een gesproken zin, of de offline regels of de AI het nu hebben uitgevoerd. Vragen, fouten en de tekstkanalen blijven ongewijzigd.",
   "A trigger watches states or the clock and then speaks, writes a state, or asks you a question and acts on your answer. Switch single triggers off at runtime with triggers.items.<id>.enabled, test one with its fire button, and all of them with triggers.enabled.": "Een trigger bewaakt states of de klok en spreekt dan, schrijft een state of stelt je een vraag en handelt naar je antwoord. Schakel afzonderlijke triggers tijdens het draaien uit met triggers.items.<id>.enabled, test er één met de fire-knop en allemaal met triggers.enabled.",
   "API key": "API-sleutel",
   "API password (usually empty)": "API-wachtwoord (meestal leeg)",
@@ -202,5 +202,14 @@
   "System-wide AI settings (admin)": "Systeembrede AI-instellingen (admin)",
   "OpenRouter": "OpenRouter",
   "Provider, model and API key come from the system settings of admin (tab \"AI\"). A change there restarts this instance.": "Provider, model en API-sleutel komen uit de systeeminstellingen van admin (tabblad \"AI\"). Een wijziging daar herstart deze instantie.",
-  "Empty: the system-wide AI settings of admin are used": "Leeg: de systeembrede AI-instellingen van admin worden gebruikt"
+  "Empty: the system-wide AI settings of admin are used": "Leeg: de systeembrede AI-instellingen van admin worden gebruikt",
+  "OpenRouter key for speech (optional)": "OpenRouter-sleutel voor spraak (optioneel)",
+  "OpenRouter credential": "OpenRouter-inloggegevens",
+  "Empty: the key of the AI provider is used if that is OpenRouter (also from the system-wide AI settings).": "Leeg: de sleutel van de AI-provider wordt gebruikt als dat OpenRouter is (ook uit de systeembrede AI-instellingen).",
+  "OpenRouter STT model (optional)": "OpenRouter STT-model (optioneel)",
+  "Empty = openai/whisper-large-v3-turbo.": "Leeg = openai/whisper-large-v3-turbo.",
+  "OpenRouter TTS model (optional)": "OpenRouter TTS-model (optioneel)",
+  "Empty = elevenlabs/eleven-flash-v2.5.": "Leeg = elevenlabs/eleven-flash-v2.5.",
+  "OpenRouter voice (optional)": "OpenRouter-stem (optioneel)",
+  "The voices depend on the model. Empty = the first voice of the model for the language.": "De stemmen hangen af van het model. Leeg = de eerste stem van het model voor de taal."
 }

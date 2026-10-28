@@ -31,8 +31,10 @@ const manual = {
     awsRegion: 'eu',
 };
 
-test('manual: OpenAI key reuses the main key when provider is openai', async () => {
-    const c = await resolveVoiceCredentials(adapter, manual, 'MAINKEY');
+const OPENAI_LLM = { provider: 'openai', apiKey: 'MAINKEY' };
+
+test('manual: OpenAI key reuses the main key when the LLM is OpenAI', async () => {
+    const c = await resolveVoiceCredentials(adapter, manual, OPENAI_LLM);
     assert.equal(c.openaiKey, 'MAINKEY');
     assert.equal(c.azureKey, 'az');
     assert.equal(c.azureRegion, 'we');
@@ -40,9 +42,10 @@ test('manual: OpenAI key reuses the main key when provider is openai', async () 
 });
 
 test('manual: dedicated voice key wins; anthropic without a voice key yields empty', async () => {
-    const withKey = await resolveVoiceCredentials(adapter, { ...manual, provider: 'anthropic', voiceApiKey: 'sk-voice' }, 'MAINKEY');
+    const anthropic = { provider: 'anthropic', apiKey: 'sk-ant' };
+    const withKey = await resolveVoiceCredentials(adapter, { ...manual, provider: 'anthropic', voiceApiKey: 'sk-voice' }, anthropic);
     assert.equal(withKey.openaiKey, 'sk-voice');
-    const noKey = await resolveVoiceCredentials(adapter, { ...manual, provider: 'anthropic', voiceApiKey: '' }, 'MAINKEY');
+    const noKey = await resolveVoiceCredentials(adapter, { ...manual, provider: 'anthropic', voiceApiKey: '' }, anthropic);
     assert.equal(noKey.openaiKey, '');
 });
 
@@ -50,9 +53,27 @@ test('manager with no credential ids falls back to the main key (openai) and emp
     const c = await resolveVoiceCredentials(
         adapter,
         { voiceCredentialType: 'manager', provider: 'openai', voiceCredentialId: '', azureCredentialId: '', awsCredentialId: '' },
-        'MAINKEY',
+        OPENAI_LLM,
     );
     assert.equal(c.openaiKey, 'MAINKEY');
     assert.equal(c.azureKey, '');
     assert.equal(c.aws.region, '');
+});
+
+test('OpenRouter speech: own key wins, otherwise the key of an OpenRouter LLM, never that of another vendor', async () => {
+    const openrouter = { provider: 'openrouter', apiKey: 'sk-or-llm' };
+    const own = await resolveVoiceCredentials(adapter, { ...manual, openrouterSpeechKey: ' sk-or-own ' }, openrouter);
+    assert.equal(own.openrouterKey, 'sk-or-own');
+    const fromLlm = await resolveVoiceCredentials(adapter, { ...manual, openrouterSpeechKey: '' }, openrouter);
+    assert.equal(fromLlm.openrouterKey, 'sk-or-llm');
+    assert.equal(fromLlm.openaiKey, '', 'an OpenRouter key is no OpenAI key');
+    const otherVendor = await resolveVoiceCredentials(adapter, { ...manual, openrouterSpeechKey: '' }, OPENAI_LLM);
+    assert.equal(otherVendor.openrouterKey, '');
+    const manager = await resolveVoiceCredentials(
+        adapter,
+        { voiceCredentialType: 'manager', openrouterCredentialId: '', voiceCredentialId: '', azureCredentialId: '', awsCredentialId: '' },
+        openrouter,
+    );
+    assert.equal(manager.openrouterKey, 'sk-or-llm');
+    assert.equal((await resolveVoiceCredentials(adapter, manual, null)).openaiKey, '', 'no LLM');
 });

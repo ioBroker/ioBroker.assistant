@@ -1,7 +1,7 @@
 {
   "A fired timer/alarm keeps ringing (looping the sound) for up to this long, or until you say 'stop'/'halt'/'aufhören'/'cancel' (or write the stopRinging state). 0 = play the sound once.": "Um temporizador/alarme disparado continua tocando (repetindo o som) por até este período, ou até que você diga 'parar'/'interromper'/'ouvir'/'cancelar' (ou escreva o estado stopRinging). 0 = reproduzir o som uma vez.",
   "A phrase that runs a list of actions: \"Gute Nacht\" switches off five things and answers once. Phrases: several separated by commas (matched anywhere in the sentence, upper/lower case and umlauts do not matter). Actions as JSON, same shape as a trigger: [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Reply: what the assistant answers (leave empty to stay silent). Matched before the offline rule engine and before the LLM, so a routine is never reinterpreted.": "Uma frase que executa uma lista de ações: \"Gute Nacht\" desliga cinco coisas e responde uma única vez. Frases: várias separadas por vírgulas (reconhecidas em qualquer parte da frase, maiúsculas/minúsculas e tremas não importam). Ações em JSON, no mesmo formato de um gatilho: [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Resposta: o que o assistente responde (deixe vazio para ficar em silêncio). Verificado antes do motor de regras offline e antes do LLM, para que uma rotina nunca seja reinterpretada.",
-  "A successful switch command is confirmed by a short tone on the satellite instead of a spoken sentence - instant, where speaking costs a text-to-speech call. Questions, errors and the text channels are unaffected.": "Um comando de comutação bem-sucedido é confirmado por um tom curto no satélite em vez de uma frase falada - instantâneo, enquanto falar custa uma chamada de texto para fala. Perguntas, erros e os canais de texto não são afetados.",
+  "A switch command that worked (on, off, set to a value) is confirmed by a short tone on the satellite instead of a spoken sentence, whether the offline rules or the AI carried it out. Questions, errors and the text channels are unaffected.": "Um comando de comutação bem-sucedido (ligar, desligar, definir um valor) é confirmado com um som curto no satélite em vez de uma frase falada, quer tenha sido executado pelas regras offline ou pela IA. Perguntas, erros e os canais de texto não são afetados.",
   "A trigger watches states or the clock and then speaks, writes a state, or asks you a question and acts on your answer. Switch single triggers off at runtime with triggers.items.<id>.enabled, test one with its fire button, and all of them with triggers.enabled.": "Um gatilho observa estados ou o relógio e então fala, escreve um estado ou faz uma pergunta e age de acordo com a sua resposta. Desative gatilhos individuais em tempo de execução com triggers.items.<id>.enabled, teste um com o botão fire e todos com triggers.enabled.",
   "API key": "Chave de API",
   "API password (usually empty)": "Palavra-passe da API (normalmente vazia)",
@@ -202,5 +202,14 @@
   "System-wide AI settings (admin)": "Configurações de IA do sistema (admin)",
   "OpenRouter": "OpenRouter",
   "Provider, model and API key come from the system settings of admin (tab \"AI\"). A change there restarts this instance.": "Provedor, modelo e chave de API vêm das configurações do sistema do admin (aba \"IA\"). Uma alteração ali reinicia esta instância.",
-  "Empty: the system-wide AI settings of admin are used": "Vazio: são usadas as configurações de IA do sistema do admin"
+  "Empty: the system-wide AI settings of admin are used": "Vazio: são usadas as configurações de IA do sistema do admin",
+  "OpenRouter key for speech (optional)": "Chave OpenRouter para voz (opcional)",
+  "OpenRouter credential": "Credencial OpenRouter",
+  "Empty: the key of the AI provider is used if that is OpenRouter (also from the system-wide AI settings).": "Vazio: é usada a chave do provedor de IA, se for OpenRouter (também das configurações de IA de todo o sistema).",
+  "OpenRouter STT model (optional)": "Modelo STT do OpenRouter (opcional)",
+  "Empty = openai/whisper-large-v3-turbo.": "Vazio = openai/whisper-large-v3-turbo.",
+  "OpenRouter TTS model (optional)": "Modelo TTS do OpenRouter (opcional)",
+  "Empty = elevenlabs/eleven-flash-v2.5.": "Vazio = elevenlabs/eleven-flash-v2.5.",
+  "OpenRouter voice (optional)": "Voz do OpenRouter (opcional)",
+  "The voices depend on the model. Empty = the first voice of the model for the language.": "As vozes dependem do modelo. Vazio = a primeira voz do modelo para o idioma."
 }

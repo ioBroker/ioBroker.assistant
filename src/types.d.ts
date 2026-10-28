@@ -51,8 +51,8 @@ export interface AdapterConfig {
      * quota). Typically a local engine behind a cloud one: `vosk` for speech-to-text, `piper` for
      * text-to-speech. Empty = no fallback.
      */
-    sttFallback: '' | 'openai' | 'azure' | 'aws' | 'vosk';
-    ttsFallback: '' | 'openai' | 'azure' | 'aws' | 'piper';
+    sttFallback: '' | 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk';
+    ttsFallback: '' | 'openai' | 'openrouter' | 'azure' | 'aws' | 'piper';
     /**
      * Phrase-triggered macros: a spoken or typed phrase runs a list of actions and answers with a fixed
      * reply. Matched before the rule-based NLU, because a macro the user wrote down must not be
@@ -187,8 +187,16 @@ export interface AdapterConfig {
     ttsModel: string;
 
     /** Speech provider for recognition / synthesis (independently selectable). Vosk/Piper run locally. */
-    sttProvider: 'openai' | 'azure' | 'aws' | 'vosk';
-    ttsProvider: 'openai' | 'azure' | 'aws' | 'piper';
+    sttProvider: 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk';
+    ttsProvider: 'openai' | 'openrouter' | 'azure' | 'aws' | 'piper';
+    /**
+     * OpenRouter speech: key (empty → the key of the LLM, if that is OpenRouter), models ('' → defaults of
+     * voice/openrouter.ts) and voice (depends on the model; '' → the model's first voice for the language).
+     */
+    openrouterSpeechKey: string;
+    openrouterSttModel: string;
+    openrouterTtsModel: string;
+    openrouterVoice: string;
     /** Azure Speech subscription key + region (used when a provider is 'azure'). */
     azureSpeechKey: string;
     azureSpeechRegion: string;
@@ -218,4 +226,6 @@ export interface AdapterConfig {
     azureCredentialId: string;
     /** Store credential id (type 'aws') for AWS speech (manager mode). values: { accessKeyId, secretAccessKey, region }. */
     awsCredentialId: string;
+    /** Store credential id (type 'ai') for OpenRouter speech (manager mode). values: { key }. */
+    openrouterCredentialId: string;
 }

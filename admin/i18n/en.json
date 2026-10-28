@@ -1,7 +1,7 @@
 {
   "A fired timer/alarm keeps ringing (looping the sound) for up to this long, or until you say 'stop'/'halt'/'aufhören'/'cancel' (or write the stopRinging state). 0 = play the sound once.": "A fired timer/alarm keeps ringing (looping the sound) for up to this long, or until you say 'stop'/'halt'/'aufhören'/'cancel' (or write the stopRinging state). 0 = play the sound once.",
   "A phrase that runs a list of actions: \"Gute Nacht\" switches off five things and answers once. Phrases: several separated by commas (matched anywhere in the sentence, upper/lower case and umlauts do not matter). Actions as JSON, same shape as a trigger: [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Reply: what the assistant answers (leave empty to stay silent). Matched before the offline rule engine and before the LLM, so a routine is never reinterpreted.": "A phrase that runs a list of actions: \"Gute Nacht\" switches off five things and answers once. Phrases: several separated by commas (matched anywhere in the sentence, upper/lower case and umlauts do not matter). Actions as JSON, same shape as a trigger: [{\"setState\":{\"id\":\"hm-rpc.0.ABC.1.STATE\",\"value\":false}},{\"say\":\"Schlaf gut\",\"room\":\"Schlafzimmer\"}]. Reply: what the assistant answers (leave empty to stay silent). Matched before the offline rule engine and before the LLM, so a routine is never reinterpreted.",
-  "A successful switch command is confirmed by a short tone on the satellite instead of a spoken sentence - instant, where speaking costs a text-to-speech call. Questions, errors and the text channels are unaffected.": "A successful switch command is confirmed by a short tone on the satellite instead of a spoken sentence - instant, where speaking costs a text-to-speech call. Questions, errors and the text channels are unaffected.",
+  "A switch command that worked (on, off, set to a value) is confirmed by a short tone on the satellite instead of a spoken sentence, whether the offline rules or the AI carried it out. Questions, errors and the text channels are unaffected.": "A switch command that worked (on, off, set to a value) is confirmed by a short tone on the satellite instead of a spoken sentence, whether the offline rules or the AI carried it out. Questions, errors and the text channels are unaffected.",
   "A trigger watches states or the clock and then speaks, writes a state, or asks you a question and acts on your answer. Switch single triggers off at runtime with triggers.items.<id>.enabled, test one with its fire button, and all of them with triggers.enabled.": "A trigger watches states or the clock and then speaks, writes a state, or asks you a question and acts on your answer. Switch single triggers off at runtime with triggers.items.<id>.enabled, test one with its fire button, and all of them with triggers.enabled.",
   "API key": "API key",
   "API password (usually empty)": "API password (usually empty)",
@@ -202,5 +202,14 @@
   "System-wide AI settings (admin)": "System-wide AI settings (admin)",
   "OpenRouter": "OpenRouter",
   "Provider, model and API key come from the system settings of admin (tab \"AI\"). A change there restarts this instance.": "Provider, model and API key come from the system settings of admin (tab \"AI\"). A change there restarts this instance.",
-  "Empty: the system-wide AI settings of admin are used": "Empty: the system-wide AI settings of admin are used"
+  "Empty: the system-wide AI settings of admin are used": "Empty: the system-wide AI settings of admin are used",
+  "OpenRouter key for speech (optional)": "OpenRouter key for speech (optional)",
+  "OpenRouter credential": "OpenRouter credential",
+  "Empty: the key of the AI provider is used if that is OpenRouter (also from the system-wide AI settings).": "Empty: the key of the AI provider is used if that is OpenRouter (also from the system-wide AI settings).",
+  "OpenRouter STT model (optional)": "OpenRouter STT model (optional)",
+  "Empty = openai/whisper-large-v3-turbo.": "Empty = openai/whisper-large-v3-turbo.",
+  "OpenRouter TTS model (optional)": "OpenRouter TTS model (optional)",
+  "Empty = elevenlabs/eleven-flash-v2.5.": "Empty = elevenlabs/eleven-flash-v2.5.",
+  "OpenRouter voice (optional)": "OpenRouter voice (optional)",
+  "The voices depend on the model. Empty = the first voice of the model for the language.": "The voices depend on the model. Empty = the first voice of the model for the language."
 }

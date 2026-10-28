@@ -19,6 +19,31 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **OpenRouter für STT/TTS** — `src/lib/voice/openrouter.ts` (`OpenRouterStt`/`OpenRouterTts`,
+  `listOpenRouterSpeechModels`, `voicesForLanguage`, `pcmFromResponse`), Sprach-Anbieter `openrouter` in
+  `engines.ts` (auch als Fallback). OpenRouter hat OpenAI-kompatible `/audio/transcriptions` (Multipart; `prompt`
+  wird **ignoriert** → keine STT-Hints) und `/audio/speech` (`pcm` Default, MiniMax nur `mp3` → ffmpeg über
+  `EngineContext.decodeAudio`; Gemini/HeyGen nur `pcm`). PCM-Rate steht nicht in der API: Default 24 kHz, eine
+  `rate=` im Content-Type gewinnt, WAV wird ausgepackt. Modelle (`?output_modalities=speech|transcription`) und
+  Stimmen (`supported_voices` pro Modell; Locale-Stimmen wie `de-DE-Klaus:MAI-Voice-2` nach Sprache gefiltert)
+  kommen aus der **öffentlichen** Modellliste (ohne Key, 1 h Cache) → sendTo `getSttModels`/`getTtsModels`/
+  `getVoices`. Ohne Stimme nimmt die TTS die erste des Modells für die Sprache. Config `openrouterSpeechKey`
+  (encrypted) / `openrouterCredentialId`, `openrouterSttModel` (Default `openai/whisper-large-v3-turbo`),
+  `openrouterTtsModel` (Default `elevenlabs/eleven-flash-v2.5`), `openrouterVoice`; ohne eigenen Key der
+  des LLM, wenn das OpenRouter ist. `OPENROUTER_HEADERS` (Attribution) liegt in `llm.ts`. Test:
+  `test/integration/openrouterSpeech.test.js`. **Live auf 129 geprüft** (per `tts`-sendTo mit Config-Override):
+  Gemini-lite und ElevenLabs Flash v2.5 liefern 24 kHz (Tonhöhe gemessen), ElevenLabs 0,8 s statt 2,5 s → Default.
+  STT über OpenRouter noch nicht mit echtem Key gelaufen.
+- **Stimm-/Erkennungstest im Reiter Voice** — `src-admin/src/VoiceTestComponent.tsx` (jsonConfig `_voiceTest`).
+  Schickt die **Formulardaten** mit (`config: this.props.data`), `main.ts.withVoiceForm()` übernimmt nur die
+  `VOICE_FORM_FIELDS`, Secrets (`VOICE_FORM_SECRETS`) nur, wenn nicht leer (protectedNative kommt nie im Browser
+  an), Fallbacks aus. sendTo `tts` (`{text,language,config}` → WAV base64 + `sampleRate`/`audioMs`/`ms`) und
+  **`stt`** (`{audio base64, format, language, config}` → `{text,ms,audioMs}`; WAV direkt, sonst ffmpeg). GUI:
+  Mikro (nur `isSecureContext`, ScriptProcessor → 16-kHz-WAV im Browser), Datei-Upload, Rundlauf TTS→STT.
+- **Ton-Bestätigung auch für die KI** — `confirmWithTone` (nur bei `voiceEnabled` sichtbar) gilt jetzt auch für
+  Cloud-LLM und pi-agent: `doneHint()` (de/en/ru) steht im System-Prompt bzw. in den pi-agent-Instruktionen und
+  bittet bei reinen Schaltbefehlen um nur `[[DONE]]`; `answerTracked` entfernt `[[LISTEN|DONE]]`, ist die Antwort
+  dann leer → `playConfirmationTone(source)`, sonst (kein Satellit/Text-Kanal) `doneText()` („Erledigt.“).
 - **Systemweite KI-Einstellungen von Admin (Provider `system`) + OpenRouter** — `src/lib/systemAi.ts`
   (`systemAiSelection`, `systemAiFingerprint`, `usesSystemAi`, `resolveSystemLlm`, `resolveLlm` → `ResolvedLlm`).
   Provider `system` (Default für **neue** Instanzen, `io-package` `native.provider`) nimmt Provider/Modell/
@@ -29,8 +54,8 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   Sichtbarkeit der Felder. `maxTokens` bleibt die eigene (Sprachantworten). `main.ts`: `this.llm` = effektiver
   LLM (auch Log/Journal-Detail), `watchSystemAi()` abonniert `system.ai` **und** die Credential → `restart()`
   bei Änderung der vier Felder bzw. der Credential (auch wenn `system.ai` noch leer ist, damit das Einrichten
-  startet). `openAiLlmKey()` = Key nur, wenn der effektive LLM OpenAI ist (Sprach-Fallback;
-  `resolveVoiceCredentials` akzeptiert dafür auch `provider==='system'`). Test-Button prüft im System-Modus
+  startet). `speechLlmKey()` = `{provider, apiKey}` des effektiven LLM; `resolveVoiceCredentials(…, llm)`
+  nimmt den Key für OpenAI- bzw. OpenRouter-Sprache nur, wenn der LLM vom selben Hersteller ist. Test-Button prüft im System-Modus
   `system.ai`. **OpenRouter** (`llm.ts` Preset `https://openrouter.ai/api/v1`, Default `openai/gpt-4o-mini`,
   Attribution-Header wie ai-core, `testConnection` über `/key`, weil `/models` öffentlich ist und jeden Key
   annimmt). Test: `test/integration/systemAi.test.js`.

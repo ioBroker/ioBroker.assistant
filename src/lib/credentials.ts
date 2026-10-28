@@ -80,31 +80,40 @@ function str(v: unknown): string {
     return '';
 }
 
+/** Vendor and key of the cloud LLM the instance works with (its own, or the one of the system-wide AI settings) */
+export interface LlmKey {
+    provider: string;
+    apiKey: string;
+}
+
 /**
- * Resolve the speech (STT/TTS) credentials for OpenAI, Azure and AWS.
+ * Resolve the speech (STT/TTS) credentials for OpenAI, OpenRouter, Azure and AWS.
  *  - 'manual':  the encrypted key/region config fields.
  *  - 'manager': the central credential store, keyed by the *CredentialId fields
  *               (azure values: { key, region }; aws values: { accessKeyId, secretAccessKey, region }).
- * `mainApiKey` is reused for OpenAI speech when no dedicated OpenAI speech credential is set and the
- * LLM provider is already OpenAI (also the one of the system-wide AI settings: then the caller passes the
- * key only when it is an OpenAI key).
+ * The key of the cloud LLM (`llm`) is reused for OpenAI or OpenRouter speech when that speech vendor has no key of
+ * its own and the LLM is of the same vendor.
  */
 export async function resolveVoiceCredentials(
     adapter: ioBroker.Adapter,
     config: AdapterConfig,
-    mainApiKey: string,
+    llm: LlmKey | null,
 ): Promise<VoiceCredentials> {
-    // `system`: the caller passes the key only when the system-wide AI settings name OpenAI
-    const openaiFallback = config.provider === 'openai' || config.provider === 'system' ? mainApiKey : '';
+    const openaiFallback = llm?.provider === 'openai' ? llm.apiKey : '';
+    const openrouterFallback = llm?.provider === 'openrouter' ? llm.apiKey : '';
 
     if (config.voiceCredentialType === 'manager') {
         const openaiKey = config.voiceCredentialId
             ? await readCentralKey(adapter, config.voiceCredentialId)
             : openaiFallback;
+        const openrouterKey = config.openrouterCredentialId
+            ? await readCentralKey(adapter, config.openrouterCredentialId)
+            : openrouterFallback;
         const azure = config.azureCredentialId ? await readCentralValues(adapter, config.azureCredentialId) : {};
         const aws = config.awsCredentialId ? await readCentralValues(adapter, config.awsCredentialId) : {};
         return {
             openaiKey,
+            openrouterKey,
             azureKey: str(azure.key),
             azureRegion: str(azure.region),
             aws: {
@@ -117,6 +126,7 @@ export async function resolveVoiceCredentials(
 
     return {
         openaiKey: str(config.voiceApiKey) || openaiFallback,
+        openrouterKey: str(config.openrouterSpeechKey) || openrouterFallback,
         azureKey: str(config.azureSpeechKey),
         azureRegion: str(config.azureSpeechRegion),
         aws: {
