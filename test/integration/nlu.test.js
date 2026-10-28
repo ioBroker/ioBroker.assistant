@@ -743,3 +743,77 @@ test('volume and a device command in one sentence', () => {
     );
     assert.equal(intents[1].delta, -10);
 });
+
+// ── Device commands for later ("in 2 Stunden", "um 22 Uhr") — never executed now ────────────────
+
+test('deferred: a delay makes the command wait (de/en/ru)', () => {
+    const svet = { ...light, name: 'Свет', room: 'Гостиная', controls: { power: 'y.p' } };
+    const n = new Nlu(['Wohnzimmer', 'Schlafzimmer', 'Гостиная'], [light, blind, temp, svet]);
+    const d = text => {
+        const [i, ...rest] = n.parseAll(text);
+        return i && !rest.length ? { action: i.action, value: i.value, delaySec: i.delaySec, at: i.at } : null;
+    };
+    assert.deepEqual(d('Licht im Wohnzimmer in 2 Stunden aus'), {
+        action: 'off',
+        value: false,
+        delaySec: 7200,
+        at: undefined,
+    });
+    assert.equal(d('Schalte das Licht in 30 Minuten aus').delaySec, 1800);
+    assert.equal(d('Licht in einer halben Stunde aus').delaySec, 1800);
+    assert.equal(d('Licht in einer Stunde an').delaySec, 3600);
+    assert.equal(d('Licht nach zwanzig Minuten aus').delaySec, 1200);
+    // the sentence from the chat: "часа" must not turn it into "который час"
+    assert.deepEqual(d('выключи свет в гостиной через 2 часа'), {
+        action: 'off',
+        value: false,
+        delaySec: 7200,
+        at: undefined,
+    });
+    assert.equal(d('выключи свет через полчаса').delaySec, 1800);
+    assert.equal(d('выключи свет через час').delaySec, 3600);
+    assert.equal(d('Rollo in 10 Minuten auf 30 Prozent').value, 30);
+    // "in der Küche" is no delay
+    assert.equal(d('Licht in der Küche aus').delaySec, undefined);
+});
+
+test('deferred: a clock time, with the day when it is said', () => {
+    const at = text => n1(text)?.at;
+    const n1 = text => nlu.parseAll(text)[0];
+    assert.deepEqual(at('Licht um 22 Uhr aus'), { hour: 22, minute: 0 });
+    assert.deepEqual(at('Rollo morgen um 7:30 auf 50 Prozent'), { hour: 7, minute: 30, day: 1 });
+    assert.deepEqual(at('Licht übermorgen um 6 Uhr an'), { hour: 6, minute: 0, day: 2 });
+    assert.deepEqual(at('Licht at 10 pm off'), { hour: 22, minute: 0 });
+});
+
+test('deferred: what is unclear goes to the LLM, nothing runs now', () => {
+    const none = text => assert.deepEqual(nlu.parseAll(text), [], text);
+    none('Licht um 7 aus'); // 7 o'clock? — not clear enough to switch now or later
+    none('Licht jeden Montag um 7 Uhr an'); // recurring: the LLM (or the calendar itself)
+    none('Licht an und in 2 Stunden wieder aus'); // which of the two is for later?
+    none('Licht an und Rollo in 10 Minuten zu'); // "zu" not understood: the delay must not go to "Licht an"
+    none('Ist das Licht in 10 Minuten an?'); // a question about later
+    none('Wie wird das Wetter morgen um 15 Uhr?');
+    // not a time at all: still the old meaning
+    assert.equal(nlu.parseAll('Rollo um 20 Prozent')[0].value, 20);
+    assert.equal(wxNlu.parse('um 3 lauter').delta, 30);
+});
+
+test('deferred: in a combined command each part keeps its own time, a bare part borrows it', () => {
+    const now = nlu.parseAll('Licht an und Rollo in 10 Minuten auf 30 Prozent');
+    assert.deepEqual(
+        now.map(i => [i.action, i.delaySec]),
+        [
+            ['on', undefined],
+            ['level', 600],
+        ],
+    );
+    const both = nlu.parseAll('Schalte Licht und Rollo in 10 Minuten aus');
+    assert.deepEqual(
+        both.map(i => [i.stateId, i.delaySec]),
+        [
+            ['x.p', 600],
+            ['x.l', 600],
+        ],
+    );
+});

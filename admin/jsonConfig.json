@@ -293,6 +293,19 @@
                     "lg": 6,
                     "xl": 6
                 },
+                "calendarInstance": {
+                    "newLine": true,
+                    "type": "instance",
+                    "adapter": "fullcalendar",
+                    "allowDeactivate": true,
+                    "label": "Calendar for commands for later",
+                    "help": "A fullcalendar instance: \"turn off the light in 2 hours\" or \"blinds to 50 % at 10 pm\" becomes an event in this calendar, and the AI can plan, list and cancel events. Without it such commands go to the AI.",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 6,
+                    "lg": 6,
+                    "xl": 6
+                },
                 "presence": {
                     "newLine": true,
                     "type": "table",
@@ -304,9 +317,20 @@
                     "lg": 12,
                     "xl": 12,
                     "items": [
-                        { "type": "text", "attr": "id", "title": "State id", "width": "45%" },
+                        { "type": "objectId", "attr": "id", "title": "State id", "width": "45%" },
                         { "type": "text", "attr": "name", "title": "Name", "width": "25%" },
-                        { "type": "text", "attr": "kind", "title": "Kind (person/guest/pet)", "width": "15%" },
+                        {
+                            "type": "select",
+                            "attr": "kind",
+                            "title": "Kind (person/guest/pet)",
+                            "width": "15%",
+                            "options": [
+                                { "label": "Person", "value": "person" },
+                                { "label": "Guest", "value": "guest" },
+                                { "label": "Pet", "value": "pet" }
+                            ],
+                            "default": "person"
+                        },
                         { "type": "text", "attr": "homeValue", "title": "Home value (empty = auto)", "width": "15%" }
                     ]
                 },
@@ -962,7 +986,17 @@
                             "title": "Satellites, rooms or devices (comma separated)",
                             "width": "60%"
                         },
-                        { "type": "text", "attr": "kind", "title": "Kind (group/person)", "width": "15%" }
+                        {
+                            "type": "select",
+                            "attr": "kind",
+                            "title": "Kind (group/person)",
+                            "width": "15%",
+                            "options": [
+                                { "label": "Group", "value": "group" },
+                                { "label": "Person", "value": "person" }
+                            ],
+                            "default": "group"
+                        }
                     ]
                 },
                 "sttProvider": {

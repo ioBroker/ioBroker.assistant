@@ -211,5 +211,11 @@
   "OpenRouter TTS model (optional)": "OpenRouter TTS 模型（可选）",
   "Empty = elevenlabs/eleven-flash-v2.5.": "留空 = elevenlabs/eleven-flash-v2.5。",
   "OpenRouter voice (optional)": "OpenRouter 语音（可选）",
-  "The voices depend on the model. Empty = the first voice of the model for the language.": "可用语音取决于模型。留空 = 该模型在此语言下的第一个语音。"
+  "The voices depend on the model. Empty = the first voice of the model for the language.": "可用语音取决于模型。留空 = 该模型在此语言下的第一个语音。",
+  "Calendar for commands for later": "用于延时命令的日历",
+  "A fullcalendar instance: \"turn off the light in 2 hours\" or \"blinds to 50 % at 10 pm\" becomes an event in this calendar, and the AI can plan, list and cancel events. Without it such commands go to the AI.": "fullcalendar 实例：“2 小时后关灯”或“晚上 10 点把百叶窗调到 50 %”会成为此日历中的事件，AI 也可以计划、列出和删除事件。未设置时，此类命令交给 AI 处理。",
+  "Person": "人员",
+  "Guest": "访客",
+  "Pet": "宠物",
+  "Group": "组"
 }

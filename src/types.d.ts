@@ -118,6 +118,8 @@ export interface AdapterConfig {
      * the instance (e.g. `weatherunderground.0`). Empty = no weather answering.
      */
     weatherInstance: string;
+    /** fullcalendar instance for commands for later ("Licht in 2 Stunden aus"), e.g. "fullcalendar.0"; "" = none */
+    calendarInstance: string;
     /** Speak an announcement on the origin satellite when a countdown timer expires. */
     timerAnnounce: boolean;
     /** Speak an announcement on the origin satellite when an alarm (fixed clock time) fires. */

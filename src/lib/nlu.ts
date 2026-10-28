@@ -88,7 +88,15 @@ export interface NluIntent {
     // ── Satellite volume (action 'volumeSet'): `value` = absolute level 0–100, or `delta` ──
     /** Relative change in percentage points ("lauter" = +10). */
     delta?: number;
+    // ── A device command for later ("Licht in 2 Stunden aus", "Rollo um 22 Uhr zu"): never executed now ──
+    /** Run the command after this many seconds. */
+    delaySec?: number;
+    /** Run the command at this clock time; `day` = days from today when said ("morgen" = 1), else the next one. */
+    at?: { hour: number; minute: number; day?: number };
 }
+
+/** When a deferred command runs */
+type CommandTime = { delaySec: number } | { at: { hour: number; minute: number; day?: number } };
 
 /** The part of the forecast a weather question is about: current conditions, or a forecast day. */
 export type WeatherWhen = 'now' | 'today' | 'tomorrow' | 'dayAfter';
@@ -563,6 +571,27 @@ const DURATION_PHRASES: [RegExp, string][] = [
     [/quarter hour/iu, '15 minutes'],
     [/(?<![\p{L}])полтора часа(?![\p{L}])/iu, '90 минут'],
     [/(?<![\p{L}])полчаса(?![\p{L}])/iu, '30 минут'],
+    // a unit without a number: "in einer Stunde", "in an hour", "через час", "через минуту"
+    [/(?<![\p{L}])einer halben stunde(?![\p{L}])/iu, '30 minuten'],
+    [/(?<![\p{L}])einer? (stunde|minute)(?![\p{L}])/iu, '1 $1'],
+    [/(?<![\p{L}])an? (hour|minute)(?![\p{L}])/iu, '1 $1'],
+    [/(?<![\p{L}])через (час|минуту)(?![\p{L}])/iu, 'через 1 $1'],
+];
+/** Prepositions of a delay: "in 2 Stunden", "nach 10 Minuten", "через 2 часа", "after 5 minutes" */
+const DELAY_PREPOSITION_RE = /(?<![\p{L}])(?:in|nach|через|after)\s+/gu;
+/**
+ * A clock time that cannot be anything else: "22:30", "7 Uhr", "7 o'clock", "7 pm", "в 7 часов", "в 10 вечера",
+ * "halb acht" — unlike a bare "um 3", which is as often "um 3 lauter" or "um 20 Prozent".
+ */
+const CLOCK_RE =
+    /\d{1,2}:\d{2}|\d\s*(?:uhr|o.?clock|[ap]m)(?![\p{L}])|(?<![\p{L}])(?:в|во)\s+\d{1,2}\s*(?:час\p{L}*|утра|вечера|ночи|дня)(?![\p{L}])|(?<![\p{L}])(?:halb|viertel|dreiviertel|quarter|half past)\s/u;
+/** Percent values, removed before looking for a clock time ("um 20 Prozent" is no time) */
+const PERCENT_RE = /\d+(?:[.,]\d+)?\s*(?:%|prozent|percent|процент\p{L}*)/giu;
+/** Day words for a clock time, the longer first ("übermorgen" before "morgen") */
+const DAY_WORDS: [RegExp, number][] = [
+    [/(?<![\p{L}])(?:uebermorgen|day after tomorrow|послезавтра)(?![\p{L}])/u, 2],
+    [/(?<![\p{L}])(?:morgen|tomorrow|завтра)(?![\p{L}])/u, 1],
+    [/(?<![\p{L}])(?:heute|today|сегодня)(?![\p{L}])/u, 0],
 ];
 const HOUR_RE = /(\d+(?:[.,]\d+)?)\s*(?:stunden?|hours?|hrs?|h|час(?:а|ов)?)(?![\p{L}])/giu;
 const MIN_RE = /(\d+(?:[.,]\d+)?)\s*(?:minuten?|mins?|minutes?|минут[уы]?)(?![\p{L}])/giu;
@@ -1009,6 +1038,12 @@ export class Nlu {
         if (combined.length > 1) {
             return combined;
         }
+        // Several commands, one of them for later, and not every part understood: the time must not be applied to
+        // the whole sentence ("Licht an und Rollo in 10 Minuten zu" would switch the light on in 10 minutes).
+        const whole = this.prepare(text);
+        if (whole && splitCommands(text).length > 1 && this.parseWhen(whole)) {
+            return [];
+        }
         const single = this.parse(text);
         return single ? [single] : [];
     }
@@ -1033,15 +1068,22 @@ export class Nlu {
         const intents: NluIntent[] = [];
         for (let i = 0; i < parts.length; i++) {
             // A segment stating no action borrows the nearest sibling's — looking ahead first, because the
-            // verb usually comes last in this shape ("schalte A | und B **an**").
-            let inherited: CommandFeatures | null = null;
+            // verb usually comes last in this shape ("schalte A | und B **an**"). The time comes with it: in
+            // "schalte A und B in 10 Minuten aus" both wait.
+            let from = -1;
             if (isBare(features[i])) {
-                inherited = features.slice(i + 1).find(f => !isBare(f)) || null;
-                for (let j = i - 1; !inherited && j >= 0; j--) {
-                    inherited = isBare(features[j]) ? null : features[j];
+                from = features.findIndex((f, j) => j > i && !isBare(f));
+                for (let j = i - 1; from < 0 && j >= 0; j--) {
+                    from = isBare(features[j]) ? -1 : j;
                 }
             }
-            const intent = this.parsePrepared(parts[i], inherited);
+            const inherited = from >= 0 ? features[from] : null;
+            const inheritedTime = from >= 0 ? this.parseWhen(parts[from]) : null;
+            const intent = this.parsePrepared(
+                parts[i],
+                inherited,
+                inheritedTime && inheritedTime !== 'unclear' ? inheritedTime : null,
+            );
             if (intent) {
                 intents.push(intent);
             }
@@ -1064,12 +1106,31 @@ export class Nlu {
      * first and never inherit anything; `inherited` supplies the action for a segment that names only a
      * device (see {@link parseCombined}).
      */
-    private parsePrepared(p: Prepared, inherited: CommandFeatures | null): NluIntent | null {
+    private parsePrepared(
+        p: Prepared,
+        inherited: CommandFeatures | null,
+        inheritedTime: CommandTime | null = null,
+    ): NluIntent | null {
         // Timer / alarm intents ("timer 5 minuten", "weck mich um 7 Uhr", "wie lange noch") — before
         // window/device matching, and device-independent.
         const schedule = this.parseSchedule(p.raw, p.norm, p.joined);
         if (schedule) {
             return schedule;
+        }
+
+        // A command for later ("Licht in 2 Stunden aus", "выключи свет через 2 часа") must never run now: it
+        // becomes a deferred device intent, or goes to the LLM. Before the time query — "через 2 часа" has "час".
+        const time = this.parseWhen(p);
+        if (time) {
+            const roomName = this.findRoom(p.joined);
+            const device = this.findDevice(p.joined, roomName);
+            if (time !== 'unclear') {
+                return device ? this.deferred(p, device, roomName, time) : null;
+            }
+            if (device) {
+                return null; // "Licht um 7 aus" — maybe 7 o'clock, maybe not: the LLM asks or knows
+            }
+            // no device: "um 3 lauter" is a volume step, go on
         }
 
         // Time / date query ("what time is it", "which day is today") — device-independent, answered from
@@ -1097,8 +1158,59 @@ export class Nlu {
         let features = this.extractFeatures(p);
         if (inherited && this.namesOnly(p, device, roomName)) {
             features = inherited;
+            if (inheritedTime) {
+                return this.deferred(p, device, roomName, inheritedTime, inherited);
+            }
         }
         return this.buildDeviceIntent(device, roomName, features);
+    }
+
+    /**
+     * When a command is meant to run: after a delay ("in 2 Stunden", "через полчаса", "in 10 minutes") or at a clock
+     * time ("um 22 Uhr", "morgen um 7:30", "в 10 вечера", "at 10 pm"). `unclear`: a time that could be meant
+     * otherwise ("um 7", a weekday, "jeden Tag") — a device command with it is left to the LLM. Null: no time.
+     */
+    private parseWhen(p: Prepared): CommandTime | 'unclear' | null {
+        const norm = spelledNumbersToDigits(p.norm);
+        DELAY_PREPOSITION_RE.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = DELAY_PREPOSITION_RE.exec(norm))) {
+            // the duration right after the preposition: "in der Küche" is no delay, "in 2 Stunden" is
+            const words = norm.substring(m.index).split(/\s+/).slice(0, 5).join(' ');
+            const seconds = parseDurationSeconds(words, false);
+            if (seconds) {
+                return { delaySec: seconds };
+            }
+        }
+        const raw = p.raw.replace(PERCENT_RE, ' ');
+        const clock = parseClockTime(raw);
+        if (!clock) {
+            return null;
+        }
+        if (!CLOCK_RE.test(spelledNumbersToDigits(normalize(raw))) || parseWeekdays(p.norm).length) {
+            return 'unclear';
+        }
+        const day = DAY_WORDS.find(([re]) => re.test(p.norm))?.[1];
+        return { at: day === undefined ? { ...clock } : { ...clock, day } };
+    }
+
+    /** A device command for later: only switching and setting (a question about later is the LLM's) */
+    private deferred(
+        p: Prepared,
+        device: NluDevice,
+        roomName: string,
+        time: CommandTime,
+        features: CommandFeatures = this.extractFeatures(p),
+    ): NluIntent | null {
+        // "Licht an und in 2 Stunden wieder aus": two actions with one time — which one is meant for later?
+        if (p.tokens.some(t => TURN_ON.has(t)) && p.tokens.some(t => TURN_OFF.has(t))) {
+            return null;
+        }
+        const intent = this.buildDeviceIntent(device, roomName, features);
+        if (!intent || !['on', 'off', 'level', 'color'].includes(intent.action)) {
+            return null;
+        }
+        return { ...intent, ...time };
     }
 
     /** The action half of a command: on/off, level, color, and whether it is a question. */

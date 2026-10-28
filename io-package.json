@@ -205,6 +205,7 @@
     "triggerRephrase": false,
     "notifyRephrase": true,
     "weatherInstance": "",
+    "calendarInstance": "",
     "presence": [],
     "youtubePlayers": [],
     "announceTargets": [],

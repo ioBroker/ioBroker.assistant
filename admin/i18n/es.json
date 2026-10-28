@@ -211,5 +211,11 @@
   "OpenRouter TTS model (optional)": "Modelo TTS de OpenRouter (opcional)",
   "Empty = elevenlabs/eleven-flash-v2.5.": "Vacío = elevenlabs/eleven-flash-v2.5.",
   "OpenRouter voice (optional)": "Voz de OpenRouter (opcional)",
-  "The voices depend on the model. Empty = the first voice of the model for the language.": "Las voces dependen del modelo. Vacío = la primera voz del modelo para el idioma."
+  "The voices depend on the model. Empty = the first voice of the model for the language.": "Las voces dependen del modelo. Vacío = la primera voz del modelo para el idioma.",
+  "Calendar for commands for later": "Calendario para órdenes posteriores",
+  "A fullcalendar instance: \"turn off the light in 2 hours\" or \"blinds to 50 % at 10 pm\" becomes an event in this calendar, and the AI can plan, list and cancel events. Without it such commands go to the AI.": "Una instancia de fullcalendar: «apaga la luz dentro de 2 horas» o «persianas al 50 % a las 22» se convierte en un evento de este calendario, y la IA puede planificar, listar y cancelar eventos. Sin ella, esas órdenes van a la IA.",
+  "Person": "Persona",
+  "Guest": "Invitado",
+  "Pet": "Mascota",
+  "Group": "Grupo"
 }

@@ -19,6 +19,23 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Befehle für später über den Kalender (fullcalendar)** — NLU (`nlu.ts`): `parseWhen()` erkennt Verzögerung
+  (`in|nach|через|after` + Dauer direkt danach, „in der Küche“ zählt nicht; `DURATION_PHRASES` kennen jetzt
+  „einer halben Stunde“, „in an hour“, „через час“) und **eindeutige** Uhrzeiten (`CLOCK_RE`: „22:30“, „7 Uhr“,
+  „pm“, „в 7 часов“, „halb acht“ — ein bloßes „um 3“ ist `unclear`, weil „um 3 lauter“/„um 20 Prozent“; Prozente
+  werden vorher entfernt) mit `morgen/übermorgen/heute` als `at.day`. Ergebnis `NluIntent.delaySec` bzw. `.at`,
+  nur für on/off/level/color. **Vorher hat die NLU „Licht in 2 Stunden aus“ sofort geschaltet** und „выключи свет
+  через 2 часа“ als „который час“ gelesen. Unklar (Wochentag, „jeden Tag“, an+aus im selben Satz, Frage) → `null`
+  → LLM, nie sofort. Kombi-Befehle: ein nackter Teil erbt die Zeit mit der Aktion; ist nicht jeder Teil
+  verstanden, darf `parseAll` die Zeit nicht aufs Ganze anwenden (→ `[]`). `main.ts`: Config `calendarInstance`
+  (jsonConfig `type:"instance"`, `adapter:"fullcalendar"`), `isDeferred()`, `nluBlocker` ohne Kalender → LLM,
+  `executeDeferredIntent` → `calendarCall("addEvent", {oid, value, start: ms, name})` (auch `intent.also`),
+  `writeForbidden()` = Geräte-ACL inkl. lock-Default, Antwort mit Uhrzeit (`describeWhen`), **kein** Bestätigungston.
+  LLM-Tools `list_scheduled` / `schedule_state` / `cancel_scheduled` (`buildCalendarTools`, Planen nur mit
+  `allowWriteStates`). Die API (`addEvent`/`deleteEvent`/`listEvents`/`getEvents`/`getCalendars`) und die
+  Agenda-States `fullcalendar.0.events.*` sind **neu in fullcalendar** (`C:pWorkioBroker.fullcalendar`,
+  `src/lib/agenda.ts`). pi-agent kann nicht `sendTo`, liest aber die Agenda-States. Tests: `nlu.test.js`
+  (deferred…), dort `test/agenda.engine.js`. Die fullcalendar-API ist auf 129 live geprüft (3.0.6-alpha.0: Schalten zur Sekunde, Rückschalten, Agenda-States, Fehler, Löschen); der Satz über die Assistant-NLU am echten System steht noch aus.
 - **OpenRouter für STT/TTS** — `src/lib/voice/openrouter.ts` (`OpenRouterStt`/`OpenRouterTts`,
   `listOpenRouterSpeechModels`, `voicesForLanguage`, `pcmFromResponse`), Sprach-Anbieter `openrouter` in
   `engines.ts` (auch als Fallback). OpenRouter hat OpenAI-kompatible `/audio/transcriptions` (Multipart; `prompt`

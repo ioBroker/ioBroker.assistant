@@ -302,7 +302,17 @@ function describeIntent(intent: NluIntent): string {
     } else if (intent.hour !== undefined) {
         text += ` ${intent.hour}:${String(intent.minute ?? 0).padStart(2, '0')}`;
     }
+    if (intent.delaySec !== undefined) {
+        text += ` in ${intent.delaySec} s`;
+    } else if (intent.at) {
+        text += ` at ${intent.at.day ? `+${intent.at.day}d ` : ''}${intent.at.hour}:${String(intent.at.minute).padStart(2, '0')}`;
+    }
     return text;
+}
+
+/** A device command for later ("in 2 Stunden", "um 22 Uhr") — goes into the calendar, not to the device */
+function isDeferred(intent: NluIntent): boolean {
+    return intent.delaySec !== undefined || !!intent.at;
 }
 
 const FIXED_REPLIES: Record<'de' | 'en' | 'ru', string[]> = {
@@ -522,6 +532,9 @@ class Assistant extends Adapter {
             }
             if ((cfg.weatherInstance || '').trim()) {
                 tools.push(this.buildWeatherTool());
+            }
+            if ((cfg.calendarInstance || '').trim()) {
+                tools.push(...this.buildCalendarTools());
             }
             if (cfg.voiceEnabled) {
                 // Only useful with satellites: without voice there is nothing to speak on.
@@ -3933,7 +3946,8 @@ class Assistant extends Adapter {
             this.config.confirmWithTone &&
             answer &&
             !failed &&
-            intents.every(i => CONTROL_ACTIONS.has(i.action)) &&
+            // a command for later says when it will run — a beep would hide that
+            intents.every(i => CONTROL_ACTIONS.has(i.action) && !isDeferred(i)) &&
             (await this.playConfirmationTone(source))
         ) {
             this.log.debug(`NLU confirmed with a tone instead of "${answer}".`);
@@ -3970,6 +3984,9 @@ class Assistant extends Adapter {
                 if (!deviceCount) {
                     return 'no devices known';
                 }
+                if (isDeferred(intent) && !(this.config.calendarInstance || '').trim()) {
+                    return 'a command for later needs a calendar (fullcalendar) instance in the settings';
+                }
                 return ['on', 'off', 'level', 'color'].includes(intent.action) && !this.config.allowWriteStates
                     ? 'writing states is not allowed (allowWriteStates)'
                     : '';
@@ -3995,8 +4012,267 @@ class Assistant extends Adapter {
             case 'volumeSet':
                 return this.executeVolumeIntent(intent, source);
             default:
-                return this.executeIntent(intent);
+                return isDeferred(intent) ? this.executeDeferredIntent(intent) : this.executeIntent(intent);
         }
+    }
+
+    /**
+     * Send a message to the calendar instance (fullcalendar). Its answer `{error}` becomes an exception.
+     *
+     * @param command `addEvent`, `listEvents`, `deleteEvent`, …
+     * @param message the parameters
+     */
+    private async calendarCall<T extends object>(command: string, message: Record<string, unknown>): Promise<T> {
+        const instance = (this.config.calendarInstance || '').trim().replace(/^system\.adapter\./, '');
+        if (!instance) {
+            throw new Error('No calendar instance configured in the assistant settings');
+        }
+        const alive = await this.getForeignStateAsync(`system.adapter.${instance}.alive`);
+        if (!alive?.val) {
+            throw new Error(`The calendar ${instance} is not running`);
+        }
+        const res = (await this.sendToAsync(instance, command, message, { timeout: 10000 })) as
+            (T & { error?: string }) | undefined;
+        if (!res) {
+            throw new Error(`The calendar ${instance} did not answer`);
+        }
+        if (res.error) {
+            throw new Error(res.error);
+        }
+        return res;
+    }
+
+    /**
+     * Whether the per-device ACL forbids writing this state: an explicit entry, else the default of the device
+     * type (locks are read-only). States outside the device list are not restricted (like `set_state`).
+     */
+    private async writeForbidden(stateId: string): Promise<boolean> {
+        const { devices } = await this.getNluDevices();
+        const device = devices.find(d => Object.values(d.controls).includes(stateId));
+        if (!device) {
+            return false;
+        }
+        const entry = this.config.deviceAcl?.[deviceKey(Object.values(device.controls))];
+        return entry ? entry.write === false : device.type === 'lock';
+    }
+
+    /** "22:30", "morgen um 22:30", "30.10. um 7:00" — when a planned command runs, for the spoken answer */
+    private describeWhen(time: Date, lang: string): string {
+        const pad = (n: number): string => String(n).padStart(2, '0');
+        const clock = `${time.getHours()}:${pad(time.getMinutes())}`;
+        const now = new Date();
+        const days = Math.round(
+            (new Date(time.getFullYear(), time.getMonth(), time.getDate()).getTime() -
+                new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) /
+                86_400_000,
+        );
+        const date = `${pad(time.getDate())}.${pad(time.getMonth() + 1)}.`;
+        if (lang === 'ru') {
+            return days === 0 ? `в ${clock}` : days === 1 ? `завтра в ${clock}` : `${date} в ${clock}`;
+        }
+        if (lang === 'de') {
+            return days === 0 ? `um ${clock}` : days === 1 ? `morgen um ${clock}` : `am ${date} um ${clock}`;
+        }
+        return days === 0 ? `at ${clock}` : days === 1 ? `tomorrow at ${clock}` : `on ${date} at ${clock}`;
+    }
+
+    /**
+     * A device command for later ("Licht in 2 Stunden aus", "выключи свет через 2 часа"): one event in the calendar
+     * (fullcalendar) per write — the calendar shows it, survives restarts and can be cancelled there.
+     */
+    private async executeDeferredIntent(intent: NluIntent): Promise<string> {
+        const device = intent.device;
+        if (!device || !intent.stateId) {
+            throw new Error('deferred intent without a device');
+        }
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const pick = (rus: string, ger: string, eng: string): string =>
+            lang === 'ru' ? rus : lang === 'de' ? ger : eng;
+        const room = intent.room || device.room;
+        const where = room ? ` (${room})` : '';
+        const dev = device.name;
+        if (await this.writeForbidden(intent.stateId)) {
+            return pick(
+                `${dev}${where} только для чтения.`,
+                `${dev}${where} ist schreibgeschützt.`,
+                `${dev}${where} is read-only.`,
+            );
+        }
+
+        let time: Date;
+        if (intent.delaySec !== undefined) {
+            time = new Date(Date.now() + intent.delaySec * 1000);
+        } else {
+            const { hour, minute, day } = intent.at!;
+            const now = new Date();
+            time = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (day ?? 0), hour, minute, 0, 0);
+            if (time.getTime() <= now.getTime()) {
+                if (day !== undefined) {
+                    return pick(
+                        `${this.describeWhen(time, lang)} уже прошло.`,
+                        `${this.describeWhen(time, lang).replace(/^um /, '')} ist schon vorbei.`,
+                        `${this.describeWhen(time, lang).replace(/^at /, '')} has already passed.`,
+                    );
+                }
+                time.setDate(time.getDate() + 1); // "um 7 Uhr" after 7 o'clock: tomorrow
+            }
+        }
+
+        const name = `${dev}${where}`;
+        await this.calendarCall('addEvent', { oid: intent.stateId, value: intent.value, start: time.getTime(), name });
+        // a dimmer with its own switch: the switch goes into the calendar, too
+        if (intent.also) {
+            await this.calendarCall('addEvent', {
+                oid: intent.also.stateId,
+                value: intent.also.value,
+                start: time.getTime(),
+                name,
+            });
+        }
+        this.log.info(
+            `Planned in the calendar: ${intent.stateId} = ${JSON.stringify(intent.value)} at ${time.toString()}`,
+        );
+
+        const when = this.describeWhen(time, lang);
+        switch (intent.action) {
+            case 'on':
+                return pick(
+                    `Хорошо, ${when} включу: ${dev}${where}.`,
+                    `Okay, ${dev}${where} wird ${when} eingeschaltet.`,
+                    `Okay, ${dev}${where} will be turned on ${when}.`,
+                );
+            case 'off':
+                return pick(
+                    `Хорошо, ${when} выключу: ${dev}${where}.`,
+                    `Okay, ${dev}${where} wird ${when} ausgeschaltet.`,
+                    `Okay, ${dev}${where} will be turned off ${when}.`,
+                );
+            case 'level':
+                return pick(
+                    `Хорошо, ${when} поставлю ${dev}${where} на ${String(intent.value)} %.`,
+                    `Okay, ${dev}${where} wird ${when} auf ${String(intent.value)} % gestellt.`,
+                    `Okay, ${dev}${where} will be set to ${String(intent.value)} % ${when}.`,
+                );
+            default:
+                return pick(
+                    `Хорошо, запланировано ${when}: ${dev}${where}.`,
+                    `Okay, für ${dev}${where} ${when} eingeplant.`,
+                    `Okay, planned for ${dev}${where} ${when}.`,
+                );
+        }
+    }
+
+    /**
+     * LLM tools for the calendar (fullcalendar): plan a state change for later, list what is planned, cancel it.
+     * Planning respects the same write rules as `set_state` (the coarse switch and the per-device ACL).
+     */
+    private buildCalendarTools(): Tool[] {
+        const fail = (e: unknown): string => JSON.stringify({ ok: false, error: (e as Error).message });
+        const tools: Tool[] = [
+            {
+                name: 'list_scheduled',
+                description:
+                    'List the planned events of the calendar (state changes at a time, also recurring ones), in local time of the house. Optional "days" ahead (default 1 = the next 24 hours) or a "from"/"to" range as local time "YYYY-MM-DDTHH:mm".',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        days: { type: 'number', description: 'How many days ahead, default 1' },
+                        from: { type: 'string', description: 'Start, local time YYYY-MM-DDTHH:mm' },
+                        to: { type: 'string', description: 'End, local time YYYY-MM-DDTHH:mm' },
+                    },
+                    additionalProperties: false,
+                },
+                run: async (args): Promise<string> => {
+                    try {
+                        const res = await this.calendarCall<{ events: unknown[] }>('listEvents', {
+                            days: typeof args.days === 'number' ? args.days : 1,
+                            from: args.from,
+                            to: args.to,
+                            max: 50,
+                        });
+                        return JSON.stringify({ ok: true, events: res.events });
+                    } catch (e) {
+                        return fail(e);
+                    }
+                },
+            },
+        ];
+        if (!this.config.allowWriteStates) {
+            return tools;
+        }
+        tools.push(
+            {
+                name: 'schedule_state',
+                description:
+                    'Plan a state change for later in the calendar: write "value" to state "id" after "in_minutes" or at "at" (local time of the house, "YYYY-MM-DDTHH:mm"). Use it for "in 2 hours", "at 10 pm", "tomorrow morning" — never set_state for something meant for later. With "duration_minutes" the state gets "end_value" after that time (for a boolean the opposite by default). Tell the user the planned time.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'string', description: 'State ID' },
+                        value: { type: ['boolean', 'number', 'string'], description: 'Value to write' },
+                        in_minutes: { type: 'number', description: 'Delay in minutes from now' },
+                        at: { type: 'string', description: 'Local time YYYY-MM-DDTHH:mm' },
+                        duration_minutes: { type: 'number', description: 'Optional: write end_value this much later' },
+                        end_value: { type: ['boolean', 'number', 'string'], description: 'Value after the duration' },
+                        name: {
+                            type: 'string',
+                            description: 'Short title for the calendar, e.g. "Licht Wohnzimmer aus"',
+                        },
+                    },
+                    required: ['id', 'value'],
+                    additionalProperties: false,
+                },
+                run: async (args): Promise<string> => {
+                    try {
+                        const id = typeof args.id === 'string' ? args.id : '';
+                        if (await this.writeForbidden(id)) {
+                            return JSON.stringify({
+                                ok: false,
+                                error: `Writing "${id}" is not allowed: the device is read-only in the assistant settings.`,
+                            });
+                        }
+                        if (args.in_minutes === undefined && !args.at) {
+                            return JSON.stringify({ ok: false, error: 'Give "in_minutes" or "at"' });
+                        }
+                        const res = await this.calendarCall<{ id: string; start: string }>('addEvent', {
+                            oid: id,
+                            value: args.value,
+                            in: typeof args.in_minutes === 'number' ? Math.round(args.in_minutes * 60) : undefined,
+                            start: args.in_minutes === undefined ? args.at : undefined,
+                            duration:
+                                typeof args.duration_minutes === 'number'
+                                    ? Math.round(args.duration_minutes * 60)
+                                    : undefined,
+                            endValue: args.end_value,
+                            name: typeof args.name === 'string' ? args.name : undefined,
+                        });
+                        return JSON.stringify({ ok: true, eventId: res.id, start: res.start });
+                    } catch (e) {
+                        return fail(e);
+                    }
+                },
+            },
+            {
+                name: 'cancel_scheduled',
+                description:
+                    'Delete a planned event from the calendar, by its "id" from list_scheduled or schedule_state.',
+                parameters: {
+                    type: 'object',
+                    properties: { id: { type: 'string', description: 'Event ID' } },
+                    required: ['id'],
+                    additionalProperties: false,
+                },
+                run: async (args): Promise<string> => {
+                    try {
+                        await this.calendarCall('deleteEvent', { id: typeof args.id === 'string' ? args.id : '' });
+                        return JSON.stringify({ ok: true });
+                    } catch (e) {
+                        return fail(e);
+                    }
+                },
+            },
+        );
+        return tools;
     }
 
     /**

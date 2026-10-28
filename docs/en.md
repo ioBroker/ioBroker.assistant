@@ -253,6 +253,27 @@ is really a trigger whose condition is a phrase — including `{"say":…,"room"
 
 ---
 
+### Commands for later (calendar)
+
+*"Turn off the light in the living room in 2 hours"*, *"Rollo morgen um 7:30 auf 50 Prozent"*, *"выключи свет
+через полчаса"* — a command with a delay or a clock time becomes **an event in the calendar** of the
+**fullcalendar** adapter instead of running now. Pick the fullcalendar instance under **Calendar for commands
+for later** on the Settings tab. The event is then in the calendar (visible, editable, deletable there),
+survives restarts, and the answer says when it happens: *"Okay, Licht (Wohnzimmer) will be turned off at
+22:30."*
+
+- Delay: *in 10 minutes, in an hour, in einer halben Stunde, nach 2 Stunden, через 2 часа, через час*.
+- Clock time: *at 10 pm, um 22 Uhr, um 7:30, morgen um 7 Uhr, в 22:00, в 10 вечера*. A time already past
+  today without a day means tomorrow.
+- What is unclear the rule engine does **not** do — neither now nor later —, it goes to the AI: *"Licht um 7
+  aus"* (7 o'clock?), *"every Monday at 7"*, *"light on and off again in 2 hours"*.
+- Without a calendar instance such commands go to the AI.
+- The cloud AI gets the tools `schedule_state`, `list_scheduled` and `cancel_scheduled` ("what is planned
+  today?", "delete that event"). Planning follows the same rights as switching (**Allow writing states** and
+  the device rights). pi-agent has no such tools, but can read the plan from the states
+  `fullcalendar.0.events.today`/`.tomorrow`/`.next`.
+
+
 ### What the offline rule engine answers
 
 Before any model is asked, a rule engine tries the request — instant, free and working without the

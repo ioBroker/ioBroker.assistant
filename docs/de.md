@@ -264,6 +264,27 @@ inklusive `{"say":…,"room":…}`, um irgendwo etwas zu sagen.
 
 ---
 
+### Befehle für später (Kalender)
+
+*„Licht im Wohnzimmer in 2 Stunden aus“*, *„Rollo morgen um 7:30 auf 50 Prozent“*, *„выключи свет через
+полчаса“* — ein Befehl mit Verzögerung oder Uhrzeit wird **ein Termin im Kalender** des Adapters
+**fullcalendar** statt sofort ausgeführt. Dafür im Tab Einstellungen bei **Kalender für spätere Befehle**
+die fullcalendar-Instanz wählen. Der Termin steht dann im Kalender (dort sichtbar, änderbar, löschbar),
+überlebt Neustarts, und die Antwort sagt, wann es passiert: *„Okay, Licht (Wohnzimmer) wird um 22:30
+ausgeschaltet.“*
+
+- Verzögerung: *in 10 Minuten, in einer halben Stunde, nach 2 Stunden, in an hour, через 2 часа, через час*.
+- Uhrzeit: *um 22 Uhr, um 7:30, morgen um 7 Uhr, übermorgen um 6 Uhr, at 10 pm, в 22:00, в 10 вечера*. Eine
+  schon vergangene Uhrzeit ohne Tag heißt morgen.
+- Unklares macht die Regel-Engine **nicht** — weder sofort noch später —, es geht an die KI: *„Licht um 7
+  aus“* (7 Uhr?), *„jeden Montag um 7 Uhr“*, *„Licht an und in 2 Stunden wieder aus“*.
+- Ohne Kalender-Instanz gehen solche Befehle an die KI.
+- Die Cloud-KI bekommt dazu die Tools `schedule_state`, `list_scheduled` und `cancel_scheduled` („was
+  ist heute geplant?“, „lösch den Termin“). Planen respektiert dieselben Rechte wie Schalten
+  (**Schreiben von States erlauben** und die Geräte-Rechte). pi-agent hat diese Tools nicht, kann den
+  Plan aber aus den States `fullcalendar.0.events.today`/`.tomorrow`/`.next` lesen.
+
+
 ### Was die Offline-Regel-Engine beantwortet
 
 Bevor irgendein Modell gefragt wird, versucht eine Regel-Engine die Anfrage — sofort, kostenlos und ohne
