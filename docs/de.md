@@ -59,6 +59,12 @@ Jede Anfrage läuft durch bis zu drei Stufen und stoppt bei der ersten, die antw
 3. **Cloud-LLM (Tool-Calling)** — der volle Assistent. Er bekommt eine kompakte Geräteliste im Prompt und
    ruft Tools auf (States lesen/schreiben, Historie, Logs …) über die native ioBroker-API.
 
+**Skripte gehen immer an die Cloud.** Kommt im Satz *Skript*, *Script* oder *Скрипт* vor (auch *Lichtskript*,
+*скрипте*, *JavaScript*, *Blockly*), werden Routinen, Regel-Engine und lokales LLM übersprungen — sonst würden
+die Details als eigener Befehl gelesen (*„schreib ein Skript, das jede Stunde das Küchenlicht schaltet"* wurde
+mit der Uhrzeit beantwortet). Fragt das Cloud-Modell dazu nach (*„Welches Licht?"*), geht auch die Antwort
+innerhalb von 2 Minuten an die Cloud. Ohne Cloud-Anbieter gilt das nicht.
+
 ### Anbieter
 
 Ein aktiver LLM-Anbieter: **OpenAI, Anthropic (Claude), Google Gemini, DeepSeek, OpenRouter** oder ein beliebiger

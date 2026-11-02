@@ -2,7 +2,7 @@
 // Integration test: rule-based NLU (device command parsing) — the offline fast-path.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Nlu, normalize, splitCommands, spelledNumbersToDigits } = require('../../build/lib/nlu.js');
+const { Nlu, normalize, splitCommands, spelledNumbersToDigits, mentionsScript } = require('../../build/lib/nlu.js');
 
 const light = {
     name: 'Licht',
@@ -816,4 +816,33 @@ test('deferred: in a combined command each part keeps its own time, a bare part 
             ['x.l', 600],
         ],
     );
+});
+
+test('mentionsScript: a request about a script goes to the cloud model, whatever details it names', () => {
+    for (const text of [
+        // from the journal: the rule NLU answered these with a switch state and with the time
+        'В каком скрипте у меня обрабатывается, что Старлин выключается ночью',
+        'напиши мне скрипт, который включает, выключает свет на кухне каждый час.',
+        'Поменяй скрипт.',
+        'Schreib ein Skript, das um 22 Uhr das Licht in der Küche ausschaltet',
+        'Ändere das Lichtskript',
+        'Kannst du Skripte modifizieren?',
+        'Mach ein Script für die Rollos',
+        'change the script that turns the kitchen light on',
+        'Is there a JavaScript for the alarm?',
+        'Erstelle ein Blockly für die Heizung',
+    ]) {
+        assert.equal(mentionsScript(text), true, text);
+    }
+    for (const text of [
+        'Licht in der Küche aus',
+        'выключи свет на кухне через 2 часа',
+        'который час',
+        'read the description of the lamp',
+        'my subscription',
+        'скрипка играет',
+        'дверь скрипит',
+    ]) {
+        assert.equal(mentionsScript(text), false, text);
+    }
 });

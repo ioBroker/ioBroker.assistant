@@ -20,6 +20,7 @@ import {
     parseClockTime,
     parseWeekdays,
     isStopCommand,
+    mentionsScript,
     type NluDevice,
     type NluIntent,
 } from './lib/nlu';
@@ -137,6 +138,16 @@ const WEATHER_CTX_TTL = 5 * 60 * 1000;
  * that were added or renamed elsewhere.
  */
 const NLU_DEVICES_TTL_MS = 60_000;
+
+/**
+ * How long a question of the cloud model about a script keeps the next request of that source with the cloud model
+ * (the reply, e.g. "the kitchen light, every hour", says nothing about a script). As long as pi-agent waits for a
+ * confirmation by text.
+ */
+const SCRIPT_TOPIC_MS = 2 * 60_000;
+
+/** Why a request skips the local tiers: it names a script, or it answers a question about one. */
+type CloudOnly = 'script' | 'scriptReply' | null;
 
 /** Default for `localLlmTimeoutSec`: after this the local model is stopped and the next tier answers. */
 const LOCAL_LLM_TIMEOUT_SEC = 15;
@@ -3119,12 +3130,19 @@ class Assistant extends Adapter {
                 data: history,
             });
         }
-        const raw = await this.produceAnswer(question, history, source);
+        const cloudOnly = this.cloudOnlyReason(question, source);
+        const raw = await this.produceAnswer(question, history, source, cloudOnly);
         // The LLM signals "I'm waiting for the user's reply" by appending the [[LISTEN]] control marker
         // (see followUpHint). Strip it here so it's neither stored, shown nor spoken, and keep it per source:
         // two satellites answered at the same time must not hand each other their mic-on.
         const followUp = /\[\[LISTEN\]\]/i.test(raw);
         this.followUps.set(source, followUp);
+        // A script conversation goes on while the cloud model asks back: the reply goes to it as well.
+        if (cloudOnly && followUp) {
+            this.scriptTopics.set(source, Date.now());
+        } else {
+            this.scriptTopics.delete(source);
+        }
         if (followUp) {
             this.journal?.note({ followUp: true });
         }
@@ -3179,6 +3197,26 @@ class Assistant extends Adapter {
 
     /** Per source: whether its last {@link answer} asked the user something (LLM-signalled via [[LISTEN]]). */
     private readonly followUps = new Map<string, boolean>();
+
+    /** Per source: when the cloud model last asked back about a script (see {@link cloudOnlyReason}). */
+    private readonly scriptTopics = new Map<string, number>();
+
+    /**
+     * Whether a request skips routines, YouTube, the rule NLU and the local model: when it is about a script, or answers
+     * a question the cloud model asked about one. Writing or changing a script is work for the cloud model, and the
+     * rules would read its details as commands of their own ("… that switches the kitchen light every hour" was answered
+     * with the time). Without a cloud tier the local ones are all there is, so nothing is skipped.
+     */
+    private cloudOnlyReason(question: string, source: string): CloudOnly {
+        if (!this.agent && !this.piAgent) {
+            return null;
+        }
+        if (mentionsScript(question)) {
+            return 'script';
+        }
+        const since = this.scriptTopics.get(source);
+        return since !== undefined && Date.now() - since < SCRIPT_TOPIC_MS ? 'scriptReply' : null;
+    }
 
     /**
      * Should the satellite behind `source` re-open its mic after this reply? Primarily the LLM's own
@@ -3277,7 +3315,77 @@ class Assistant extends Adapter {
         return lang === 'ru' ? `Сейчас ${time}.` : lang === 'de' ? `Es ist ${time} Uhr.` : `It's ${time}.`;
     }
 
-    private async produceAnswer(question: string, history: ConversationTurn[], source = ''): Promise<string> {
+    /**
+     * The tiers that answer without a model: routines, YouTube and the rule NLU. Null when none of them understood the
+     * request.
+     */
+    private async answerLocally(question: string, source: string): Promise<string | null> {
+        // A routine is a macro the user wrote down, so it wins over everything that interprets: the NLU
+        // would find "Licht" in "Gute Nacht, Licht aus" and do half of it, and the LLM would cost a
+        // round-trip for a decision that has already been made.
+        const routine = matchRoutine(question, this.routines);
+        if (routine) {
+            this.log.info(`Routine '${routine.name}' triggered (source='${source}').`);
+            this.journal?.note({ tier: 'routine', detail: routine.name });
+            this.journal?.step({ stage: 'routine', title: `Routine "${routine.name}" matched`, data: routine });
+            await this.runRoutine(routine, source);
+            return routine.reply;
+        }
+        if (this.routines.length) {
+            this.journal?.step({
+                stage: 'routine',
+                title: `No routine matched (${this.routines.length} configured)`,
+                data: { phrases: this.routines.map(r => ({ name: r.name, phrases: r.phrases })) },
+            });
+        }
+        // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
+        if (!this.config.useLocalNlu) {
+            this.journal?.step({ stage: 'nlu', title: 'Rule-based NLU is switched off (useLocalNlu)' });
+            return null;
+        }
+        // "Spiele den Kanal X ab" first: the device NLU would find the TV in "… auf dem Fernseher" and
+        // answer with its power state.
+        const yt = this.youtubePlayers.length ? parseYouTubeCommand(question, this.youtubePlayers) : null;
+        if (yt) {
+            this.log.info(`YouTube request understood locally: ${yt.kind} "${yt.query}" (source='${source}').`);
+            this.journal?.note({ tier: 'nlu', detail: `youtube ${yt.kind}` });
+            const start = Date.now();
+            const res = await this.playYouTube(yt.query, yt.kind, yt.player);
+            this.journal?.step({
+                stage: 'youtube',
+                title: `YouTube ${yt.kind} "${yt.query}"${yt.player ? ` on "${yt.player}"` : ''}`,
+                ms: Date.now() - start,
+                data: { parsed: yt, result: res },
+            });
+            return res.text;
+        }
+        if (this.youtubePlayers.length) {
+            this.journal?.step({ stage: 'youtube', title: 'Not a YouTube command' });
+        }
+        try {
+            const handled = await this.tryLocalNlu(question, source);
+            if (handled !== null) {
+                this.log.info(`Answered by rule-based NLU (source='${source}').`);
+                return handled;
+            }
+        } catch (e) {
+            this.log.debug(`NLU skipped: ${(e as Error).message}`);
+            this.journal?.step({
+                stage: 'nlu',
+                level: 'warn',
+                title: `NLU gave up, the request goes on: ${(e as Error).message}`,
+                data: errorInfo(e),
+            });
+        }
+        return null;
+    }
+
+    private async produceAnswer(
+        question: string,
+        history: ConversationTurn[],
+        source = '',
+        cloudOnly: CloudOnly = null,
+    ): Promise<string> {
         this.log.debug(`answer: source='${source}', context=${history.length} turn(s)`);
         // A ringing timer/alarm is silenced by a stop word ("stop"/"halt"/"aufhören"/…) — checked first so
         // it always wins over the normal pipeline while something is ringing.
@@ -3305,62 +3413,22 @@ class Assistant extends Adapter {
                 return '';
             }
         }
-        // A routine is a macro the user wrote down, so it wins over everything that interprets: the NLU
-        // would find "Licht" in "Gute Nacht, Licht aus" and do half of it, and the LLM would cost a
-        // round-trip for a decision that has already been made.
-        const routine = matchRoutine(question, this.routines);
-        if (routine) {
-            this.log.info(`Routine '${routine.name}' triggered (source='${source}').`);
-            this.journal?.note({ tier: 'routine', detail: routine.name });
-            this.journal?.step({ stage: 'routine', title: `Routine "${routine.name}" matched`, data: routine });
-            await this.runRoutine(routine, source);
-            return routine.reply;
-        }
-        if (this.routines.length) {
+        if (cloudOnly) {
+            const why =
+                cloudOnly === 'script'
+                    ? 'it is about a script'
+                    : 'it answers a question of the cloud model about a script';
+            this.log.info(`Routines, NLU and local LLM skipped (source='${source}'): ${why}.`);
             this.journal?.step({
-                stage: 'routine',
-                title: `No routine matched (${this.routines.length} configured)`,
-                data: { phrases: this.routines.map(r => ({ name: r.name, phrases: r.phrases })) },
+                stage: 'nlu',
+                title: `Routines, NLU and local LLM skipped: ${why}`,
+                data: { reason: cloudOnly },
             });
-        }
-        // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
-        if (this.config.useLocalNlu) {
-            // "Spiele den Kanal X ab" first: the device NLU would find the TV in "… auf dem Fernseher" and
-            // answer with its power state.
-            const yt = this.youtubePlayers.length ? parseYouTubeCommand(question, this.youtubePlayers) : null;
-            if (yt) {
-                this.log.info(`YouTube request understood locally: ${yt.kind} "${yt.query}" (source='${source}').`);
-                this.journal?.note({ tier: 'nlu', detail: `youtube ${yt.kind}` });
-                const start = Date.now();
-                const res = await this.playYouTube(yt.query, yt.kind, yt.player);
-                this.journal?.step({
-                    stage: 'youtube',
-                    title: `YouTube ${yt.kind} "${yt.query}"${yt.player ? ` on "${yt.player}"` : ''}`,
-                    ms: Date.now() - start,
-                    data: { parsed: yt, result: res },
-                });
-                return res.text;
-            }
-            if (this.youtubePlayers.length) {
-                this.journal?.step({ stage: 'youtube', title: 'Not a YouTube command' });
-            }
-            try {
-                const handled = await this.tryLocalNlu(question, source);
-                if (handled !== null) {
-                    this.log.info(`Answered by rule-based NLU (source='${source}').`);
-                    return handled;
-                }
-            } catch (e) {
-                this.log.debug(`NLU skipped: ${(e as Error).message}`);
-                this.journal?.step({
-                    stage: 'nlu',
-                    level: 'warn',
-                    title: `NLU gave up, the request goes on: ${(e as Error).message}`,
-                    data: errorInfo(e),
-                });
-            }
         } else {
-            this.journal?.step({ stage: 'nlu', title: 'Rule-based NLU is switched off (useLocalNlu)' });
+            const local = await this.answerLocally(question, source);
+            if (local !== null) {
+                return local;
+            }
         }
         // Current weather from the configured adapter — prepended to the user turn of BOTH LLM tiers so
         // "how's the weather?" is answered from real data (the local model has no tools and would otherwise
@@ -3374,7 +3442,8 @@ class Assistant extends Adapter {
         // so it would answer a follow-up like "yes" context-free and swallow it — let the cloud LLM (which has
         // the thread and the tools) handle follow-ups instead. Without a cloud LLM there is nobody to hand
         // follow-ups to, so the local model takes them too.
-        const useLocal = !!(this.config.useLocalLlm && this.localLlm);
+        // A script request does not even fall back to it: a model without tools cannot write a script.
+        const useLocal = !cloudOnly && !!(this.config.useLocalLlm && this.localLlm);
         const cloud = !!(this.agent || this.piAgent);
         const localFirst = useLocal && (!cloud || !!this.config.localLlmFirst);
         if (localFirst && (!history.length || !cloud)) {

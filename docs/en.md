@@ -57,6 +57,12 @@ Every request runs through up to three tiers, stopping at the first that can ans
 3. **Cloud LLM (tool-calling)** — the full assistant. It gets a compact list of your devices in its prompt
    and calls tools (read states, set states, history, logs …) over the native ioBroker API.
 
+**Scripts always go to the cloud.** When a sentence contains *script*, *Skript* or *Скрипт* (also German
+compounds such as *Lichtskript*, *скрипте*, *JavaScript*, *Blockly*), routines, rule engine and local LLM are
+skipped — they would read the details as a command of their own (*"write a script that switches the kitchen
+light every hour"* was answered with the time). When the cloud model asks back (*"Which light?"*), the reply
+within 2 minutes goes to the cloud as well. Without a cloud provider this does not apply.
+
 ### Providers
 
 One active LLM provider: **OpenAI, Anthropic (Claude), Google Gemini, DeepSeek, OpenRouter**, or any

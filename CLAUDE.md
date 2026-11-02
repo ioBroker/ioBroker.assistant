@@ -19,6 +19,17 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Skript-Anfragen nur an die Cloud** — `nlu.ts.mentionsScript()` (`SCRIPT_RE`: `skript` überall inkl.
+  Komposita, `script` nur am Wortanfang bzw. `java|type`-Präfix — sonst „description"/„subscription" —,
+  `скрипт` mit Flexion, `blockly`). `main.ts.cloudOnlyReason()` → `'script'`, oder `'scriptReply'`, wenn das
+  Cloud-Modell zu einem Skript zurückgefragt hat (`scriptTopics` pro Quelle, gesetzt in `answerTracked` nur bei
+  `cloudOnly && [[LISTEN]]`, sonst gelöscht, `SCRIPT_TOPIC_MS` = 2 min wie pi-agents Bestätigungs-Timeout).
+  Dann überspringt `produceAnswer` Routinen/YouTube/NLU (jetzt gebündelt in `answerLocally()`) und das lokale
+  LLM — auch als Fallback. Stoppwort und `askUser`-Antwort bleiben davor. Ohne Cloud-Stufe (`agent`/`piAgent`)
+  greift nichts. Anlass (Journal 2026-11-02): „В каком скрипте … Старлин выключается ночью" → NLU-Query
+  „Старлинк: включено", „напиши мне скрипт, который … свет на кухне каждый час" → NLU `timeQuery` (der
+  Satz enthält „который … час"). Test: `nlu.test.js` (`mentionsScript`); das Routing in `main.ts` hat keinen
+  Unit-Test (main wird nicht getestet).
 - **Befehle für später über den Kalender (fullcalendar)** — NLU (`nlu.ts`): `parseWhen()` erkennt Verzögerung
   (`in|nach|через|after` + Dauer direkt danach, „in der Küche“ zählt nicht; `DURATION_PHRASES` kennen jetzt
   „einer halben Stunde“, „in an hour“, „через час“) und **eindeutige** Uhrzeiten (`CLOCK_RE`: „22:30“, „7 Uhr“,

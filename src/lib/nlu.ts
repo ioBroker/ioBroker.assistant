@@ -864,6 +864,21 @@ export function isStopCommand(text: string): boolean {
     return STOP_RE.test(normalize(text));
 }
 
+/**
+ * "Skript"/"script"/"скрипт" in any form, German compounds ("Lichtskript") and Cyrillic flexion ("скрипте") included,
+ * plus JavaScript/TypeScript/Blockly. "script" only at the start of a word, so "description" or "subscription" do not
+ * count; "скрипка"/"скрипит" are other words.
+ */
+const SCRIPT_RE = /skript|(?<![\p{L}])(?:java|type)?script|скрипт|blockly/iu;
+
+/**
+ * True if the text is about a script. Such a request goes to the cloud model only: the rules would take its details for
+ * commands of their own ("… a script that switches the kitchen light every hour" was answered with the time).
+ */
+export function mentionsScript(text: string): boolean {
+    return SCRIPT_RE.test(normalize(text));
+}
+
 /** Normalize for matching: lowercase, German umlauts → ascii, ß → ss, Russian ё → е. */
 export function normalize(s: string): string {
     return s
