@@ -235,7 +235,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.3.1 (2026-11-02)
 * (@GermanBluefox) pi-agent: the language of the satellites goes along with every request, so pi-agent asks its confirmation questions ("… Say yes or no.") in it instead of the system language. Before, a Russian satellite was asked "Sag ja oder nein", and the German "Ja" came back empty from the speech recognition: nothing happened. Needs a pi-agent version that knows the field
 * (@GermanBluefox) Requests about a script ("Skript", "script", "скрипт", also JavaScript/Blockly) always go to the cloud model: routines, rule engine and local LLM read their details as commands of their own ("write a script that switches the kitchen light every hour" was answered with the time). A reply to a question of the cloud model about the script goes there too
 * (@GermanBluefox) Voice: speech that the recognition returns as empty text is now logged ("Voice Q (…): (empty)") for ESPHome and native satellites too, instead of ending without a trace
