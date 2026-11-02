@@ -173,8 +173,10 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             for (const e of res.entries || []) {
                 entries[e.id] = e;
             }
-            this.setState(prev => ({ journalEnabled: !!res.enabled, entries: { ...entries, ...prev.entries } }));
-            this.scrollToBottom();
+            this.setState(
+                prev => ({ journalEnabled: !!res.enabled, entries: { ...entries, ...prev.entries } }),
+                () => this.scrollToBottom(),
+            );
         } catch {
             this.setState({ journalEnabled: false });
         }
@@ -271,10 +273,10 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             return;
         }
         const stick = this.isNearBottom();
-        this.setState(prev => ({ entries: { ...prev.entries, [entry.id]: entry } }));
-        if (stick) {
-            this.scrollToBottom();
-        }
+        this.setState(
+            prev => ({ entries: { ...prev.entries, [entry.id]: entry } }),
+            () => stick && this.scrollToBottom(),
+        );
     };
 
     /** Start/stop browser speech recognition; the final transcript is sent as a message. */
@@ -360,14 +362,16 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     }
 
+    /**
+     * Call it from the callback of the setState that adds the messages: only then are they in the DOM. A setTimeout
+     * is not enough: an update after an await (loading the journal, a state change from the socket) is rendered in
+     * its own task, and the timer often ran first, so the chat opened at the oldest entries.
+     */
     private scrollToBottom(): void {
-        // Defer to after the DOM has rendered the new message.
-        setTimeout(() => {
-            const el = this.scrollRef.current;
-            if (el) {
-                el.scrollTop = el.scrollHeight;
-            }
-        }, 0);
+        const el = this.scrollRef.current;
+        if (el) {
+            el.scrollTop = el.scrollHeight;
+        }
     }
 
     /** The chat may only talk to a running instance that reflects the *saved* config. */
@@ -376,8 +380,10 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
     }
 
     private addMessage(msg: ChatMessage): void {
-        this.setState(prev => ({ messages: [...prev.messages, msg] }));
-        this.scrollToBottom();
+        this.setState(
+            prev => ({ messages: [...prev.messages, msg] }),
+            () => this.scrollToBottom(),
+        );
     }
 
     private async send(): Promise<void> {
@@ -386,15 +392,12 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             return;
         }
         const journal = !!this.state.journalEnabled;
-        this.setState({ input: '', sending: true });
+        // Whatever filter is set, the user wants to see their own message.
+        const filter = this.state.filter && this.state.filter !== 'chat' ? '' : this.state.filter;
+        this.setState({ input: '', sending: true, filter }, () => this.scrollToBottom());
         if (!journal) {
             this.addMessage({ role: 'user', text, ts: Date.now() });
         }
-        // Whatever filter is set, the user wants to see their own message.
-        if (this.state.filter && this.state.filter !== 'chat') {
-            this.setState({ filter: '' });
-        }
-        this.scrollToBottom();
 
         try {
             const res = (await this.props.oContext.socket.sendTo(this.instanceId, 'ask', { text })) as
