@@ -40,6 +40,15 @@ test('ask: sends text, conversation and instructions, with a unique request id a
     assert.equal(first.message.instructions, 'Kurz.');
     assert.deepEqual(first.options, { timeout: 30000 });
     assert.notEqual(first.message.requestId, second.message.requestId, 'pi-agent answers a repeated id only once');
+    assert.equal('language' in first.message, false, 'no language, no field');
+});
+
+test('ask: the language goes along, so pi-agent asks its confirmation questions in it', async () => {
+    // A Russian satellite asked "… Sag ja oder nein." (system language de): the German "Ja" came back empty from the STT
+    const host = fakeHost(() => ({ answer: 'Установить Лампа в true? Скажи да или нет. [[LISTEN]]' }));
+    const harness = new PiAgentHarness(host, 'pi-agent.0');
+    await harness.ask({ text: 'Включи лампу', conversation: 'sat', instructions: '', language: 'ru' });
+    assert.equal(host.sent[0].message.language, 'ru');
 });
 
 test('ask: an instance that is not running fails at once, without waiting for the timeout', async () => {

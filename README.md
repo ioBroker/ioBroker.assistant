@@ -235,6 +235,10 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) pi-agent: the language of the satellites goes along with every request, so pi-agent asks its confirmation questions ("… Say yes or no.") in it instead of the system language. Before, a Russian satellite was asked "Sag ja oder nein", and the German "Ja" came back empty from the speech recognition: nothing happened. Needs a pi-agent version that knows the field
+* (@GermanBluefox) Voice: speech that the recognition returns as empty text is now logged ("Voice Q (…): (empty)") for ESPHome and native satellites too, instead of ending without a trace
+
 ### 1.3.0 (2026-10-28)
 * (@GermanBluefox) Commands for later: "turn off the light in 2 hours" or "blinds to 50 % at 10 pm" becomes an event in the calendar (fullcalendar adapter) instead of running now; the AI can plan, list and cancel events. Before, the rule engine switched such commands at once. Needs a fullcalendar version with the new event API (after 3.0.5)
 * (@GermanBluefox) Settings: the state of a presence row is picked with the object browser, the kind of a presence row or announcement target is a dropdown

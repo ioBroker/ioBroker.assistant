@@ -10,6 +10,10 @@
  * prompt (style, follow-up marker, memory, device list) goes along as the `instructions` of that
  * conversation; what changes every turn (time, weather, presence) is prepended to the question.
  * pi-agent 0.3.0 and older ignore both fields and answer everything in their root conversation.
+ *
+ * With "Confirmation by text in sendTo conversations", pi-agent answers a write it may not do unasked with a
+ * question ending in `[[LISTEN]]`, and the next `ask` of the conversation is the yes or no. `language` makes it
+ * ask that question in the language the satellite listens in.
  */
 
 /** Longest instructions pi-agent accepts for a conversation; anything beyond is cut there. */
@@ -31,6 +35,11 @@ export interface PiAgentRequest {
     conversation: string;
     /** Instructions of that conversation. */
     instructions: string;
+    /**
+     * Language the user speaks, e.g. `ru`. pi-agent asks its questions to confirm in it; older versions ask in the
+     * system language, and a satellite listening in Russian does not hear a German "Ja" (the STT returns nothing).
+     */
+    language?: string;
 }
 
 /**
@@ -88,6 +97,7 @@ export class PiAgentHarness {
                 text: req.text,
                 conversation: conversationOf(req.conversation),
                 instructions: req.instructions,
+                ...(req.language ? { language: req.language } : {}),
                 requestId,
             },
             { timeout: this.timeoutMs },

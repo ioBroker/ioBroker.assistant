@@ -808,6 +808,11 @@ class EsphomeConnection {
             const sttMs = Date.now() - sttStart;
             this.event(EVENT.STT_END, { text });
             if (!text) {
+                // Speech was heard, so the user waits for an answer: say why none comes. Typically a word in another
+                // language than the STT listens in (a German "Ja" to a Russian STT comes back empty).
+                this.opts.log.info(
+                    `Voice Q (${this.deviceName}): (empty) — speech recognition returned no text for ${seconds.toFixed(1)} s of audio`,
+                );
                 this.event(EVENT.RUN_END);
                 this.status('idle');
                 return;

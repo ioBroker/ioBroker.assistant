@@ -1029,6 +1029,10 @@ class Assistant extends Adapter {
             const sttStart = Date.now();
             const text = (await engines.stt.transcribe(pcm, rate, language, await this.buildSttHints())).trim();
             if (!text) {
+                const ms = Math.round((pcm.length / 2 / rate) * 1000);
+                this.log.info(
+                    `Voice Q (${source}): (empty) — speech recognition returned no text for ${ms} ms of audio`,
+                );
                 return { text: '', answer: '' };
             }
             const answer = await this.answerVoice(text, source, {
@@ -3490,7 +3494,10 @@ class Assistant extends Adapter {
         this.log.info(`Cloud tier ${harness.instance} (source='${source}') — asking pi-agent…`);
         this.journal?.note({ tier: 'cloud', detail: harness.instance });
         try {
-            return await harness.ask({ text, conversation: source, instructions });
+            // pi-agent asks its questions to confirm a write ("… Say yes or no.") in this language, not in the system
+            // language: a satellite listening in Russian does not hear a German "Ja"
+            const language = String(this.config.voiceLanguage || this.language || '');
+            return await harness.ask({ text, conversation: source, instructions, language });
         } catch (e) {
             if (localFallback) {
                 this.log.warn(`pi-agent failed (${(e as Error).message}) — asking the local LLM instead.`);

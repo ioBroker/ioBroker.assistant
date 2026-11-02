@@ -156,7 +156,18 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   `usesSystemAiSettings`); Änderung dieser vier Felder → Neustart (`hideFab` u. ä. nicht). `ask` kennt
   `conversation`/`instructions` (Key `sendTo:<caller>/<conversation>` in `telegram.chats`). Tests:
   `test/integration/piAgent.test.js` hier, `test/system-ai.test.js` dort.
-  ⚠️ Noch nicht gegen eine laufende pi-agent-Instanz durchgespielt.
+  **Läuft auf 129** (pi-agent 0.7.3/0.8.0, ESPHome-Satellit). **Bestätigung per Sprache** (pi-agent-Option
+  „Confirmation by text in sendTo conversations", `lib/text-confirmation.js` dort): pi-agent antwortet auf einen
+  bestätigungspflichtigen Schreibzugriff mit einer Frage + `[[LISTEN]]`, das nächste `ask` derselben Konversation
+  entscheidet — **pi-agent** prüft per `isYes` (nur Ja-Wort), nicht das Modell. Fehler am echten Gerät (2026-11-02):
+  die Frage kam in der **Systemsprache** (de: „Sag ja oder nein"), der Satellit hört in `voiceLanguage` ru →
+  das deutsche „Ja" lieferte bei der STT (OpenRouter Nemotron, `language:ru`) **leeren Text** (per sendTo
+  `tts`→`stt` reproduziert), der Assistant verwarf das **ohne Log** → „es passiert nichts"; mit Wake-Word wurde
+  daraus „Я" → nein. Ein echtes „Да." kam als „Да да." zurück (auch nein). Fix: `askPiAgent` schickt `language`
+  (`voiceLanguage || language`) mit, pi-agent fragt in der Sprache des Aufrufers (`callerLanguages` pro Key),
+  `isYes` nimmt dasselbe Ja-Wort mehrfach, pi-agent loggt das Gehörte („Answer by text in …"). Leere STT wird
+  jetzt bei ESPHome/nativ geloggt (`Voice Q (…): (empty)`). Nach einem pi-agent-**Neustart** mitten in der
+  Rückfrage ist die Bestätigung `unavailable` (der wartende Aufrufer ist weg) — so gewollt.
 - **Sprachpfad schneller (Issue #3, znyde87)** — sechs Teile, Assistant + Satelliten-Lib + Wrapper:
   (1) **NLU-Gerätemodell gecacht** (`main.ts.getNluDevices` → `nluDevices`, TTL `NLU_DEVICES_TTL_MS`=60 s,
   gleichzeitige Anfragen teilen sich den Build, leeres Ergebnis wird nicht gehalten). Vorher pro Sprachbefehl
