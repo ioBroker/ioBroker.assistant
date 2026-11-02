@@ -120,6 +120,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
     private aliveSubId = '';
     private journalSubId = '';
     private recognition: SpeechRecognitionLike | null = null;
+    private scrollTimeout: ReturnType<typeof setTimeout> | null = null;
 
     constructor(props: ConfigGenericProps) {
         super(props);
@@ -218,7 +219,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
     }
 
     async componentDidMount(): Promise<void> {
-        super.componentDidMount();
+        await super.componentDidMount();
         this.aliveSubId = `system.adapter.${this.instanceId}.alive`;
         this.journalSubId = `${this.instanceId}.journal.last`;
 
@@ -236,9 +237,9 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         }
 
         // Live-track the instance's alive flag so the composer enables/disables without a reload.
-        this.props.oContext.socket.subscribeState(this.aliveSubId, this.onAliveChange);
+        await this.props.oContext.socket.subscribeState(this.aliveSubId, this.onAliveChange);
         // Every started and every finished request lands here — that is what makes the view live.
-        this.props.oContext.socket.subscribeState(this.journalSubId, this.onJournalChange);
+        await this.props.oContext.socket.subscribeState(this.journalSubId, this.onJournalChange);
     }
 
     componentWillUnmount(): void {
@@ -247,6 +248,10 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         }
         if (this.journalSubId) {
             this.props.oContext.socket.unsubscribeState(this.journalSubId, this.onJournalChange);
+        }
+        if (this.scrollTimeout) {
+            clearTimeout(this.scrollTimeout);
+            this.scrollTimeout = null;
         }
         try {
             this.recognition?.stop();
@@ -367,10 +372,18 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
      * is not enough: an update after an await (loading the journal, a state change from the socket) is rendered in
      * its own task, and the timer often ran first, so the chat opened at the oldest entries.
      */
-    private scrollToBottom(): void {
+    private scrollToBottom(counter?: number): void {
+        counter ||= 0;
         const el = this.scrollRef.current;
         if (el) {
             el.scrollTop = el.scrollHeight;
+        } else {
+            if (counter < 15) {
+                this.scrollTimeout = setTimeout(() => {
+                    this.scrollTimeout = null;
+                    this.scrollToBottom(counter + 1);
+                }, 100);
+            }
         }
     }
 
