@@ -197,6 +197,9 @@ const VOICE_FORM_FIELDS = [
 /** Of those, the protected ones: the browser never gets them, so an empty value there means "keep the saved one" */
 const VOICE_FORM_SECRETS = ['voiceApiKey', 'openrouterSpeechKey', 'azureSpeechKey', 'awsSecretAccessKey'];
 
+/** An empty `ask` from the same caller is reported at most this often. */
+const EMPTY_ASK_REPORT_MS = 60_000;
+
 /** How long to wait for a device to confirm a write, and how often to look. */
 const ACK_TIMEOUT_MS = 2000;
 const ACK_POLL_MS = 150;
@@ -969,6 +972,31 @@ class Assistant extends Adapter {
             fallback: cfg.ttsFallback || undefined,
             voice: (voices[provider] || '').trim() || undefined,
         });
+    }
+
+    /** Per caller of `ask`: when an empty question was last reported, and how many came since. */
+    private readonly emptyAsks = new Map<string, { reportedAt: number; count: number }>();
+
+    /**
+     * An empty `ask` is rejected, and reported once a minute per caller. Field report (2026-11-03): a caller asked
+     * with empty text every time an answer arrived — about once a second, each one a pi-agent request about "only
+     * the time" (the time context was the whole question) and paid tokens. A script that asks on every change of
+     * `text.response` loops exactly like that.
+     */
+    private reportEmptyAsk(from: string): void {
+        const now = Date.now();
+        const entry = this.emptyAsks.get(from) ?? { reportedAt: 0, count: 0 };
+        entry.count++;
+        if (now - entry.reportedAt >= EMPTY_ASK_REPORT_MS) {
+            this.log.warn(
+                `Ignoring an empty question from ${from} (sendTo "ask")${
+                    entry.count > 1 ? ` — ${entry.count} since the last report` : ''
+                }. A script that asks whenever text.response changes keeps doing this in a loop.`,
+            );
+            entry.reportedAt = now;
+            entry.count = 0;
+        }
+        this.emptyAsks.set(from, entry);
     }
 
     /** Record the origin of the current text.request/response ('' = state write, 'chat' = message, else satellite). */
@@ -3103,15 +3131,24 @@ class Assistant extends Adapter {
         const text = typeof message === 'string' ? message : message?.text;
         // Origin for text.querySource: caller-provided (e.g. 'telegram:Max') or 'chat' for the admin chat.
         const source = (typeof message === 'string' ? '' : message?.source?.trim()) || 'chat';
+        // Who sent it (javascript.0, telegram.0, admin.0 for the chat tab) — the way to find a script gone wrong.
+        const caller = String(obj.from || '').replace(/^system\.adapter\./, '') || 'unknown';
 
+        const question = String(text ?? '').trim();
+        if (!question) {
+            this.reportEmptyAsk(caller);
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, { error: 'empty question' }, obj.callback);
+            }
+            return;
+        }
         if (!this.ready) {
             if (obj.callback) {
                 this.sendTo(obj.from, obj.command, { error: 'agent not ready' }, obj.callback);
             }
             return;
         }
-        const question = String(text ?? '');
-        this.log.info(`Q (${obj.command}): ${question}`);
+        this.log.info(`Q (${obj.command} from ${caller}): ${question}`);
         this.setStateAsync('text.request', { val: question, ack: true }).catch(() => {});
         this.setQuerySource(source);
         try {
@@ -3145,6 +3182,10 @@ class Assistant extends Adapter {
      * later turns have the full thread.
      */
     private answer(question: string, source = '', origin: JournalOrigin = {}): Promise<string> {
+        if (!question.trim()) {
+            // Nothing to answer — and a model asked with nothing but the time context still costs a request.
+            return Promise.resolve('');
+        }
         const voice = VOICE_TRANSPORTS.has(origin.transport || '');
         return this.requestOrigin.run({ source, room: origin.room || '', voice }, () =>
             this.journal

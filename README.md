@@ -235,6 +235,9 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) An empty question sent with `sendTo('ask')` is rejected (`{error: 'empty question'}`) instead of going to the model with nothing but the time context, and the log names the sender once a minute. A script that asked on every answer looped about once a second and used pi-agent tokens. The log line of every `ask` now names the sender
+
 ### 1.4.2 (2026-11-03)
 * (@GermanBluefox) ESPHome satellites: after 2.5 seconds of speech a pause may be half as long again before the request ends, so a pause for thought no longer cuts off a longer request. Short commands close as fast as before
 * (@GermanBluefox) ESPHome satellites: speech recognition gets the recording without the device's chirp or beep and without the silence around the speech, and quiet speech is amplified (up to ×10). Whisper made "Продолжение следует..." of the beep and the silence

@@ -595,6 +595,13 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   Wetter erfinden). Tage nach morgen bleiben beim Tool (Hinweis-Satz am Ende der Injektion). Adapter ohne
   Mapper (Roh-Dump) → keine Injektion, nur Tool. **Hannah
   nutzte `openweathermap` via MQTT** (`weather.py`) — Vorbild für die Normalisierung.
+- **Leere `ask`-Fragen abgewiesen** (Feldbericht Alex F., 2026-11-03): ein Aufrufer ohne `source` (→ `'chat'`)
+  schickte nach jeder Antwort sofort ein leeres `ask` (7–70 ms Abstand, ~1/s) — pi-agent bekam nur den Zeitkontext
+  („Nur Zeit ohne Text…“) und verbrauchte Tokens. Der Admin-Chat schickt nie leer (`send()` trimmt), pi-agent ruft
+  `ask` nur beim telegram-Adapter → vermutlich ein Skript auf `text.response`. Jetzt: `onMessage` trimmt, leer →
+  `{error:'empty question'}`, `reportEmptyAsk()` warnt höchstens einmal pro Minute pro Absender (`EMPTY_ASK_REPORT_MS`)
+  mit Zähler; jede `Q (ask from <instanz>)`-Zeile nennt den Absender (`obj.from`). `answer()` selbst gibt bei leerer
+  Frage `''` zurück (Sicherung für alle anderen Wege; `text.request` filterte schon).
 - LLM-Agent mit Tool-Calling-Schleife für **OpenAI + Anthropic** — `src/lib/llm.ts` (`LlmAgent`).
 - Tools über native ioBroker-API — `src/lib/tools.ts`: `list_rooms`, `list_functions`,
   `find_states({room?,func?,query?})`, `get_state({id})`, `set_state({id,value})`.
