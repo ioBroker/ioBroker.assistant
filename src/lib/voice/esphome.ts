@@ -37,8 +37,9 @@ import {
     type VoiceAssistantRequestMsg,
 } from './esphomeProto';
 import { EntityRegistry, isEntityStateMessage, isListEntityMessage, type EsphomeEntity } from './esphomeEntities';
-import { SpeechDetector, type Bytes } from './vad';
+import { SpeechDetector, type SpeechEnd, type Bytes } from './vad';
 import { pcmToWav } from './stt';
+import type { DiscardedCapture, DiscardReason } from './captures';
 import type { SttEngine } from './stt';
 import type { TtsEngine } from './tts';
 import type { SatelliteState } from './protocol';
@@ -92,6 +93,32 @@ const RECONNECT_MS = 10_000;
 const PIPELINE_TIMEOUT_MS = 30_000;
 /** How long we wait for the device to report that it finished playing before forcing it back to idle. */
 const PLAYBACK_TIMEOUT_MS = 60_000;
+/**
+ * Default lowest RMS that counts as speech (the noise floor can only raise the gate above it). Fits the
+ * ThirdReality speaker; quieter microphones get their own value per device ({@link EsphomeDevice.speechLevel}).
+ */
+export const DEFAULT_SPEECH_LEVEL = 250;
+/**
+ * Close the microphone when nobody has started speaking this long after the wake word. Without it a false wake
+ * kept the stream open for the full 12 s cap: on a ThirdReality speaker with a custom wake word that was ten
+ * times in one night, each 12.6 s of an open mic (and of music ducked, if any played).
+ */
+const NO_SPEECH_MS = 5000;
+/** The same after a follow-up question re-opened the mic: the user may need a moment to think. */
+const NO_SPEECH_FOLLOW_UP_MS = 8000;
+/** Silence threshold as a share of the speech threshold — keeps the default pair 250/150. */
+const SILENCE_SHARE = 0.6;
+/**
+ * A dropped utterance whose loudest frame reached this share of the speech threshold was probably a voice
+ * that was too quiet, not an empty room — worth telling the user where to lower the threshold.
+ */
+const QUIET_VOICE_SHARE = 0.4;
+
+/** The configured speech threshold of a device, or 0 for the default. Table cells may arrive as strings. */
+export function speechLevelOf(device: EsphomeDevice): number {
+    const level = Math.round(Number(device.speechLevel));
+    return Number.isFinite(level) && level > 0 ? level : 0;
+}
 
 export interface EsphomeDevice {
     /** Host name or IP of the satellite. */
@@ -102,6 +129,12 @@ export interface EsphomeDevice {
     password?: string;
     /** Room this satellite belongs to (drives `satellites.<room>.*` and the answer context). */
     room?: string;
+    /**
+     * Lowest RMS that counts as speech on this device (empty/0 → {@link DEFAULT_SPEECH_LEVEL}). Microphone
+     * levels differ a lot: a ThirdReality speaker hears normal speech at RMS 350–470, a phone running a
+     * satellite app at under 200, so one fixed floor cannot fit both.
+     */
+    speechLevel?: number | string | null;
 }
 
 export interface EsphomeSatellitesOptions {
@@ -149,6 +182,11 @@ export interface EsphomeSatellitesOptions {
     onEntityState?: (device: string, room: string, entity: EsphomeEntity) => void;
     /** True when the reply asks something back, so the device should re-open its mic without a wake word. */
     expectsFollowUp?: (answer: string, device: string) => boolean;
+    /**
+     * A recording that never became a request: dropped as silence, or returned empty by the speech recognition.
+     * For diagnosis (the adapter stores it when asked to); absent → nothing is kept.
+     */
+    onDiscarded?: (capture: DiscardedCapture) => void;
     /**
      * Custom wake words to offer the devices, re-read for every configuration request. The device lists
      * them next to its own and downloads one (from the media server) only when it is selected.
@@ -348,6 +386,8 @@ class EsphomeConnection {
     private capture: Capture | null = null;
     private playbackTimer: NodeJS.Timeout | null = null;
     private readonly password: string;
+    /** Configured speech threshold, 0 = {@link DEFAULT_SPEECH_LEVEL}. */
+    private readonly speechLevel: number;
 
     constructor(
         device: EsphomeDevice,
@@ -357,6 +397,7 @@ class EsphomeConnection {
         this.port = device.port || DEFAULT_PORT;
         this.room = (device.room || '').trim();
         this.password = device.password || '';
+        this.speechLevel = speechLevelOf(device);
         this.deviceName = this.host;
     }
 
@@ -738,6 +779,9 @@ class EsphomeConnection {
                 // travel: derive them from the room instead, once the wake chirp is out of the way.
                 skipMs: WAKE_CHIRP_MS,
                 adaptive: true,
+                startTimeoutMs: phrase ? NO_SPEECH_MS : NO_SPEECH_FOLLOW_UP_MS,
+                minStartLevel: this.speechLevel || DEFAULT_SPEECH_LEVEL,
+                minEndLevel: Math.round((this.speechLevel || DEFAULT_SPEECH_LEVEL) * SILENCE_SHARE),
             }),
             conversationId: request.getConversationId(),
             wakeWord: phrase || '',
@@ -762,8 +806,9 @@ class EsphomeConnection {
         const chunk = Buffer.from(audio.getData_asU8());
         if (chunk.length) {
             capture.chunks.push(chunk);
-            if (capture.detector.push(chunk)) {
-                void this.finishCapture();
+            const end = capture.detector.push(chunk);
+            if (end) {
+                void this.finishCapture(end);
                 return;
             }
         }
@@ -773,7 +818,34 @@ class EsphomeConnection {
     }
 
     /** Stop the mic stream and run STT → answer → TTS for what was captured. */
-    private async finishCapture(): Promise<void> {
+    /** Hand a recording that never became a request to {@link EsphomeSatellitesOptions.onDiscarded}. */
+    private discard(capture: Capture, pcm: Bytes, reason: DiscardReason): void {
+        if (!this.opts.onDiscarded || !pcm.length) {
+            return;
+        }
+        const d = capture.detector;
+        try {
+            this.opts.onDiscarded({
+                device: this.deviceName,
+                room: this.room,
+                wakeWord: capture.wakeWord,
+                reason,
+                pcm,
+                sampleRate: MIC_SAMPLE_RATE,
+                vad: {
+                    peak: Math.round(d.peak),
+                    analysedPeak: Math.round(d.analysedPeak),
+                    noiseFloor: Math.round(d.noiseFloor),
+                    startLevel: Math.round(d.startLevel),
+                    endLevel: Math.round(d.endLevel),
+                },
+            });
+        } catch (e) {
+            this.opts.log.debug(`ESPHome ${this.deviceName}: keeping the recording failed — ${(e as Error).message}`);
+        }
+    }
+
+    private async finishCapture(end?: SpeechEnd): Promise<void> {
         const capture = this.capture;
         if (!capture || capture.closed) {
             return;
@@ -794,7 +866,27 @@ class EsphomeConnection {
         );
 
         if (!pcm.length || !capture.detector.sawSpeech) {
-            this.opts.log.debug(`ESPHome ${this.deviceName}: nothing but silence — dropping the utterance`);
+            const loudest = Math.round(capture.detector.analysedPeak);
+            const gate = Math.round(capture.detector.startLevel);
+            if (pcm.length && loudest >= gate * QUIET_VOICE_SHARE) {
+                // Not an empty room: something came close to the gate. Typically a microphone that is quieter
+                // than the default threshold expects (a phone) — say where to change it.
+                this.opts.log.info(
+                    `ESPHome ${this.deviceName}: dropped the utterance — the loudest sound (RMS ${loudest}) stayed ` +
+                        `below the speech threshold ${gate}. If somebody spoke, lower "Speech threshold" for this ` +
+                        `device in the ESPHome satellites table (Voice tab), e.g. to ${Math.max(
+                            30,
+                            Math.round((loudest * 0.6) / 10) * 10,
+                        )}.`,
+                );
+            } else {
+                this.opts.log.debug(
+                    `ESPHome ${this.deviceName}: nothing but silence${
+                        end === 'no-speech' ? ' (nobody started speaking)' : ''
+                    } — dropping the utterance`,
+                );
+            }
+            this.discard(capture, pcm, end === 'no-speech' ? 'no-speech' : 'silence');
             this.event(EVENT.RUN_END);
             this.status('idle');
             return;
@@ -813,6 +905,7 @@ class EsphomeConnection {
                 this.opts.log.info(
                     `Voice Q (${this.deviceName}): (empty) — speech recognition returned no text for ${seconds.toFixed(1)} s of audio`,
                 );
+                this.discard(capture, pcm, 'empty-stt');
                 this.event(EVENT.RUN_END);
                 this.status('idle');
                 return;

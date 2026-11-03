@@ -65,6 +65,8 @@ export interface EngineContext {
     openrouterTtsModel: string;
     /** Decoder for compressed speech (OpenRouter models that only return mp3); absent → those models fail */
     decodeAudio?: AudioDecoder;
+    /** Longest text that is spoken, in characters; longer ones are cut at a sentence end. 0 = no limit, absent = 400. */
+    ttsMaxChars?: number;
 }
 
 function requireAzure(creds: VoiceCredentials): void {
@@ -159,7 +161,7 @@ function cachedTts(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
                   ? `${ctx.openrouterTtsModel || DEFAULT_OPENROUTER_TTS_MODEL}-${ctx.voices.openrouter}`
                   : ctx.voices.openai;
     const dir = path.join(ctx.dataDir, 'ttscache', `${provider}-${(voice || 'default').replace(/[^\w.-]/g, '_')}`);
-    return new CachedTts(buildTtsEngine(provider, ctx), { dir, log: ctx.log });
+    return new CachedTts(buildTtsEngine(provider, ctx), { dir, log: ctx.log, maxChars: ctx.ttsMaxChars });
 }
 
 function buildTtsEngine(provider: SpeechProvider, ctx: EngineContext): TtsEngine {

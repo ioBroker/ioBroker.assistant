@@ -60,6 +60,11 @@ export interface SpeechDetectorOptions {
     /** Hard cap on one utterance, in case the room never falls quiet. */
     maxMs?: number;
     /**
+     * Give up when no speech has started this long after the stream began (the skipped lead-in included);
+     * 0 = only {@link maxMs}. A false wake would otherwise keep the microphone open for the whole `maxMs`.
+     */
+    startTimeoutMs?: number;
+    /**
      * Leading audio to leave out of the analysis — for devices that chirp into their own microphone
      * when the wake word fires. The audio itself is untouched; this only stops the chirp from being
      * mistaken for speech and from poisoning the noise floor.
@@ -79,8 +84,8 @@ export interface SpeechDetectorOptions {
     warmupMs?: number;
 }
 
-/** Why an utterance ended: the speaker stopped, or we hit the hard cap. */
-export type SpeechEnd = 'speech-end' | 'timeout';
+/** Why an utterance ended: the speaker stopped, we hit the hard cap, or nobody started speaking at all. */
+export type SpeechEnd = 'speech-end' | 'timeout' | 'no-speech';
 
 /**
  * How fast the tracked noise floor may follow a *rising* ambient level, per analysed frame (30 ms).
@@ -96,6 +101,7 @@ export class SpeechDetector {
     private readonly fixedEnd: number;
     private readonly silenceMs: number;
     private readonly maxMs: number;
+    private readonly startTimeoutMs: number;
     private readonly skipMs: number;
     private readonly adaptive: boolean;
     private readonly minStartLevel: number;
@@ -115,6 +121,11 @@ export class SpeechDetector {
     totalMs = 0;
     /** Loudest frame seen so far (exposed for logging — the usual clue when a mic is mis-configured). */
     peak = 0;
+    /**
+     * Loudest frame after the skipped lead-in, i.e. without the wake chirp. Compared with {@link startLevel}
+     * it tells whether a dropped utterance was silence or a voice that was simply too quiet for the gate.
+     */
+    analysedPeak = 0;
 
     constructor({
         sampleRate = 16000,
@@ -123,6 +134,7 @@ export class SpeechDetector {
         endLevel = 400,
         silenceMs = 900,
         maxMs = 12000,
+        startTimeoutMs = 0,
         skipMs = 0,
         adaptive = false,
         minStartLevel = 250,
@@ -137,6 +149,7 @@ export class SpeechDetector {
         this.fixedEnd = endLevel;
         this.silenceMs = silenceMs;
         this.maxMs = maxMs;
+        this.startTimeoutMs = startTimeoutMs;
         this.skipMs = skipMs;
         this.adaptive = adaptive;
         this.minStartLevel = minStartLevel;
@@ -190,6 +203,9 @@ export class SpeechDetector {
                 continue;
             }
             this.totalMs += this.frameMs;
+            if (level > this.analysedPeak) {
+                this.analysedPeak = level;
+            }
 
             if (this.adaptive) {
                 // Three rules, each there to defeat a specific way of getting this wrong:
@@ -228,6 +244,9 @@ export class SpeechDetector {
                 this.silentMs = 0;
             }
 
+            if (!this.speechSeen && this.startTimeoutMs > 0 && this.elapsedMs >= this.startTimeoutMs) {
+                verdict ||= 'no-speech';
+            }
             if (this.totalMs >= this.maxMs) {
                 verdict ||= 'timeout';
             }

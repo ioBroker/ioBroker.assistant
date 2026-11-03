@@ -54,6 +54,11 @@ export interface AdapterConfig {
     sttFallback: '' | 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk';
     ttsFallback: '' | 'openai' | 'openrouter' | 'azure' | 'aws' | 'piper';
     /**
+     * Longest text a satellite speaks, in characters (400 ≈ 25–30 s); a longer answer is cut at the last sentence
+     * end before the limit. 0 = no limit, empty = 400.
+     */
+    ttsMaxChars: number;
+    /**
      * Phrase-triggered macros: a spoken or typed phrase runs a list of actions and answers with a fixed
      * reply. Matched before the rule-based NLU, because a macro the user wrote down must not be
      * reinterpreted. `actions` has the same shape as a trigger's; the settings table stores it as JSON.
@@ -166,8 +171,11 @@ export interface AdapterConfig {
      * listens on TCP 6053 and we dial it.
      */
     esphomeEnabled: boolean;
-    /** The satellites to connect to. `port` empty → 6053, `password` only if the device has one set. */
-    esphomeDevices: { ip: string; port?: number; password?: string; room?: string }[];
+    /**
+     * The satellites to connect to. `port` empty → 6053, `password` only if the device has one set, `speechLevel`
+     * = lowest RMS that counts as speech (empty → 250; lower for quiet microphones such as a phone).
+     */
+    esphomeDevices: { ip: string; port?: number; password?: string; room?: string; speechLevel?: number }[];
     /**
      * Port of the small HTTP server that serves spoken replies to those devices — they fetch the audio
      * by URL instead of receiving it over their API socket.
@@ -177,6 +185,11 @@ export interface AdapterConfig {
     esphomeMediaHost: string;
     /** Silence in ms that ends an utterance; these devices have no VAD of their own ('' → 900). */
     esphomeSilenceMs: number;
+    /**
+     * Keep recordings that never became a request (dropped as silence, or empty speech recognition) as WAV + JSON
+     * in the file storage (`<instance>/captures/`, newest 50) — for diagnosing false wakes and quiet microphones.
+     */
+    esphomeSaveCaptures: boolean;
     /** Global voice language (ISO-639-1, '' = adapter/system language). Drives STT hint + TTS. */
     voiceLanguage: string;
     /** Dedicated OpenAI key for STT/TTS; empty → reuse the main key when provider === 'openai'. */

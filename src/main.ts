@@ -109,6 +109,8 @@ import {
     type SpeechProvider,
 } from './lib/voice/engines';
 import { pcmFromResponse } from './lib/voice/openrouter';
+import { MAX_TTS_CHARS, parseTtsMaxChars, spokenLengthHint } from './lib/voice/ttsCache';
+import { CaptureStore, type DiscardedCapture } from './lib/voice/captures';
 import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
 import {
     SYSTEM_AI_ID,
@@ -162,6 +164,9 @@ const LOCAL_LLM_MAX_TOKENS = 256;
  * the TTS cache at startup; everything else is cached on first use.
  */
 /** Fields of the Voice tab the voice test takes from the unsaved form (everything an STT or TTS engine is built from). */
+/** Transports whose answer is spoken by a satellite (and therefore cut at `ttsMaxChars`). */
+const VOICE_TRANSPORTS: ReadonlySet<string> = new Set(['esphome', 'udp', 'native', 'wyoming']);
+
 const VOICE_FORM_FIELDS = [
     'voiceLanguage',
     'sttProvider',
@@ -461,7 +466,7 @@ class Assistant extends Adapter {
      * Where the request being answered came from, for the LLM tools: a tool only gets the model's
      * arguments, but "play X" from the bedroom satellite should go to the bedroom TV.
      */
-    private readonly requestOrigin = new AsyncLocalStorage<{ source: string; room: string }>();
+    private readonly requestOrigin = new AsyncLocalStorage<{ source: string; room: string; voice: boolean }>();
     /** Who is at home (roadmap B1); mirrored into `presence.*`. Null until onReady. */
     private presence: PresenceTracker | null = null;
     /** Satellites currently set to Do-Not-Disturb, by state id (mirrors `satellites.<id>.dnd`). */
@@ -788,6 +793,7 @@ class Assistant extends Adapter {
                 );
             },
             expectsFollowUp: (answer, device) => this.followUpFor(device, answer),
+            onDiscarded: cfg.esphomeSaveCaptures ? capture => this.keepCapture(capture) : undefined,
             externalWakeWords: () =>
                 [...this.customWakeWords.values()].map(w => ({
                     id: w.id,
@@ -828,6 +834,7 @@ class Assistant extends Adapter {
             openrouterSttModel: (cfg.openrouterSttModel || '').trim(),
             openrouterTtsModel: (cfg.openrouterTtsModel || '').trim(),
             decodeAudio: audio => this.decodeAudioBufferToPcm(audio),
+            ttsMaxChars: parseTtsMaxChars(cfg.ttsMaxChars),
         };
     }
 
@@ -1315,6 +1322,33 @@ class Assistant extends Adapter {
             val: JSON.stringify({ max: config.max, words }),
             ack: true,
         });
+    }
+
+    /** Store for `esphomeSaveCaptures`, in the adapter's file storage (Admin → Files → assistant.N/captures). */
+    private captureStore: CaptureStore | null = null;
+
+    /** Keep a dropped ESPHome recording for diagnosis (`esphomeSaveCaptures`). Never blocks the voice pipeline. */
+    private keepCapture(capture: DiscardedCapture): void {
+        this.captureStore ||= new CaptureStore({
+            write: async (path, data) => {
+                await this.writeFileAsync(this.namespace, path, data);
+            },
+            list: async dir => {
+                try {
+                    const entries = await this.readDirAsync(this.namespace, dir);
+                    return entries.filter(e => !e.isDir).map(e => e.file);
+                } catch {
+                    return []; // nothing kept yet
+                }
+            },
+            remove: async path => {
+                await this.delFileAsync(this.namespace, path);
+            },
+        });
+        this.captureStore
+            .save(capture)
+            .then(path => this.log.debug(`ESPHome ${capture.device}: recording kept as ${this.namespace}/${path}`))
+            .catch(e => this.log.warn(`Could not keep the recording of ${capture.device}: ${(e as Error).message}`));
     }
 
     /** Read the uploaded wake words (`<instance>/wakewords/<id>.json` + `.tflite`) once. */
@@ -3083,7 +3117,8 @@ class Assistant extends Adapter {
      * later turns have the full thread.
      */
     private answer(question: string, source = '', origin: JournalOrigin = {}): Promise<string> {
-        return this.requestOrigin.run({ source, room: origin.room || '' }, () =>
+        const voice = VOICE_TRANSPORTS.has(origin.transport || '');
+        return this.requestOrigin.run({ source, room: origin.room || '', voice }, () =>
             this.journal
                 ? this.journal.run(question, source, origin, () => {
                       this.traceSpeechInput(question, origin);
@@ -3187,6 +3222,19 @@ class Assistant extends Adapter {
             return 'Wenn die Anfrage nur ein Befehl war, Geräte ein- oder auszuschalten oder auf einen Wert zu stellen, und alles geklappt hat, antworte ausschließlich mit dem Steuer-Marker [[DONE]] (statt eines Satzes ertönt ein kurzer Bestätigungston). Bei Fragen, bei Fehlern oder wenn du etwas mitteilen musst, antworte normal.';
         }
         return 'If the request was only a command to switch devices on or off or to set them to a value, and everything worked, answer with the control marker [[DONE]] alone (a short beep plays instead of a sentence). For questions, errors or when you have something to tell, answer normally.';
+    }
+
+    /**
+     * Length instruction for a request that came in by voice: the answer is cut at `ttsMaxChars` before it is
+     * spoken, so the model is asked to stay within it. Empty for text requests (chat, Telegram, scripts) and
+     * when the limit is off.
+     */
+    private spokenLengthHint(): string {
+        if (!this.config.voiceEnabled || !this.requestOrigin.getStore()?.voice) {
+            return '';
+        }
+        const limit = parseTtsMaxChars(this.config.ttsMaxChars) ?? MAX_TTS_CHARS;
+        return spokenLengthHint(limit, String(this.config.voiceLanguage || this.language || 'en'));
     }
 
     /** What [[DONE]] says where no beep can be played */
@@ -3491,9 +3539,12 @@ class Assistant extends Adapter {
             `Cloud LLM [${this.agent.model || 'auto'}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}${weather ? ', weather' : ''}${this.presence?.configured ? ', presence' : ''}) — running tool loop…`,
         );
         // Prepend the current date/time (and the weather line, if a source is configured) to the user turn —
-        // cache-safe, see buildTimeContext. The stored history keeps the untouched question.
+        // cache-safe, see buildTimeContext. The stored history keeps the untouched question. A spoken request
+        // also gets the length limit, after the question: in the system prompt it would bust the prompt cache
+        // every time voice and text requests alternate.
         const time = this.buildTimeContext();
-        const questionForLlm = [time, weather, question].filter(Boolean).join('\n\n');
+        const lengthHint = this.spokenLengthHint();
+        const questionForLlm = [time, weather, question, lengthHint].filter(Boolean).join('\n\n');
         this.journal?.note({
             tier: 'cloud',
             detail: `${this.llm?.provider || this.config.provider || 'openai'} · ${this.agent.model || 'auto'}`,
@@ -3503,11 +3554,12 @@ class Assistant extends Adapter {
         const deviceLines = ctx ? ctx.split('\n').length - 1 : 0;
         this.journal?.step({
             stage: 'context',
-            title: `Prompt: ${deviceLines} devices${mem ? ', memory' : ''}${weather ? ', weather' : ''}${followUp ? ', follow-up marker' : ''}`,
+            title: `Prompt: ${deviceLines} devices${mem ? ', memory' : ''}${weather ? ', weather' : ''}${followUp ? ', follow-up marker' : ''}${lengthHint ? ', length limit' : ''}`,
             data: {
                 systemPrompt: this.config.systemPrompt || '',
                 followUpHint: followUp || undefined,
                 doneHint: done || undefined,
+                lengthHint: lengthHint || undefined,
                 memory: mem || undefined,
                 devices: deviceLines,
                 time,
@@ -3551,7 +3603,7 @@ class Assistant extends Adapter {
         // The device list maps names to state ids, so pi-agent can act without searching first. It is the
         // first to go when the instructions get too long — pi-agent can still search.
         const { text: instructions, dropped } = composeInstructions(
-            [this.config.systemPrompt || '', followUp, this.doneHint()],
+            [this.config.systemPrompt || '', followUp, this.doneHint(), this.spokenLengthHint()],
             [this.buildMemoryContext(), await this.buildDeviceContext()],
         );
         if (dropped) {

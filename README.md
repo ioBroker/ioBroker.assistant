@@ -235,6 +235,12 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) ESPHome satellites: new column "Speech threshold" per device (empty = 250, as before). A device with a quiet microphone, for example a phone running a satellite app, reacted to the wake word but dropped the command as silence unless one spoke loudly right next to it. When an utterance is dropped although it came close to the threshold, the log now says so and suggests a value
+* (@GermanBluefox) Voice: the length limit for spoken answers is now a setting ("Longest spoken answer", Voice tab, default 400 characters ≈ 25–30 seconds, 0 = no limit). Longer answers stopped after about half a minute without notice; the log warning now names the setting. For a spoken request the AI model (cloud LLM and pi-agent) is told the limit and asked not to read out state ids or long numbers, so the answer fits instead of being cut
+* (@GermanBluefox) ESPHome satellites: the microphone closes again when nobody starts speaking within 5 s of the wake word (8 s after a follow-up question). A false wake kept it open for 12.6 s before
+* (@GermanBluefox) ESPHome satellites: new option "Keep dropped recordings for diagnosis". Recordings dropped as silence or returned empty by the speech recognition are stored as WAV plus a JSON with the detector levels under Files → assistant.N/captures (the newest 50), to find out what set a satellite off. Off by default: they contain audio from the room
+
 ### 1.3.1 (2026-11-02)
 * (@GermanBluefox) pi-agent: the language of the satellites goes along with every request, so pi-agent asks its confirmation questions ("… Say yes or no.") in it instead of the system language. Before, a Russian satellite was asked "Sag ja oder nein", and the German "Ja" came back empty from the speech recognition: nothing happened. Needs a pi-agent version that knows the field
 * (@GermanBluefox) Requests about a script ("Skript", "script", "скрипт", also JavaScript/Blockly) always go to the cloud model: routines, rule engine and local LLM read their details as commands of their own ("write a script that switches the kitchen light every hour" was answered with the time). A reply to a question of the cloud model about the script goes there too

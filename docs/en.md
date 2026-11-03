@@ -404,7 +404,17 @@ Two things work differently here:
 
 - **The adapter decides when you stopped talking.** These devices stream until the server tells them to
   stop, so end-of-speech detection runs in the adapter. Tune **End of speech after (ms of silence)**
-  (default 900) if replies cut you off or the assistant waits too long.
+  (default 900) if replies cut you off or the assistant waits too long. Speech has to reach the
+  device's **Speech threshold** (column in the device table, empty = RMS 250). A device that reacts to
+  the wake word but then hears nothing has a quieter microphone than that (a phone running a satellite
+  app is typically below 200): lower the threshold for that row, e.g. to 100. The log says so when it
+  drops an utterance that came close, and the debug line `captured … (peak RMS …, speech/silence gate …)`
+  shows the levels. If nobody starts speaking within 5 seconds of the wake word (8 seconds after a
+  follow-up question), the microphone is closed again — a false wake no longer keeps it open for 12
+  seconds. To find out what set a satellite off, enable **Keep dropped recordings for diagnosis**:
+  recordings dropped as silence or returned empty by the speech recognition are stored as WAV plus a JSON
+  (reason, wake word, detector levels, RMS per 100 ms) under Admin → Files → `assistant.0/captures` — the
+  newest 50. They contain audio from the room, so switch it off again afterwards.
 - **The spoken reply is fetched, not pushed.** The device plays a URL, so the adapter runs a small HTTP
   server (**Media server port**, default `8099`) serving each clip for a couple of minutes. It must be
   reachable **from the device**; the address is taken from each device connection automatically and only
@@ -600,8 +610,11 @@ Four settings that mostly pay for themselves:
   to acknowledge the value (`ack:true`) and say "did not respond" if it never does. Leave this **off** for
   devices that never acknowledge (MQTT, scripts, `0_userdata`): every command would look failed.
 
-Two things happen without any setting: an answer longer than 400 characters is **cut at the last sentence
-that fits** (a spoken paragraph is a minute nobody can interrupt), and an announcement written as
+Two more things: an answer longer than **Longest spoken answer** (Voice tab, default 400 characters ≈
+25–30 seconds) is **cut at the last sentence that fits** (a spoken paragraph is a minute nobody can
+interrupt; 0 = no limit, the log warns when it cuts). For a spoken request the AI model is told the limit
+(in sentences, as models cannot count characters) and asked not to read out state ids or long numbers, so
+it answers within it instead of being cut. And an announcement written as
 **SSML** (`<speak>…</speak>`) is spoken as SSML by Azure and Polly — pauses and emphasis included — while
 the other engines get the text without the markup instead of reading the tags out loud.
 

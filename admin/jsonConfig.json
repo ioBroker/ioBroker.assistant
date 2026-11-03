@@ -877,7 +877,7 @@
                     "newLine": true,
                     "type": "table",
                     "label": "ESPHome satellites",
-                    "help": "One row per device. Port empty = 6053. The room is what the assistant treats the satellite as being in. Leave the password empty unless the device really has an API password set — table values are stored unencrypted.",
+                    "help": "One row per device. Port empty = 6053. The room is what the assistant treats the satellite as being in. Speech threshold: the lowest microphone level (RMS) that counts as speech, empty = 250 — lower it (e.g. to 100) if the device reacts to the wake word but does not hear the command; the debug log shows the levels (\"peak RMS\", \"speech/silence gate\"). Leave the password empty unless the device really has an API password set — table values are stored unencrypted.",
                     "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
                     "xs": 12,
                     "sm": 12,
@@ -885,17 +885,25 @@
                     "lg": 12,
                     "xl": 12,
                     "items": [
-                        { "type": "text", "attr": "ip", "title": "Address (IP or host name)", "width": "30%" },
+                        { "type": "text", "attr": "ip", "title": "Address (IP or host name)", "width": "25%" },
                         {
                             "type": "number",
                             "attr": "port",
                             "title": "Port",
-                            "width": "15%",
+                            "width": "12%",
                             "min": 1,
                             "max": 65535,
                             "default": 6053
                         },
-                        { "type": "text", "attr": "room", "title": "Room", "width": "30%" },
+                        { "type": "text", "attr": "room", "title": "Room", "width": "23%" },
+                        {
+                            "type": "number",
+                            "attr": "speechLevel",
+                            "title": "Speech threshold",
+                            "width": "15%",
+                            "min": 10,
+                            "max": 5000
+                        },
                         { "type": "text", "attr": "password", "title": "API password (usually empty)", "width": "25%" }
                     ]
                 },
@@ -939,6 +947,18 @@
                     "md": 3,
                     "lg": 3,
                     "xl": 3
+                },
+                "esphomeSaveCaptures": {
+                    "type": "checkbox",
+                    "label": "Keep dropped recordings for diagnosis",
+                    "help": "Recordings that were dropped as silence or that speech recognition returned empty are stored as WAV plus a JSON with the levels, under Files → assistant.N/captures (the newest 50). They contain audio from the room: only enable this for troubleshooting.",
+                    "default": false,
+                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
                 },
                 "voiceLanguage": {
                     "newLine": true,
@@ -1070,6 +1090,20 @@
                         { "label": "Piper (local)", "value": "piper" }
                     ],
                     "default": "",
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "ttsMaxChars": {
+                    "type": "number",
+                    "label": "Longest spoken answer (characters)",
+                    "help": "A longer answer is cut at the last sentence end before this limit. 400 characters are about 25–30 seconds of speech. 0 = no limit.",
+                    "default": 400,
+                    "min": 0,
+                    "max": 10000,
                     "hidden": "!data.voiceEnabled",
                     "xs": 12,
                     "sm": 6,

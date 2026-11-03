@@ -418,6 +418,17 @@ Zwei Dinge laufen hier anders:
 - **Der Adapter entscheidet, wann du fertig geredet hast.** Diese Geräte streamen, bis der Server sie
   stoppt — die Sprachende-Erkennung läuft also im Adapter. Über **Sprachende nach (ms Stille)**
   (Standard 900) justieren, falls dir die Antwort ins Wort fällt oder der Assistent zu lange wartet.
+  Sprache muss die **Sprachschwelle** des Geräts erreichen (Spalte in der Gerätetabelle, leer = RMS 250).
+  Reagiert ein Gerät auf das Wake-Word, hört danach aber nichts, ist sein Mikrofon leiser (ein Handy mit
+  Satelliten-App liegt typisch unter 200): die Schwelle für diese Zeile senken, z. B. auf 100. Verwirft
+  der Adapter eine Äußerung, die knapp darunter lag, steht das im Log; die Debug-Zeile
+  `captured … (peak RMS …, speech/silence gate …)` zeigt die Pegel. Fängt nach dem Wake-Word 5 Sekunden
+  lang niemand an zu sprechen (nach einer Rückfrage 8 Sekunden), wird das Mikrofon wieder geschlossen —
+  eine Fehlauslösung hält es nicht mehr 12 Sekunden offen. Um herauszufinden, was einen Satelliten
+  ausgelöst hat, **Verworfene Aufnahmen zur Diagnose behalten** einschalten: als Stille verworfene oder
+  leer erkannte Aufnahmen landen als WAV plus JSON (Grund, Wake-Word, Pegel des Detektors, RMS pro 100 ms)
+  unter Admin → Dateien → `assistant.0/captures` — die neuesten 50. Sie enthalten Ton aus dem Raum, danach
+  also wieder ausschalten.
 - **Die gesprochene Antwort wird geholt, nicht geschickt.** Das Gerät spielt eine URL ab, deshalb betreibt
   der Adapter einen kleinen HTTP-Server (**Port des Medien-Servers**, Standard `8099`), der jeden Clip ein paar
   Minuten lang ausliefert. Er muss **vom Gerät aus** erreichbar sein; die Adresse wird automatisch aus der
@@ -619,8 +630,12 @@ Vier Einstellungen, die sich meist selbst bezahlen:
   Geräten, die nie bestätigen (MQTT, Skripte, `0_userdata`), **ausgeschaltet** lassen: sonst sieht jeder
   Befehl fehlgeschlagen aus.
 
-Zwei Dinge passieren ohne jede Einstellung: eine Antwort über 400 Zeichen wird **am letzten passenden
-Satzende abgeschnitten** (ein vorgelesener Absatz ist eine Minute, die niemand unterbrechen kann), und
+Außerdem: eine Antwort über **Längste gesprochene Antwort** (Tab Voice, Standard 400 Zeichen ≈ 25–30
+Sekunden) wird **am letzten passenden Satzende abgeschnitten** (ein vorgelesener Absatz ist eine Minute, die
+niemand unterbrechen kann; 0 = keine Grenze, beim Kürzen warnt das Log). Bei einer gesprochenen Anfrage
+bekommt das KI-Modell die Grenze mitgeteilt (in Sätzen, weil Modelle keine Zeichen zählen können) und die
+Bitte, keine State-IDs oder langen Zahlen vorzulesen — so antwortet es passend, statt abgeschnitten zu
+werden. Und
 eine Durchsage in **SSML** (`<speak>…</speak>`) wird von Azure und Polly als SSML gesprochen — mit Pausen
 und Betonung —, während die übrigen Engines den Text ohne Markup bekommen, statt die Tags vorzulesen.
 

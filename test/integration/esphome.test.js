@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 const { pb, encode, decode, registrySize } = require('../../build/lib/voice/esphomeProto.js');
 const { SpeechDetector, rms } = require('../../build/lib/voice/vad.js');
 const { MediaServer } = require('../../build/lib/voice/mediaServer.js');
-const { EsphomeSatellites } = require('../../build/lib/voice/esphome.js');
+const { EsphomeSatellites, speechLevelOf, DEFAULT_SPEECH_LEVEL } = require('../../build/lib/voice/esphome.js');
 const { prepareWakeWord } = require('../../build/lib/voice/wakeWords.js');
 const { microModel } = require('./tfliteModel.js');
 
@@ -245,6 +245,95 @@ test('a speaker who starts immediately cannot become the noise floor', () => {
     assert.ok(detector.sawSpeech, 'speech straight after the chirp must still register');
 });
 
+const PHONE_SPEECH_RMS = 160; // a phone running a satellite app, normal voice at arm's length (field report)
+
+test('a quiet microphone stays below the default gate, and a lower speech threshold hears it', () => {
+    // Phones suppress noise down to digital silence, so the floor sits at 0 and only the minimum decides.
+    const run = minStartLevel => {
+        const detector = new SpeechDetector({
+            skipMs: 300,
+            adaptive: true,
+            silenceMs: 100000,
+            ...(minStartLevel ? { minStartLevel, minEndLevel: Math.round(minStartLevel * 0.6) } : {}),
+        });
+        for (let i = 0; i < 10; i++) {
+            detector.push(Buffer.alloc(960)); // no chirp on a phone, just silence
+        }
+        // The phone's noise suppression zeroes the gaps between words, which is why the field log showed a
+        // noise floor of 0 after 12 s of talking.
+        for (let i = 0; i < 40; i++) {
+            detector.push(i % 4 === 3 ? Buffer.alloc(960) : frameAt(PHONE_SPEECH_RMS));
+        }
+        return detector;
+    };
+    const standard = run(0);
+    assert.equal(standard.sawSpeech, false, 'the default gate (250) must not hear the phone');
+    assert.equal(standard.startLevel, 250);
+    assert.ok(
+        standard.analysedPeak >= standard.startLevel * 0.4,
+        'the dropped utterance is loud enough to be reported as a voice that was too quiet',
+    );
+    const lowered = run(100);
+    assert.ok(lowered.sawSpeech, 'a threshold of 100 must hear the phone');
+    assert.equal(lowered.startLevel, 100);
+    assert.equal(lowered.endLevel, 60);
+});
+
+test('startTimeoutMs closes a stream in which nobody starts speaking', () => {
+    const detector = new SpeechDetector({ skipMs: 300, adaptive: true, startTimeoutMs: 1500, maxMs: 60000 });
+    let verdict = null;
+    let ms = 0;
+    for (; ms < 600 && !verdict; ms += 30) {
+        verdict = detector.push(frameAt(ms < 300 ? CHIRP_RMS : ROOM_RMS));
+    }
+    for (; ms < 10000 && !verdict; ms += 30) {
+        verdict = detector.push(frameAt(ROOM_RMS));
+    }
+    assert.equal(verdict, 'no-speech');
+    assert.equal(ms, 1500, 'counted from the start of the stream, the chirp included');
+    assert.equal(detector.sawSpeech, false);
+});
+
+test('startTimeoutMs does not cut off speech that has started', () => {
+    const detector = new SpeechDetector({ skipMs: 300, adaptive: true, startTimeoutMs: 1500, silenceMs: 600 });
+    let verdict = null;
+    for (let i = 0; i < 20 && !verdict; i++) {
+        verdict = detector.push(frameAt(i < 10 ? CHIRP_RMS : ROOM_RMS));
+    }
+    for (let i = 0; i < 100 && !verdict; i++) {
+        verdict = detector.push(frameAt(SPEECH_RMS)); // 3 s of speech, well past the start timeout
+    }
+    assert.equal(verdict, null, 'a speaker who started in time keeps the mic');
+    for (let i = 0; i < 40 && !verdict; i++) {
+        verdict = detector.push(frameAt(ROOM_RMS));
+    }
+    assert.equal(verdict, 'speech-end');
+});
+
+test('analysedPeak leaves out the skipped wake chirp', () => {
+    const detector = new SpeechDetector({ skipMs: 300, adaptive: true, silenceMs: 100000 });
+    for (let i = 0; i < 10; i++) {
+        detector.push(frameAt(CHIRP_RMS));
+    }
+    for (let i = 0; i < 10; i++) {
+        detector.push(frameAt(ROOM_RMS));
+    }
+    assert.ok(detector.peak > 10000, 'peak includes the chirp');
+    assert.ok(detector.analysedPeak < 100, `analysedPeak must not, was ${detector.analysedPeak}`);
+});
+
+test('speechLevelOf reads the table cell, whatever form it arrives in', () => {
+    assert.equal(DEFAULT_SPEECH_LEVEL, 250);
+    assert.equal(speechLevelOf({ ip: 'x' }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: '' }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: null }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: 0 }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: -5 }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: 'abc' }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: 100 }), 100);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: '120' }), 120);
+});
+
 // ── media server ────────────────────────────────────────────────────────────
 
 function fetch(url) {
@@ -302,7 +391,7 @@ test('media server serves registered files until they are removed, and nothing e
  * Minimal stand-in for `linux-voice-assistant-cpp`: answers the handshake, fires a wake word, and —
  * like the real firmware — keeps streaming microphone audio until the server sends STT_VAD_END.
  */
-function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }) {
+function fakeDevice({ speechMs = 600, chirpMs = 600, speechRms = 0, wakeWords = ['okay_nabu'] }) {
     const state = {
         events: [],
         fetched: [],
@@ -575,7 +664,16 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
                     const audio = new pb.VoiceAssistantAudio();
                     // Like the real firmware: the wake acknowledgement chirp comes back in through
                     // the device's own microphone first, then whatever the speaker says.
-                    audio.setData(elapsed < chirpMs ? micFrame(true) : micFrame(elapsed < chirpMs + speechMs));
+                    // `speechRms` = a quiet microphone (a phone), otherwise loud speech.
+                    audio.setData(
+                        elapsed < chirpMs
+                            ? micFrame(true)
+                            : elapsed < chirpMs + speechMs
+                              ? speechRms
+                                  ? frameAt(speechRms)
+                                  : micFrame(true)
+                              : micFrame(false),
+                    );
                     send(audio);
                     elapsed += 30;
                     if (elapsed > 10000) {
@@ -710,6 +808,141 @@ test('wake word → captured audio → STT → answer → TTS url the device fet
     for (const status of ['idle', 'listening', 'processing', 'speaking']) {
         assert.ok(seen.statuses.includes(status), `missing status ${status}`);
     }
+});
+
+test('a quiet satellite is heard once its speech threshold is lowered', async t => {
+    // No chirp, speech at phone level: with the default gate this would be dropped as silence.
+    const device = fakeDevice({ speechMs: 1500, chirpMs: 0, speechRms: PHONE_SPEECH_RMS });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+
+    const seen = { question: null, vad: null };
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Küche', speechLevel: 100 }],
+        language: 'de',
+        stt: { transcribe: async () => 'licht an' },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(3200), sampleRate: 16000 }) },
+        answer: async (question, ctx) => {
+            seen.question = question;
+            seen.vad = ctx.vad;
+            return 'Ok';
+        },
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        expectsFollowUp: () => false,
+    });
+
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    assert.notEqual(device.stoppedBy, 'runaway', 'the server must end the utterance on silence');
+    assert.equal(seen.question, 'licht an', 'the quiet speech must reach STT');
+    assert.equal(seen.vad.startLevel, 100, 'the configured threshold is the gate');
+    assert.equal(seen.vad.endLevel, 60, 'the silence gate keeps the 250/150 ratio');
+});
+
+test('a false wake closes the mic after 5 s instead of the full 12 s cap', async t => {
+    const device = fakeDevice({ speechMs: 0 }); // the chirp, then nobody says anything
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+
+    const seen = { answered: false, sttCalled: false, debug: [], discarded: [] };
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Salon' }],
+        language: 'de',
+        stt: {
+            transcribe: async () => {
+                seen.sttCalled = true;
+                return '';
+            },
+        },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(3200), sampleRate: 16000 }) },
+        answer: async () => {
+            seen.answered = true;
+            return 'Ok';
+        },
+        media,
+        log: { ...silentLog, debug: m => seen.debug.push(m) },
+        expectsFollowUp: () => false,
+        onDiscarded: capture => seen.discarded.push(capture),
+    });
+
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    assert.notEqual(device.stoppedBy, 'runaway', 'the server must close the stream itself');
+    assert.ok(device.streamedMs >= 5000 && device.streamedMs < 6000, `streamed ${device.streamedMs} ms`);
+    assert.equal(seen.sttCalled, false, 'a false wake is not billed to speech recognition');
+    assert.equal(seen.answered, false);
+    assert.ok(
+        seen.debug.some(m => /nobody started speaking/.test(m)),
+        'the log says why the utterance was dropped',
+    );
+    // What the diagnosis recording gets: the whole stream, the reason and the detector levels.
+    assert.equal(seen.discarded.length, 1);
+    const [discarded] = seen.discarded;
+    assert.equal(discarded.reason, 'no-speech');
+    assert.equal(discarded.device, 'fake-speaker');
+    assert.equal(discarded.room, 'Salon');
+    assert.equal(discarded.wakeWord, 'okay nabu', 'the phrase the device reported');
+    assert.equal(discarded.sampleRate, 16000);
+    assert.ok(discarded.pcm.length >= 5 * 16000 * 2, 'the full recording, chirp included');
+    assert.ok(discarded.vad.peak > discarded.vad.analysedPeak, 'the chirp is in peak, not in analysedPeak');
+    assert.equal(discarded.vad.startLevel, 250);
+});
+
+test('a recording the speech recognition returns empty is reported for diagnosis', async t => {
+    const device = fakeDevice({ speechMs: 600 });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+
+    const discarded = [];
+    let answered = false;
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Salon' }],
+        language: 'de',
+        stt: { transcribe: async () => '' },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(3200), sampleRate: 16000 }) },
+        answer: async () => {
+            answered = true;
+            return 'Ok';
+        },
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        expectsFollowUp: () => false,
+        onDiscarded: capture => discarded.push(capture),
+    });
+
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    assert.equal(answered, false);
+    assert.equal(discarded.length, 1);
+    assert.equal(discarded[0].reason, 'empty-stt');
+    assert.ok(discarded[0].vad.analysedPeak >= discarded[0].vad.startLevel, 'it did sound like speech');
 });
 
 test('announce reaches a connected satellite as a media url', async t => {

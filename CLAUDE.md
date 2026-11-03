@@ -261,8 +261,14 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
     damit Satelliten, Durchsagen, Test-Chat und `tts`-sendTo dasselbe Verhalten haben): Plattencache
     (Verzeichnis pro Anbieter+Stimme, Sample-Rate im Dateikopf → nie falsche Tonhöhe, Key =
     sha256(lang+text), nur Texte ≤200 Zeichen — lange Einmal-Antworten füllen sonst die Platte —, LRU-Prune
-    auf 64 MB), `truncateForTts` (400 Zeichen, Schnitt am letzten passenden Satzende; SSML wird nie
-    geschnitten) und SSML-Routing. `TtsEngine` hat dafür optionale `synthesizeSsml`/`warm`-Hooks;
+    auf 64 MB), `truncateForTts` (Config `ttsMaxChars`, Default 400, 0 = aus — über `EngineContext.ttsMaxChars`;
+    aufgefallen als „Satellit hört nach ~30 s auf“: im Journal hatte eine 1900-Zeichen-Antwort von pi-agent
+    `replyAudioMs` 20 784; Schnitt am letzten passenden Satzende; SSML wird nie geschnitten). Dazu
+    **Längenhinweis an das Modell** nur bei Sprach-Anfragen (`requestOrigin.voice` aus
+    `VOICE_TRANSPORTS` esphome/udp/native/wyoming, `main.spokenLengthHint()` → `ttsCache.spokenLengthHint`
+    de/en/ru, Grenze auch als Satzzahl, keine State-IDs/Seriennummern): Cloud-LLM im **User-Turn** hinter
+    der Frage (System-Prompt wäre bei Wechsel Sprache/Text ein Cache-Bust), pi-agent in den Instruktionen
+    (Konversation pro Quelle → stabil). Lokales LLM nicht (256 Tokens Cap). und SSML-Routing. `TtsEngine` hat dafür optionale `synthesizeSsml`/`warm`-Hooks;
     `azure.ts` (`speakSsmlAsync`) und `aws.ts` (`TextType:'ssml'`) implementieren SSML nativ, alle anderen
     bekommen `stripSsml()` statt vorgelesener Tags.
   - `src/lib/voice/fallback.ts` — `FallbackStt`/`FallbackTts`: eine zweite Engine bei Ausfall (Config
@@ -452,6 +458,25 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   +30…120 ms, Rauschboden 5–6, Gate 250/150. ⚠️ Beim Ändern dieser Werte immer gegen echte Captures
   prüfen, nicht nur gegen `micFrame()` — das Fake-Gerät im Test sendet jetzt bewusst erst `chirpMs`
   Chirp und dann Sprache, weil es sonst die Realität nicht abbildet.
+  **Sprachschwelle pro Gerät** (2026-11-03, Feldbericht „Handy-Alex“): ein Handy mit Satelliten-App
+  (kein Chirp, Rauschunterdrückung → digitale Stille, Rauschboden 0) liefert normale Sprache mit
+  **Peak RMS ~190** → das Minimum 250 ließ nur lautes Sprechen direkt am Telefon durch. Neue Spalte
+  `speechLevel` in `esphomeDevices` (`speechLevelOf()`, leer = `DEFAULT_SPEECH_LEVEL` 250) setzt
+  `minStartLevel`, `minEndLevel` = 0,6× (Verhältnis 250/150). `SpeechDetector.analysedPeak` = Peak
+  **ohne** den Chirp-Vorlauf; liegt er beim Verwerfen ≥ 40 % des Gates, loggt `finishCapture` auf
+  **info** mit Wertvorschlag (≈0,6× Peak) statt nur „nothing but silence“ auf debug.
+  **Abbruch ohne Sprachbeginn** (`SpeechDetector.startTimeoutMs`, Verdict `'no-speech'`, gezählt ab
+  Stream-Beginn inkl. Chirp): ESPHome `NO_SPEECH_MS` 5 s nach Wake-Word, `NO_SPEECH_FOLLOW_UP_MS` 8 s nach
+  Rückfrage. Anlass vitanova 2026-11-03: das eigene Wake-Word „ioBroker“ löste in einer Nacht ~10× aus
+  (okay_nabu nie), sechsmal ohne jede Sprache → Mikro jeweils 12,6 s offen (`maxMs`), viermal mit
+  Geräusch → STT leer. Die 12,6-s-Fälle waren **keine** verpassten Sprachenden.
+  **Diagnose-Aufnahmen** (`src/lib/voice/captures.ts`, `CaptureStore`): Config `esphomeSaveCaptures`
+  (Default aus, Raumaudio!). `esphome.ts` meldet per `onDiscarded` jede Aufnahme, die nicht zur Anfrage
+  wurde (`no-speech` | `silence` | `empty-stt`, mit `vad` inkl. `analysedPeak`); `main.keepCapture()`
+  schreibt in den **ioBroker-Dateispeicher** `assistant.N/captures/<Zeit>_<Gerät>_<Grund>.{wav,json}`
+  (Admin → Dateien, also auch für Nutzer ohne Shell), JSON mit `levels` = RMS pro 100 ms. Nur die neuesten
+  `MAX_CAPTURES` (50) bleiben; Speichern läuft seriell (sonst prunen sich parallele Saves gegenseitig).
+  Test: `test/integration/captures.test.js`.
   **Wake-Words aus ioBroker setzbar** (gegen echte Hardware getestet, Originalzustand wiederhergestellt):
   `esphome.ts` merkt sich die `VoiceAssistantConfigurationResponse` als `WakeWordConfig`
   (active/available[{id,phrase,languages}]/max), meldet sie per `onWakeWords` und sendet auf
