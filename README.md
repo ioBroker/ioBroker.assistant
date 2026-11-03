@@ -235,7 +235,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.4.3 (2026-11-03)
 * (@GermanBluefox) An empty question sent with `sendTo('ask')` is rejected (`{error: 'empty question'}`) instead of going to the model with nothing but the time context, and the log names the sender once a minute. A script that asked on every answer looped about once a second and used pi-agent tokens. The log line of every `ask` now names the sender
 
 ### 1.4.2 (2026-11-03)
