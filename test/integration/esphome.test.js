@@ -1245,6 +1245,34 @@ test('a setting is written to the device and the reported value comes back', asy
     assert.equal(now('mic_noise'), 'High');
 });
 
+test('float32 values of the device arrive as the numbers it meant', () => {
+    const { EntityRegistry, float32 } = require('../../build/lib/voice/esphomeEntities.js');
+    // What the protobuf float fields really hand over (measured on a ThirdReality speaker).
+    assert.equal(float32(0.5000000237487257), 0.5);
+    assert.equal(float32(0.0010000000474974513), 0.001);
+    assert.equal(float32(0.9020000428427011), 0.902);
+    assert.equal(float32(4000), 4000);
+    assert.equal(float32(21.3999996185302734), 21.4);
+
+    // Through the real message path: a float field set to 0.001 comes back as float32.
+    const registry = new EntityRegistry();
+    const announce = new pb.ListEntitiesNumberResponse();
+    announce.setKey(9);
+    announce.setObjectId('stop_word_sensitivity');
+    announce.setName('Stop Word Sensitivity');
+    announce.setMinValue(0);
+    announce.setMaxValue(1);
+    announce.setStep(0.001);
+    const [decodedAnnounce] = decode(encode(announce)).frames;
+    const entity = registry.addFromAnnouncement(decodedAnnounce.name, decodedAnnounce.message);
+    assert.equal(entity.step, 0.001, 'not 0.0010000000474974513');
+    const state = new pb.NumberStateResponse();
+    state.setKey(9);
+    state.setState(0.5);
+    const [decodedState] = decode(encode(state)).frames;
+    assert.equal(registry.applyState(decodedState.name, decodedState.message).value, 0.5);
+});
+
 test('out-of-range numbers are clamped to what the device allows', async t => {
     const { device, satellites, name } = await connectedSatellite(t);
 

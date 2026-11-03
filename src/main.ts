@@ -1586,6 +1586,11 @@ class Assistant extends Adapter {
                                 unit: entity.unit || undefined,
                             };
                 await this.setObjectNotExistsAsync(id, { type: 'state', common, native: {} });
+                if (entity.kind === 'number') {
+                    // Objects from before float32() kept the raw float noise (step 0.0010000000474974513);
+                    // the device may also change its range with a firmware update.
+                    await this.syncNumberRange(id, entity);
+                }
                 this.subscribeStates(id);
             }
         }
@@ -1633,6 +1638,19 @@ class Assistant extends Adapter {
         await this.writeSatelliteControl(satId, entity);
     }
 
+    /** Bring min/max/step of an existing number control in line with what the device announces now. */
+    private async syncNumberRange(id: string, entity: EsphomeEntity): Promise<void> {
+        const obj = await this.getObjectAsync(id);
+        if (!obj || obj.type !== 'state') {
+            return;
+        }
+        const wanted = { min: entity.min, max: entity.max, step: entity.step };
+        const common = obj.common;
+        if (common.min !== wanted.min || common.max !== wanted.max || common.step !== wanted.step) {
+            await this.extendObjectAsync(id, { common: wanted });
+        }
+    }
+
     /** Write one entity's current value into its state(s). Always acked — this is the device talking. */
     private async writeSatelliteControl(satId: string, entity: EsphomeEntity): Promise<void> {
         const base = `satellites.${satId}.controls.${entity.objectId}`;
@@ -1648,7 +1666,17 @@ class Assistant extends Adapter {
             await this.setStateAsync(`${base}.inProgress`, { val: v.inProgress, ack: true });
             await this.setStateAsync(`${base}.progress`, { val: v.progress, ack: true });
         } else {
-            await this.setStateAsync(base, { val: entity.value as ioBroker.StateValue, ack: true });
+            let val = entity.value as ioBroker.StateValue;
+            // The device says how many decimals of a measurement mean something; the rest is noise.
+            if (
+                entity.kind === 'sensor' &&
+                typeof val === 'number' &&
+                entity.decimals !== undefined &&
+                entity.decimals >= 0
+            ) {
+                val = Number(val.toFixed(Math.min(entity.decimals, 10)));
+            }
+            await this.setStateAsync(base, { val, ack: true });
         }
     }
 

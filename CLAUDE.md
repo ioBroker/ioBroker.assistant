@@ -513,6 +513,15 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   `vals` (alle Roh-Werte unter `satellites.*`) und lädt beim Öffnen die Control-Objekte per
   `getForeignObjects`. Slider schreibt erst auf `onChangeCommitted` (sonst pro Pixel ein Geräte-Roundtrip).
   Nach Änderungen hier: `npm run build:gui` **und** `iobroker upload assistant`.
+  **float32-Rauschen** (2026-11-03): die protobuf-`float`-Felder kommen als 0.5000000237487257 bzw. step
+  0.0010000000474974513 an → `esphomeEntities.float32()` (7 signifikante Stellen) für number min/max/step/
+  state, Sensorwert, Media-Volume, Update-Progress; Sensoren zusätzlich auf `decimals` gerundet
+  (`writeSatelliteControl`). Bestehende number-Objekte zieht `syncNumberRange()` nach (`extendObject` nur bei
+  Abweichung). Dialog: Gruppenüberschrift = Kanalname (`groupNames`, Kanäle werden mitgeladen), Zahlen per
+  `formatNumber(value, step)`. Firmware-Update-Gruppe (`isUpdateGroup`/`renderUpdateGroup`, erkannt an den
+  Blättern latestVersion+install+progress): Install-Knopf nur bei `latestVersion ≠ currentVersion` und ohne
+  laufendes Update, `progress` nur während `inProgress` als `LinearProgress` (unbestimmt bis > 0 %),
+  `inProgress` ohne eigene Zeile.
   **Timer-Spiegelung** — `VoiceAssistantTimerEventResponse` (115) via `EsphomeSatellites.timerEvent()`;
   `main.ts.mirrorTimerList()` diffed die `onChange`-Liste gegen `mirroredTimers` (neu→started,
   verschwunden→cancelled, sonst updated), `onFire`→finished. Ziel ist der Ursprungs-Satellit, sonst

@@ -50,6 +50,8 @@ interface SatellitesState extends ConfigGenericState {
     settingsFor: string | null;
     /** Control objects of that satellite, loaded when the dialog opens. */
     settingsObjects: Record<string, ioBroker.StateObject>;
+    /** Names of its compound controls (media player, firmware update), keyed by object id under `controls.`. */
+    settingsGroupNames: Record<string, string>;
     settingsLoading: boolean;
 }
 
@@ -81,6 +83,7 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
             vals: {},
             settingsFor: null,
             settingsObjects: {},
+            settingsGroupNames: {},
             settingsLoading: false,
         };
     }
@@ -196,7 +199,20 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                     byProp[id.slice(prefix.length)] = obj;
                 }
             }
-            this.setState({ settingsObjects: byProp, settingsLoading: false });
+            // Compound controls (media player, firmware update) are channels: their name is the group heading.
+            const channels = (await this.props.oContext.socket
+                .getForeignObjects(`${prefix}controls.*`, 'channel')
+                .catch(() => ({}))) as Record<string, ioBroker.ChannelObject>;
+            const groupNames: Record<string, string> = {};
+            const lang = I18n.getLanguage();
+            for (const [id, obj] of Object.entries(channels || {})) {
+                const name = obj?.common?.name;
+                const text = typeof name === 'string' ? name : name ? name[lang] || name.en || '' : '';
+                if (text) {
+                    groupNames[id.slice(`${prefix}controls.`.length)] = text;
+                }
+            }
+            this.setState({ settingsObjects: byProp, settingsGroupNames: groupNames, settingsLoading: false });
         } catch {
             this.setState({ settingsLoading: false });
         }
@@ -280,7 +296,9 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
             <Box sx={{ width: '100%' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
                     <Typography variant="h6">{I18n.t('custom_assistant_Satellites')}</Typography>
-                    {ids.length ? this.renderComposer(BROADCAST, I18n.t('custom_assistant_Speak on all satellites')) : null}
+                    {ids.length
+                        ? this.renderComposer(BROADCAST, I18n.t('custom_assistant_Speak on all satellites'))
+                        : null}
                 </Box>
 
                 {!ids.length ? (
@@ -340,9 +358,7 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                                             />
                                         </TableCell>
                                         <TableCell>
-                                            <Tooltip
-                                                title={s.lastSeen ? new Date(s.lastSeen).toLocaleString() : ''}
-                                            >
+                                            <Tooltip title={s.lastSeen ? new Date(s.lastSeen).toLocaleString() : ''}>
                                                 <span>{this.ago(s.lastSeen)}</span>
                                             </Tooltip>
                                         </TableCell>
@@ -378,12 +394,15 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                         room={this.state.sats[this.state.settingsFor]?.room || ''}
                         values={this.state.vals[this.state.settingsFor] || {}}
                         objects={this.state.settingsObjects}
+                        groupNames={this.state.settingsGroupNames}
                         loading={this.state.settingsLoading}
                         onWrite={(prop, value) => this.writeSetting(this.state.settingsFor as string, prop, value)}
                         sendTo={(command, message) =>
                             this.props.oContext.socket.sendTo(this.instanceId, command, message)
                         }
-                        onClose={() => this.setState({ settingsFor: null, settingsObjects: {} })}
+                        onClose={() =>
+                            this.setState({ settingsFor: null, settingsObjects: {}, settingsGroupNames: {} })
+                        }
                     />
                 ) : null}
             </Box>

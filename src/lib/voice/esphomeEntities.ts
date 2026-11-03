@@ -118,6 +118,15 @@ interface KindSpec {
     command: (entity: EsphomeEntity, value: unknown) => PbMessage | null;
 }
 
+/**
+ * A `float` field of the ESPHome API as the number the device meant. The protobuf floats are 32 bit, so 0.5 from
+ * the device arrives as 0.5000000237487257 and a step of 0.001 as 0.0010000000474974513 — shown as is in ioBroker
+ * and in the settings dialog. float32 carries about 7 significant digits; everything after that is noise.
+ */
+export function float32(value: number): number {
+    return Number.isFinite(value) ? Number(value.toPrecision(7)) : value;
+}
+
 /** Clamp to the device's own range — it ignores anything outside and we would never notice. */
 function clamp(entity: EsphomeEntity, value: number): number {
     const lo = entity.min ?? Number.NEGATIVE_INFINITY;
@@ -145,7 +154,7 @@ const KINDS: KindSpec[] = [
         readState: m => {
             const state = m as { getState(): number; getMissingState(): boolean };
             // `missing_state` means the device has no reading yet — not that the value is 0.
-            return state.getMissingState() ? undefined : state.getState();
+            return state.getMissingState() ? undefined : float32(state.getState());
         },
         command: () => null,
     },
@@ -196,11 +205,16 @@ const KINDS: KindSpec[] = [
                 getStep(): number;
                 getUnitOfMeasurement(): string;
             };
-            return { min: n.getMinValue(), max: n.getMaxValue(), step: n.getStep(), unit: n.getUnitOfMeasurement() };
+            return {
+                min: float32(n.getMinValue()),
+                max: float32(n.getMaxValue()),
+                step: float32(n.getStep()),
+                unit: n.getUnitOfMeasurement(),
+            };
         },
         readState: m => {
             const n = m as { getState(): number; getMissingState(): boolean };
-            return n.getMissingState() ? undefined : n.getState();
+            return n.getMissingState() ? undefined : float32(n.getState());
         },
         command: (entity, value) => {
             const num = Number(value);
@@ -268,7 +282,7 @@ const KINDS: KindSpec[] = [
                 latestVersion: u.getLatestVersion(),
                 title: u.getTitle(),
                 inProgress: u.getInProgress(),
-                progress: u.getProgress(),
+                progress: float32(u.getProgress()),
                 releaseUrl: u.getReleaseUrl(),
             };
         },
@@ -291,7 +305,7 @@ const KINDS: KindSpec[] = [
         describe: m => ({ supportsPause: (m as { getSupportsPause(): boolean }).getSupportsPause() }),
         readState: m => {
             const p = m as { getState(): number; getVolume(): number; getMuted(): boolean };
-            return { state: MEDIA_STATES[p.getState()] ?? 'none', volume: p.getVolume(), muted: p.getMuted() };
+            return { state: MEDIA_STATES[p.getState()] ?? 'none', volume: float32(p.getVolume()), muted: p.getMuted() };
         },
         command: (entity, value) => {
             const message = new pb.MediaPlayerCommandRequest();

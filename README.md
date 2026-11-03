@@ -235,6 +235,10 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) Satellite settings: compound controls show their name ("Firmware Update") instead of the object id ("thirdreality_firmware_update"), and values of ESPHome devices no longer carry float noise (0.5 instead of 0.5000000237487257, step 0.001 instead of 0.0010000000474974513). Existing number controls get the cleaned range on the next connect
+* (@GermanBluefox) Satellite settings, firmware update: the install button only appears when another version is available, and a running update shows its progress as a bar
+
 ### 1.4.0 (2026-11-03)
 * (@GermanBluefox) ESPHome satellites: new column "Speech threshold" per device (empty = 250, as before). A device with a quiet microphone, for example a phone running a satellite app, reacted to the wake word but dropped the command as silence unless one spoke loudly right next to it. When an utterance is dropped although it came close to the threshold, the log now says so and suggests a value
 * (@GermanBluefox) Voice: the length limit for spoken answers is now a setting ("Longest spoken answer", Voice tab, default 400 characters ≈ 25–30 seconds, 0 = no limit). Longer answers stopped after about half a minute without notice; the log warning now names the setting. For a spoken request the AI model (cloud LLM and pi-agent) is told the limit and asked not to read out state ids or long numbers, so the answer fits instead of being cut
