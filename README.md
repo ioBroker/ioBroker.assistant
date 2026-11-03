@@ -235,7 +235,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.4.5 (2026-11-03)
 * (@GermanBluefox) ESPHome satellites: spoken replies go out in the format the device's media player announces (FLAC at its sample rate, as Home Assistant does; MP3/Opus via ffmpeg). Since ESPHome 2026.10 the player is built with only the codecs its pipelines use, and a WAV reply did not play at all. Devices that announce no formats keep getting WAV
 * (@GermanBluefox) ESPHome satellites: when the device ends the conversation itself (button, or the wake word said again), it now gets its RUN_END. It stayed in the conversation, and every further wake word only sent another stop
 * (@GermanBluefox) ESPHome satellites: an utterance that is dropped (silence, or no text recognised) ends with the error `stt-no-text-recognized` before RUN_END, like Home Assistant. A RUN_END right after the end of speech was lost while the device was still stopping its microphone, and the device waited for an answer forever
