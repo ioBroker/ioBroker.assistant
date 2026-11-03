@@ -342,6 +342,56 @@ test('startTimeoutMs does not cut off speech that has started', () => {
     assert.equal(verdict, 'speech-end');
 });
 
+test('minSpeechMs: a click crosses the gate but is not speech, a short "да" is', () => {
+    const opts = { adaptive: true, silenceMs: 600, minSpeechMs: 200, minStartLevel: 150, minEndLevel: 90 };
+    const run = frames => {
+        const detector = new SpeechDetector(opts);
+        let verdict = null;
+        for (let i = 0; i < 10; i++) {
+            verdict ||= detector.push(frameAt(ROOM_RMS)); // 300 ms of room before anything happens
+        }
+        for (const rmsLevel of frames) {
+            verdict ||= detector.push(frameAt(rmsLevel));
+        }
+        for (let i = 0; i < 30; i++) {
+            verdict ||= detector.push(frameAt(ROOM_RMS));
+        }
+        return { detector, verdict };
+    };
+
+    // Measured on vitanova after a false wake: one 100 ms sound at RMS 197 against the gate 150.
+    const click = run([200, 200, 200]);
+    assert.equal(click.detector.sawSpeech, false, 'a 90 ms click is no request');
+    assert.equal(click.verdict, null, 'and therefore nothing to end');
+    assert.equal(click.detector.longestSoundMs, 90, 'the log can say how short it was');
+    assert.equal(click.detector.report().speechStartMs, undefined);
+
+    const da = run(Array(9).fill(SPEECH_RMS)); // 270 ms
+    assert.equal(da.detector.sawSpeech, true, 'the shortest real answer is speech');
+    assert.equal(da.detector.speechStartMs, 300, 'speech starts where the sound began, not where it was confirmed');
+    assert.equal(da.verdict, 'speech-end');
+    assert.equal(da.detector.report().voicedMs, 270);
+
+    // A word with a short dip between its syllables still adds up; the dip already counts as silence.
+    const syllables = run([...Array(4).fill(SPEECH_RMS), ...Array(3).fill(ROOM_RMS), ...Array(4).fill(SPEECH_RMS)]);
+    assert.equal(syllables.detector.sawSpeech, true);
+    assert.equal(syllables.detector.speechStartMs, 300);
+
+    // Two clicks further apart than speechGapMs do not add up to a word.
+    const clicks = run([200, 200, ...Array(12).fill(ROOM_RMS), 200, 200, 200]);
+    assert.equal(clicks.detector.sawSpeech, false);
+});
+
+test('minSpeechMs 0 keeps the first loud frame as speech', () => {
+    const detector = new SpeechDetector({ adaptive: true, silenceMs: 600, minStartLevel: 150, minEndLevel: 90 });
+    for (let i = 0; i < 10; i++) {
+        detector.push(frameAt(ROOM_RMS));
+    }
+    detector.push(frameAt(200));
+    assert.equal(detector.sawSpeech, true);
+    assert.equal(detector.speechStartMs, 300);
+});
+
 test('analysedPeak leaves out the skipped wake chirp', () => {
     const detector = new SpeechDetector({ skipMs: 300, adaptive: true, silenceMs: 100000 });
     for (let i = 0; i < 10; i++) {
@@ -423,12 +473,14 @@ test('media server serves registered files until they are removed, and nothing e
  * Minimal stand-in for `linux-voice-assistant-cpp`: answers the handshake, fires a wake word, and —
  * like the real firmware — keeps streaming microphone audio until the server sends STT_VAD_END.
  */
-function fakeDevice({ speechMs = 600, chirpMs = 600, speechRms = 0, wakeWords = ['okay_nabu'] }) {
+function fakeDevice({ speechMs = 600, chirpMs = 600, speechRms = 0, stallAfterMs = 0, wakeWords = ['okay_nabu'] }) {
     const state = {
         events: [],
         fetched: [],
         streamedMs: 0,
         stoppedBy: null,
+        /** When the device stopped sending audio without ending the stream (`stallAfterMs`). */
+        stalledAt: 0,
         // The firmware owns the wake-word selection and persists it; mirror that here.
         activeWakeWords: [...wakeWords],
         setConfigCalls: [],
@@ -693,6 +745,11 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, speechRms = 0, wakeWords = 
                 })();
             } else if (name === 'VoiceAssistantResponse') {
                 pump = setInterval(() => {
+                    if (stallAfterMs && elapsed >= stallAfterMs) {
+                        // Seen on a ThirdReality speaker: the audio just stops, no end flag, the stream stays open.
+                        state.stalledAt ||= Date.now();
+                        return;
+                    }
                     const audio = new pb.VoiceAssistantAudio();
                     // Like the real firmware: the wake acknowledgement chirp comes back in through
                     // the device's own microphone first, then whatever the speaker says.
@@ -949,6 +1006,52 @@ test('a false wake closes the mic after 5 s instead of the full 12 s cap', async
     assert.ok(discarded.pcm.length >= 5 * 16000 * 2, 'the full recording, chirp included');
     assert.ok(discarded.vad.peak > discarded.vad.analysedPeak, 'the chirp is in peak, not in analysedPeak');
     assert.equal(discarded.vad.startLevel, 250);
+});
+
+test('a device that stops sending audio is closed after 2 s instead of the 30 s pipeline timeout', async t => {
+    // Chirp, speech, a moment of quiet — and then no more audio, but no end of the stream either.
+    const device = fakeDevice({ speechMs: 600, stallAfterMs: 1500 });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+
+    const seen = { info: [] };
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Salon' }],
+        language: 'de',
+        stt: { transcribe: async () => 'licht an' },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(3200), sampleRate: 16000 }) },
+        answer: async (question, ctx) => {
+            seen.question = question;
+            seen.vad = ctx.vad;
+            return 'Ok';
+        },
+        media,
+        silenceMs: 1200, // longer than the quiet the device sends before it stalls
+        log: { ...silentLog, info: m => seen.info.push(m) },
+        expectsFollowUp: () => false,
+    });
+
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    for (const deadline = Date.now() + 10000; !device.stoppedBy && Date.now() < deadline; ) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    assert.ok(device.stalledAt, 'the fake device stalled');
+    assert.equal(device.stoppedBy, 'event 12', 'the server ends the stream itself');
+    assert.equal(seen.question, 'licht an', 'what was said before the stall is still answered');
+    assert.equal(seen.vad.end, 'stall');
+    assert.ok(
+        seen.info.some(m => /stopped sending audio after 1\.50 s/.test(m)),
+        `the log says what happened: ${seen.info.join(' | ')}`,
+    );
 });
 
 test('a recording the speech recognition returns empty is reported for diagnosis', async t => {

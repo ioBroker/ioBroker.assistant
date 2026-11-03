@@ -412,9 +412,12 @@ Two things work differently here:
   the wake word but then hears nothing has a quieter microphone than that (a phone running a satellite
   app is typically below 200): lower the threshold for that row, e.g. to 100. The log says so when it
   drops an utterance that came close, and the debug line `captured … (peak RMS …, speech/silence gate …)`
-  shows the levels. If nobody starts speaking within 5 seconds of the wake word (8 seconds after a
-  follow-up question), the microphone is closed again — a false wake no longer keeps it open for 12
-  seconds. To find out what set a satellite off, enable **Keep dropped recordings for diagnosis**:
+  shows the levels. A sound only counts as speech once it has lasted about 200 ms — a click or a knock
+  after a false wake is not sent to speech recognition (which tends to invent a sentence for it). If
+  nobody starts speaking within 5 seconds of the wake word (8 seconds after a follow-up question), the
+  microphone is closed again — a false wake no longer keeps it open for 12 seconds. If the device stops
+  sending audio without ending the stream, the recording is closed after 2 seconds instead of keeping
+  the satellite in "listening" for half a minute. To find out what set a satellite off, enable **Keep dropped recordings for diagnosis**:
   recordings dropped as silence or returned empty by the speech recognition are stored as WAV plus a JSON
   (reason, wake word, detector levels, RMS per 100 ms) under Admin → Files → `assistant.0/captures` — the
   newest 50. They contain audio from the room, so switch it off again afterwards. Without any recording,

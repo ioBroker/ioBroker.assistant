@@ -425,9 +425,13 @@ Zwei Dinge laufen hier anders:
   Reagiert ein Gerät auf das Wake-Word, hört danach aber nichts, ist sein Mikrofon leiser (ein Handy mit
   Satelliten-App liegt typisch unter 200): die Schwelle für diese Zeile senken, z. B. auf 100. Verwirft
   der Adapter eine Äußerung, die knapp darunter lag, steht das im Log; die Debug-Zeile
-  `captured … (peak RMS …, speech/silence gate …)` zeigt die Pegel. Fängt nach dem Wake-Word 5 Sekunden
-  lang niemand an zu sprechen (nach einer Rückfrage 8 Sekunden), wird das Mikrofon wieder geschlossen —
-  eine Fehlauslösung hält es nicht mehr 12 Sekunden offen. Um herauszufinden, was einen Satelliten
+  `captured … (peak RMS …, speech/silence gate …)` zeigt die Pegel. Als Sprache zählt ein Laut erst ab
+  etwa 200 ms — ein Klick oder ein Klopfen nach einer Fehlauslösung geht nicht an die Spracherkennung
+  (die dazu gern einen Satz erfindet). Fängt nach dem Wake-Word 5 Sekunden lang niemand an zu sprechen
+  (nach einer Rückfrage 8 Sekunden), wird das Mikrofon wieder geschlossen — eine Fehlauslösung hält es
+  nicht mehr 12 Sekunden offen. Hört das Gerät auf, Audio zu schicken, ohne den Stream zu beenden, wird
+  die Aufnahme nach 2 Sekunden geschlossen, statt den Satelliten eine halbe Minute auf „hört zu“ zu
+  lassen. Um herauszufinden, was einen Satelliten
   ausgelöst hat, **Verworfene Aufnahmen zur Diagnose behalten** einschalten: als Stille verworfene oder
   leer erkannte Aufnahmen landen als WAV plus JSON (Grund, Wake-Word, Pegel des Detektors, RMS pro 100 ms)
   unter Admin → Dateien → `assistant.0/captures` — die neuesten 50. Sie enthalten Ton aus dem Raum, danach

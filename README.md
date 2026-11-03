@@ -235,6 +235,10 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) ESPHome satellites: a sound only counts as speech once it has lasted about 200 ms. After a false wake a single click opened the gate, and Whisper made "и все просят." of the amplified silence around it
+* (@GermanBluefox) ESPHome satellites: when a device stops sending audio without ending the stream, the recording is closed after 2 seconds instead of the 30-second pipeline timeout, during which the satellite showed "listening"
+
 ### 1.4.3 (2026-11-03)
 * (@GermanBluefox) An empty question sent with `sendTo('ask')` is rejected (`{error: 'empty question'}`) instead of going to the model with nothing but the time context, and the log names the sender once a minute. A script that asked on every answer looped about once a second and used pi-agent tokens. The log line of every `ask` now names the sender
 

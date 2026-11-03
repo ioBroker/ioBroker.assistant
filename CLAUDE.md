@@ -491,6 +491,20 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   Mit dem Zuschnitt (0,89–4,14 s ×10) lieferte Whisper „Мессенджер. Да, нет?“, mit voller Länge „Мессенджер.
   Да, да.“ — das Schlüsselwort stimmt beide Male, der leise Rest schwankt; ohne Verstärkung „Меседжет.
   Меседжет.“. Auf vitanova: `speechLevel` 150, `esphomeSilenceMs` 1200, STT Whisper.
+  **Zweite Auswertung (2026-11-03, Fehlauslöser des eigenen Wake-Words):** (a) ein einzelner Laut 100 ms bei
+  RMS 197 öffnete das Gate 150 → Whisper machte aus ×10 verstärkter Stille „и все просят.“ → **`minSpeechMs`**
+  (`vad.ts`, ESPHome `MIN_SPEECH_MS` 200): ein Laut über `startLevel` ist erst Kandidat, Sprache erst nach
+  200 ms über `endLevel`; fällt er `speechGapMs` (300) still, wird er vergessen; `speechStartMs` = Beginn des
+  Kandidaten; der Rauschboden steigt während eines Kandidaten nicht; `longestSoundMs` → eigenes Debug-Log
+  „only a short sound“ (sonst hätte das Log fälschlich „Schwelle senken“ empfohlen). Gegen die echte
+  „Мессенджер“-Aufnahme und das Pegelprofil des Fehlauslösers nachgespielt. (b) Das Gerät hörte nach 2,69 s
+  auf, Audio zu schicken, **ohne** `end` → 30 s `PIPELINE_TIMEOUT_MS` auf „listening“ (im Trace stand
+  `end:'stream'`, weil der Timeout `finishCapture()` ohne Grund rief) → **`checkStall`** (Intervall 250 ms,
+  `STREAM_STALL_MS` 2 s nach dem letzten Audio, `STREAM_START_MS` 5 s ohne jedes Audio), `CaptureEnd` =
+  `SpeechEnd | 'stream' | 'stall' | 'pipeline-timeout'`. (c) Firmware: `wake_word_N_sensitivity` ist der
+  **Wahrscheinlichkeits-Cutoff** (höher = strenger), Slot = Reihenfolge der aktiven Modelle; ein per
+  `SetConfiguration` aktiviertes Modell läuft mit dem `probability_cutoff` seiner JSON, bis das Gerät neu
+  startet oder die Entity geschrieben wird — danach gilt der gespeicherte Slot-Wert.
   **Wake-Words aus ioBroker setzbar** (gegen echte Hardware getestet, Originalzustand wiederhergestellt):
   `esphome.ts` merkt sich die `VoiceAssistantConfigurationResponse` als `WakeWordConfig`
   (active/available[{id,phrase,languages}]/max), meldet sie per `onWakeWords` und sendet auf

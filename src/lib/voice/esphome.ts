@@ -37,7 +37,7 @@ import {
     type VoiceAssistantRequestMsg,
 } from './esphomeProto';
 import { EntityRegistry, isEntityStateMessage, isListEntityMessage, type EsphomeEntity } from './esphomeEntities';
-import { SpeechDetector, type SpeechEnd, type Bytes, type VadReport } from './vad';
+import { SpeechDetector, type CaptureEnd, type Bytes, type VadReport } from './vad';
 import { prepareForStt } from './speechAudio';
 import { pcmToWav } from './stt';
 import { levelProfile, type DiscardedCapture, type DiscardReason } from './captures';
@@ -117,6 +117,22 @@ const DEFAULT_SILENCE_MS = 900;
  */
 const LONG_REQUEST_MS = 2500;
 const LONG_PAUSE_FACTOR = 1.5;
+/**
+ * Sound needed before a loud moment counts as speech. On vitanova (2026-11-03) a single 100 ms sound at RMS 197
+ * after a false wake opened the gate (threshold 150), and Whisper made "и все просят." of the amplified silence
+ * around it. The shortest real answer, "да", lasts about 250 ms.
+ */
+const MIN_SPEECH_MS = 200;
+/**
+ * Close the utterance when the device stops sending audio without ending the stream. Seen on a ThirdReality
+ * speaker: the audio stopped after 2.7 s, and the satellite showed "listening" for the 30 s of
+ * {@link PIPELINE_TIMEOUT_MS}. A device streams every few tens of ms while the mic is open.
+ */
+const STREAM_STALL_MS = 2000;
+/** The same before the first audio arrives: a device needs a moment to open the microphone. */
+const STREAM_START_MS = 5000;
+/** How often a running capture checks for a stalled stream. */
+const STALL_CHECK_MS = 250;
 /** Silence threshold as a share of the speech threshold — keeps the default pair 250/150. */
 const SILENCE_SHARE = 0.6;
 /**
@@ -365,6 +381,11 @@ interface Capture {
     /** Wake word that opened this capture; '' when the mic was re-opened for a follow-up/question. */
     wakeWord: string;
     timer: NodeJS.Timeout;
+    /** Watches for a device that stops sending audio without ending the stream. */
+    stallCheck: NodeJS.Timeout;
+    startedAt: number;
+    /** When the last audio arrived; 0 = none yet. */
+    lastAudioAt: number;
     closed: boolean;
 }
 
@@ -777,9 +798,11 @@ class EsphomeConnection {
 
         const timer = setTimeout(() => {
             this.opts.log.warn(`ESPHome ${this.deviceName}: no end of speech within ${PIPELINE_TIMEOUT_MS} ms`);
-            void this.finishCapture();
+            void this.finishCapture('pipeline-timeout');
         }, PIPELINE_TIMEOUT_MS);
         timer.unref();
+        const stallCheck = setInterval(() => this.checkStall(), STALL_CHECK_MS);
+        stallCheck.unref();
 
         const silenceMs = this.opts.silenceMs || DEFAULT_SILENCE_MS;
         this.capture = {
@@ -796,10 +819,14 @@ class EsphomeConnection {
                 startTimeoutMs: phrase ? NO_SPEECH_MS : NO_SPEECH_FOLLOW_UP_MS,
                 minStartLevel: this.speechLevel || DEFAULT_SPEECH_LEVEL,
                 minEndLevel: Math.round((this.speechLevel || DEFAULT_SPEECH_LEVEL) * SILENCE_SHARE),
+                minSpeechMs: MIN_SPEECH_MS,
             }),
             conversationId: request.getConversationId(),
             wakeWord: phrase || '',
             timer,
+            stallCheck,
+            startedAt: Date.now(),
+            lastAudioAt: 0,
             closed: false,
         };
 
@@ -819,6 +846,7 @@ class EsphomeConnection {
         }
         const chunk = Buffer.from(audio.getData_asU8());
         if (chunk.length) {
+            capture.lastAudioAt = Date.now();
             capture.chunks.push(chunk);
             const end = capture.detector.push(chunk);
             if (end) {
@@ -827,8 +855,28 @@ class EsphomeConnection {
             }
         }
         if (audio.getEnd()) {
-            void this.finishCapture();
+            void this.finishCapture('stream');
         }
+    }
+
+    /** End a capture whose device stopped sending audio without ending the stream. */
+    private checkStall(): void {
+        const capture = this.capture;
+        if (!capture || capture.closed) {
+            return;
+        }
+        const now = Date.now();
+        const quietMs = capture.lastAudioAt ? now - capture.lastAudioAt : now - capture.startedAt;
+        if (quietMs < (capture.lastAudioAt ? STREAM_STALL_MS : STREAM_START_MS)) {
+            return;
+        }
+        const audioMs = Math.round(capture.chunks.reduce((sum, c) => sum + c.length, 0) / 2 / (MIC_SAMPLE_RATE / 1000));
+        this.opts.log.info(
+            `ESPHome ${this.deviceName}: the device ${
+                capture.lastAudioAt ? `stopped sending audio after ${(audioMs / 1000).toFixed(2)} s` : 'sent no audio'
+            } without ending the stream — closing the utterance after ${(quietMs / 1000).toFixed(1)} s of nothing`,
+        );
+        void this.finishCapture('stall');
     }
 
     /** Hand a recording that never became a request to {@link EsphomeSatellitesOptions.onDiscarded}. */
@@ -853,7 +901,7 @@ class EsphomeConnection {
     }
 
     /** Stop the mic stream and run STT → answer → TTS for what was captured. */
-    private async finishCapture(end?: SpeechEnd): Promise<void> {
+    private async finishCapture(end: CaptureEnd): Promise<void> {
         const capture = this.capture;
         if (!capture || capture.closed) {
             return;
@@ -861,13 +909,14 @@ class EsphomeConnection {
         capture.closed = true;
         this.capture = null;
         clearTimeout(capture.timer);
+        clearInterval(capture.stallCheck);
 
         // Send this first: the device streams until it sees it.
         this.event(EVENT.STT_VAD_END);
 
         const pcm = Buffer.concat(capture.chunks);
         const seconds = pcm.length / 2 / MIC_SAMPLE_RATE;
-        const vad: VadReport = { ...capture.detector.report(), end: end ?? 'stream' };
+        const vad: VadReport = { ...capture.detector.report(), end };
         const startedAt =
             vad.speechStartMs !== undefined ? `, speech from ${(vad.speechStartMs / 1000).toFixed(2)} s` : '';
         const endedBy = vad.end === 'speech-end' ? `ended after ${vad.silenceMs} ms of silence` : `ended by ${vad.end}`;
@@ -880,7 +929,13 @@ class EsphomeConnection {
         if (!pcm.length || !capture.detector.sawSpeech) {
             const loudest = Math.round(capture.detector.analysedPeak);
             const gate = Math.round(capture.detector.startLevel);
-            if (pcm.length && loudest >= gate * QUIET_VOICE_SHARE) {
+            if (capture.detector.longestSoundMs > 0) {
+                // Something crossed the gate, but too briefly for a word: a click, a knock, a cough.
+                this.opts.log.debug(
+                    `ESPHome ${this.deviceName}: only a short sound (${capture.detector.longestSoundMs} ms, ` +
+                        `RMS ${loudest}) — too short for speech (${MIN_SPEECH_MS} ms), dropping the utterance`,
+                );
+            } else if (pcm.length && loudest >= gate * QUIET_VOICE_SHARE) {
                 // Not an empty room: something came close to the gate. Typically a microphone that is quieter
                 // than the default threshold expects (a phone) — say where to change it.
                 this.opts.log.info(
@@ -1053,6 +1108,7 @@ class EsphomeConnection {
         this.capture = null;
         capture.closed = true;
         clearTimeout(capture.timer);
+        clearInterval(capture.stallCheck);
     }
 
     // ── announcements ───────────────────────────────────────────────────────────────────────────────
