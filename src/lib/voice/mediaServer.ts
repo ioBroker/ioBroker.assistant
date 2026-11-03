@@ -102,7 +102,14 @@ export class MediaServer {
                 this.clips.delete(oldest.value);
             }
         }
-        const extension = contentType === 'audio/mpeg' ? 'mp3' : 'wav';
+        // A device without a usable Content-Type check goes by the extension (ESPHome `detect_audio_file_type`).
+        const extension = contentType.startsWith('audio/mpeg')
+            ? 'mp3'
+            : contentType.startsWith('audio/flac')
+              ? 'flac'
+              : contentType.startsWith('audio/ogg')
+                ? 'opus'
+                : 'wav';
         const token = `${randomBytes(12).toString('hex')}.${extension}`;
         this.clips.set(token, { body, contentType, expiresAt: Date.now() + ttlMs });
         return `/media/${token}`;

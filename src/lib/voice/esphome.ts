@@ -39,7 +39,7 @@ import {
 import { EntityRegistry, isEntityStateMessage, isListEntityMessage, type EsphomeEntity } from './esphomeEntities';
 import { SpeechDetector, type CaptureEnd, type Bytes, type VadReport } from './vad';
 import { prepareForStt } from './speechAudio';
-import { pcmToWav } from './stt';
+import { chooseReplyFormat, encodeReply, type ExternalEncoder, type ReplyFormat } from './replyFormat';
 import { levelProfile, type DiscardedCapture, type DiscardReason } from './captures';
 import type { SttEngine } from './stt';
 import type { TtsEngine } from './tts';
@@ -136,6 +136,16 @@ const STALL_CHECK_MS = 250;
 /** Silence threshold as a share of the speech threshold — keeps the default pair 250/150. */
 const SILENCE_SHARE = 0.6;
 /**
+ * The firmware answers an ERROR event with a stop request of its own (`signal_stop_`). One arriving this soon after
+ * our error belongs to it and needs no reply — the run is already over.
+ */
+const ERROR_ECHO_MS = 2000;
+/**
+ * What ends a run that produced no request. Home Assistant sends the same code when the speech recognition finds no
+ * text, and the Voice PE firmware deliberately plays no error sound for it.
+ */
+const NO_TEXT_ERROR = { code: 'stt-no-text-recognized', message: 'No text recognized' };
+/**
  * A dropped utterance whose loudest frame reached this share of the speech threshold was probably a voice
  * that was too quiet, not an empty room — worth telling the user where to lower the threshold.
  */
@@ -147,11 +157,18 @@ export function speechLevelOf(device: EsphomeDevice): number {
     return Number.isFinite(level) && level > 0 ? level : 0;
 }
 
+/** How a configured device is identified: `ip`, or `ip:port` when it does not use the default port. */
+export function esphomeAddress(device: Pick<EsphomeDevice, 'ip' | 'port'>): string {
+    const ip = (device.ip || '').trim().toLowerCase();
+    const port = Number(device.port) || DEFAULT_PORT;
+    return port === DEFAULT_PORT ? ip : `${ip}:${port}`;
+}
+
 export interface EsphomeDevice {
     /** Host name or IP of the satellite. */
     ip: string;
     /** API port; empty/0 → 6053. */
-    port?: number;
+    port?: number | string;
     /** API password, if one is configured on the device. */
     password?: string;
     /** Room this satellite belongs to (drives `satellites.<room>.*` and the answer context). */
@@ -199,8 +216,17 @@ export interface EsphomeSatellitesOptions {
     /** Silence that ends an utterance, in ms ('' / 0 → the detector default). */
     silenceMs?: number;
     log: ioBroker.Logger;
-    /** Notified on every satellite state transition (idle/listening/processing/speaking/offline). */
-    onStatus?: (device: string, room: string, state: SatelliteState | 'offline') => void;
+    /**
+     * Notified on every satellite state transition (idle/listening/processing/speaking/offline). `host` is the
+     * configured address (`ip`, or `ip:port` for another port than 6053), so the adapter can tell which table row
+     * a satellite belongs to.
+     */
+    onStatus?: (device: string, room: string, state: SatelliteState | 'offline', host: string) => void;
+    /**
+     * Writes replies as MP3 or Opus, for a media player that takes nothing else (ffmpeg in the adapter). Without it
+     * such a device gets FLAC or WAV if it lists one of them, and a warning otherwise.
+     */
+    encodeAudio?: ExternalEncoder;
     /** Notified with the device's wake-word configuration, on connect and after every change. */
     onWakeWords?: (device: string, room: string, config: WakeWordConfig) => void;
     /** Notified once per connect with everything the device exposes besides the voice pipeline. */
@@ -420,16 +446,32 @@ class EsphomeConnection {
     private readonly password: string;
     /** Configured speech threshold, 0 = {@link DEFAULT_SPEECH_LEVEL}. */
     private readonly speechLevel: number;
+    /** `ip`, or `ip:port` for another port than the default — how the adapter recognises the table row. */
+    private readonly address: string;
+    /** The device's friendly name, for entities without a name of their own. */
+    private friendlyName = '';
+    /**
+     * Number of the current pipeline run. A run whose number is no longer current was ended — the device asked to
+     * stop, started over, or went away — and whatever STT, answer or TTS is still in flight for it stays silent.
+     */
+    private run = 0;
+    /** From RUN_START until we sent RUN_END: the device waits for that RUN_END. */
+    private runOpen = false;
+    /** When we last sent an ERROR event (see {@link ERROR_ECHO_MS}). */
+    private errorSentAt = 0;
+    /** The reply format last reported in the log, to log it again only when it changes. */
+    private loggedFormat = '';
 
     constructor(
         device: EsphomeDevice,
         private readonly opts: EsphomeSatellitesOptions,
     ) {
         this.host = device.ip.trim();
-        this.port = device.port || DEFAULT_PORT;
+        this.port = Number(device.port) || DEFAULT_PORT;
         this.room = (device.room || '').trim();
         this.password = device.password || '';
         this.speechLevel = speechLevelOf(device);
+        this.address = esphomeAddress(device);
         this.deviceName = this.host;
     }
 
@@ -491,6 +533,9 @@ class EsphomeConnection {
     private onDisconnected(): void {
         this.clearTimers();
         this.abortCapture();
+        // A reply still being worked out must not land on the next connection, in the middle of another run.
+        this.run++;
+        this.runOpen = false;
         if (this.online) {
             this.opts.log.info(`ESPHome satellite offline: ${this.deviceName}`);
         }
@@ -527,12 +572,12 @@ class EsphomeConnection {
     private setOffline(): void {
         if (this.online) {
             this.online = false;
-            this.opts.onStatus?.(this.deviceName, this.room, 'offline');
+            this.opts.onStatus?.(this.deviceName, this.room, 'offline', this.address);
         }
     }
 
     private status(state: SatelliteState): void {
-        this.opts.onStatus?.(this.deviceName, this.room, state);
+        this.opts.onStatus?.(this.deviceName, this.room, state, this.address);
     }
 
     // ── protocol plumbing ───────────────────────────────────────────────────────────────────────────
@@ -634,6 +679,7 @@ class EsphomeConnection {
             case 'DeviceInfoResponse': {
                 const info = message as DeviceInfoResponse;
                 this.deviceName = info.getName() || this.host;
+                this.friendlyName = info.getFriendlyName?.() || info.getName() || '';
                 this.online = true;
                 this.opts.log.info(
                     `ESPHome satellite online: ${this.deviceName} (${info.getModel()}) @ ${this.host}${this.room ? `, room ${this.room}` : ''}`,
@@ -731,7 +777,7 @@ class EsphomeConnection {
 
             default:
                 if (isListEntityMessage(name)) {
-                    this.entities.addFromAnnouncement(name, message);
+                    this.entities.addFromAnnouncement(name, message, this.friendlyName);
                 } else if (isEntityStateMessage(name)) {
                     const entity = this.entities.applyState(name, message);
                     if (entity) {
@@ -780,13 +826,19 @@ class EsphomeConnection {
 
     private onPipelineRequest(request: VoiceAssistantRequestMsg): void {
         if (!request.getStart()) {
-            this.abortCapture();
+            this.onStopRequest();
             return;
         }
         if (this.capture) {
             this.opts.log.debug(`ESPHome ${this.deviceName}: pipeline already running — ignoring wake`);
             return;
         }
+        if (this.runOpen) {
+            // The device started over while the last request was still being answered: that answer is not
+            // wanted any more, and its events would land in the middle of the new run.
+            this.opts.log.debug(`ESPHome ${this.deviceName}: new wake while answering — dropping the old reply`);
+        }
+        this.run++;
 
         const phrase = request.getWakeWordPhrase();
         this.opts.log.debug(`ESPHome ${this.deviceName}: wake "${phrase || '(follow-up)'}"`);
@@ -837,6 +889,30 @@ class EsphomeConnection {
         }
         this.event(EVENT.STT_START);
         this.event(EVENT.STT_VAD_START);
+    }
+
+    /**
+     * The device asks to end the conversation (`VoiceAssistantRequest{start:false}`): a button, or the wake word
+     * said again while a request is running — that is how ESPHome's voice_assistant stops. While it waits for an
+     * answer, the firmware leaves that state only on our RUN_END; without one it stays "in the conversation", and
+     * every further wake word just sends another stop (field report 2026-11-03).
+     */
+    private onStopRequest(): void {
+        const running = !!this.capture || this.runOpen;
+        this.abortCapture();
+        if (running) {
+            this.run++; // whatever is still being answered stays silent
+            this.opts.log.debug(`ESPHome ${this.deviceName}: the device ended the conversation`);
+            this.event(EVENT.RUN_END);
+            this.status('idle');
+            return;
+        }
+        if (Date.now() - this.errorSentAt < ERROR_ECHO_MS) {
+            return; // the device's own reaction to our ERROR event
+        }
+        // Nothing is open on our side, but the device still thinks so (it missed a RUN_END): end it there too.
+        this.opts.log.debug(`ESPHome ${this.deviceName}: stop outside a conversation — ending it on the device`);
+        this.event(EVENT.RUN_END);
     }
 
     private onAudio(audio: VoiceAssistantAudio): void {
@@ -910,6 +986,15 @@ class EsphomeConnection {
         this.capture = null;
         clearTimeout(capture.timer);
         clearInterval(capture.stallCheck);
+        const run = this.run;
+        /** False once the run was ended elsewhere — then nothing more may be sent for it. */
+        const current = (): boolean => {
+            if (run === this.run) {
+                return true;
+            }
+            this.opts.log.debug(`ESPHome ${this.deviceName}: conversation ended meanwhile — dropping the reply`);
+            return false;
+        };
 
         // Send this first: the device streams until it sees it.
         this.event(EVENT.STT_VAD_END);
@@ -954,14 +1039,16 @@ class EsphomeConnection {
                 );
             }
             this.discard(capture, pcm, end === 'no-speech' ? 'no-speech' : 'silence', vad);
-            this.event(EVENT.RUN_END);
-            this.status('idle');
+            this.endWithoutRequest();
             return;
         }
 
         this.status('processing');
         try {
             const hints = this.opts.getHints ? await this.opts.getHints() : undefined;
+            if (!current()) {
+                return;
+            }
             const speech = prepareForStt(pcm, MIC_SAMPLE_RATE, { startMs: vad.speechStartMs, endLevel: vad.endLevel });
             vad.stt = { fromMs: speech.fromMs, toMs: speech.toMs, gain: speech.gain };
             this.opts.log.debug(
@@ -973,7 +1060,9 @@ class EsphomeConnection {
                 await this.opts.stt.transcribe(speech.pcm, MIC_SAMPLE_RATE, this.opts.language, hints)
             ).trim();
             const sttMs = Date.now() - sttStart;
-            this.event(EVENT.STT_END, { text });
+            if (!current()) {
+                return;
+            }
             if (!text) {
                 // Speech was heard, so the user waits for an answer: say why none comes. Typically a word in another
                 // language than the STT listens in (a German "Ja" to a Russian STT comes back empty).
@@ -981,10 +1070,11 @@ class EsphomeConnection {
                     `Voice Q (${this.deviceName}): (empty) — speech recognition returned no text for ${seconds.toFixed(1)} s of audio`,
                 );
                 this.discard(capture, pcm, 'empty-stt', vad);
-                this.event(EVENT.RUN_END);
-                this.status('idle');
+                // No STT_END without text — like Home Assistant, which reports this case as an error only.
+                this.endWithoutRequest();
                 return;
             }
+            this.event(EVENT.STT_END, { text });
 
             this.event(EVENT.INTENT_START);
             const answer = (
@@ -998,6 +1088,9 @@ class EsphomeConnection {
                     vad: { ...vad, levels: levelProfile(pcm, MIC_SAMPLE_RATE) },
                 })
             ).trim();
+            if (!current()) {
+                return;
+            }
             const followUp = !!answer && this.opts.expectsFollowUp?.(answer, this.deviceName) === true;
             this.event(EVENT.INTENT_END, followUp ? { continue_conversation: '1' } : undefined);
 
@@ -1009,11 +1102,17 @@ class EsphomeConnection {
 
             const ttsStart = Date.now();
             const { pcm: ttsPcm, sampleRate } = await this.opts.tts.synthesize(answer, this.opts.language);
+            if (!current()) {
+                return;
+            }
             this.opts.onSpoken?.(this.deviceName, {
                 ms: Date.now() - ttsStart,
                 audioMs: (ttsPcm.length / 2 / sampleRate) * 1000,
             });
-            const url = this.publish(ttsPcm, sampleRate);
+            const url = await this.publish(ttsPcm, sampleRate);
+            if (!current()) {
+                return;
+            }
 
             this.status('speaking');
             this.event(EVENT.TTS_START, { text: answer });
@@ -1023,11 +1122,26 @@ class EsphomeConnection {
         } catch (e) {
             const reason = (e as Error).message;
             this.opts.log.error(`ESPHome ${this.deviceName}: voice pipeline failed — ${reason}`);
+            if (run !== this.run) {
+                return; // the conversation is over already — nothing to tell the device
+            }
             // Without this the device stays ducked and its LED keeps spinning.
             this.event(EVENT.ERROR, { code: 'pipeline-failed', message: reason });
             this.event(EVENT.RUN_END);
             this.status('idle');
         }
+    }
+
+    /**
+     * End a run that produced no request. A RUN_END right after STT_VAD_END gets lost: the firmware is still stopping
+     * its microphone then, ignores RUN_END in that state, and afterwards waits for an answer that never comes — the
+     * satellite stays in the conversation (field report 2026-11-03). An ERROR event puts it back to idle in any state,
+     * so it goes first, with the code Home Assistant uses for this case.
+     */
+    private endWithoutRequest(): void {
+        this.event(EVENT.ERROR, NO_TEXT_ERROR);
+        this.event(EVENT.RUN_END);
+        this.status('idle');
     }
 
     /**
@@ -1117,12 +1231,12 @@ class EsphomeConnection {
      * Speak a ready PCM buffer on this device (timers, alarms, `tts.text`, jingles). With
      * `startConversation` the microphone opens once the clip has played, to catch the answer to a question.
      */
-    announce(pcm: Buffer, sampleRate: number, startConversation = false): Promise<void> {
+    async announce(pcm: Buffer, sampleRate: number, startConversation = false): Promise<void> {
         if (!this.online || !pcm.length) {
-            return Promise.resolve();
+            return;
         }
         const request = new pb.VoiceAssistantAnnounceRequest();
-        request.setMediaId(this.publish(pcm, sampleRate));
+        request.setMediaId(await this.publish(pcm, sampleRate));
         request.setText('');
         request.setPreannounceMediaId('');
         // Needs feature flag 32 (START_CONVERSATION); on a device without it the clip still plays and
@@ -1131,17 +1245,48 @@ class EsphomeConnection {
         this.status('speaking');
         this.send(request);
         this.armPlaybackTimeout();
-        return Promise.resolve();
+    }
+
+    /** The format replies should have on this device, from what its media player announced. */
+    private replyFormat(): ReplyFormat {
+        const formats = this.entities
+            .list()
+            .filter(e => e.kind === 'mediaPlayer')
+            .flatMap(e => e.formats ?? []);
+        return chooseReplyFormat(formats, !!this.opts.encodeAudio);
     }
 
     /**
-     * Publish PCM as a WAV on the media server and build the URL the device should fetch.
+     * Publish PCM on the media server, in the format the device plays, and build the URL it should fetch.
      *
      * The host matters: on a multi-homed ioBroker machine the device can usually only reach one of the
      * addresses, and the local end of *this* socket is by definition one it can talk to.
      */
-    private publish(pcm: Buffer, sampleRate: number): string {
-        return this.mediaUrl(this.opts.media.publish(pcmToWav(pcm, sampleRate), 'audio/wav'));
+    private async publish(pcm: Buffer, sampleRate: number): Promise<string> {
+        let format = this.replyFormat();
+        let encoded: { body: Buffer; contentType: string };
+        try {
+            encoded = await encodeReply(pcm, sampleRate, format, this.opts.encodeAudio);
+        } catch (e) {
+            // MP3/Opus need ffmpeg. Without it a native format is the only chance, whether the device lists it or not.
+            const fallback: ReplyFormat = { ...format, codec: 'flac', source: `${format.source}, FLAC as fallback` };
+            this.opts.log.warn(
+                `ESPHome ${this.deviceName}: cannot write the reply as ${format.codec.toUpperCase()} ` +
+                    `(${(e as Error).message}) — sending FLAC, which the device may not play. Install ffmpeg.`,
+            );
+            format = fallback;
+            encoded = await encodeReply(pcm, sampleRate, format);
+        }
+        const key = `${format.codec}/${format.sampleRate}/${format.channels}`;
+        if (key !== this.loggedFormat) {
+            this.loggedFormat = key;
+            const what = !format.source
+                ? 'WAV (the device lists no formats)'
+                : `${format.codec.toUpperCase()}${format.sampleRate ? ` ${format.sampleRate} Hz` : ''}` +
+                  `${format.channels === 2 ? ' stereo' : ''} (device: ${format.source})`;
+            this.opts.log.info(`ESPHome ${this.deviceName}: spoken replies as ${what}`);
+        }
+        return this.mediaUrl(this.opts.media.publish(encoded.body, encoded.contentType));
     }
 
     /** Absolute URL of a path on the media server, with a host this device can reach. */
@@ -1166,6 +1311,13 @@ class EsphomeConnection {
     }
 
     private event(type: number, data?: Record<string, string>): void {
+        if (type === EVENT.RUN_START) {
+            this.runOpen = true;
+        } else if (type === EVENT.RUN_END) {
+            this.runOpen = false;
+        } else if (type === EVENT.ERROR) {
+            this.errorSentAt = Date.now();
+        }
         const message = new pb.VoiceAssistantEventResponse();
         message.setEventType(type);
         const items: VoiceAssistantEventData[] = [];

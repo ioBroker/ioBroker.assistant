@@ -235,6 +235,13 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) ESPHome satellites: spoken replies go out in the format the device's media player announces (FLAC at its sample rate, as Home Assistant does; MP3/Opus via ffmpeg). Since ESPHome 2026.10 the player is built with only the codecs its pipelines use, and a WAV reply did not play at all. Devices that announce no formats keep getting WAV
+* (@GermanBluefox) ESPHome satellites: when the device ends the conversation itself (button, or the wake word said again), it now gets its RUN_END. It stayed in the conversation, and every further wake word only sent another stop
+* (@GermanBluefox) ESPHome satellites: an utterance that is dropped (silence, or no text recognised) ends with the error `stt-no-text-recognized` before RUN_END, like Home Assistant. A RUN_END right after the end of speech was lost while the device was still stopping its microphone, and the device waited for an answer forever
+* (@GermanBluefox) ESPHome satellites: device controls get their state names from the entity names again. ESPHome 2026 (API 1.19) no longer sends `object_id`, so every control ended up as `satellites.<id>.controls.` and the log filled with errors. Latin names give the same ids as before
+* (@GermanBluefox) Satellites whose row was deleted from the ESPHome table are removed at the next start, and an offline satellite can be removed in the Satellites tab
+
 ### 1.4.4 (2026-11-03)
 * (@GermanBluefox) ESPHome satellites: a sound only counts as speech once it has lasted about 200 ms. After a false wake a single click opened the gate, and Whisper made "и все просят." of the amplified silence around it
 * (@GermanBluefox) ESPHome satellites: when a device stops sending audio without ending the stream, the recording is closed after 2 seconds instead of the 30-second pipeline timeout, during which the satellite showed "listening"

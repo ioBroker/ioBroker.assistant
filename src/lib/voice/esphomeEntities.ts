@@ -13,6 +13,7 @@
  * ignored, because this adapter drives speakers, not a general ESPHome bridge.
  */
 import { pb, type PbMessage } from './esphomeProto';
+import type { MediaFormat } from './replyFormat';
 
 /** Entity kinds we understand. */
 export type EntityKind =
@@ -48,6 +49,8 @@ export interface EsphomeEntity {
     eventTypes?: string[];
     /** mediaPlayer: whether it accepts a pause command. */
     supportsPause?: boolean;
+    /** mediaPlayer: the audio formats it plays (empty on devices that do not say). */
+    formats?: MediaFormat[];
     /** Last value the device reported; undefined until the first state message. */
     value?: EntityValue;
 }
@@ -302,7 +305,28 @@ const KINDS: KindSpec[] = [
         listMessage: 'ListEntitiesMediaPlayerResponse',
         stateMessage: 'MediaPlayerStateResponse',
         writable: true,
-        describe: m => ({ supportsPause: (m as { getSupportsPause(): boolean }).getSupportsPause() }),
+        describe: m => {
+            const player = m as {
+                getSupportsPause(): boolean;
+                getSupportedFormatsList?(): {
+                    getFormat(): string;
+                    getSampleRate(): number;
+                    getNumChannels(): number;
+                    getPurpose(): number;
+                    getSampleBytes(): number;
+                }[];
+            };
+            return {
+                supportsPause: player.getSupportsPause(),
+                formats: (player.getSupportedFormatsList?.() ?? []).map(f => ({
+                    format: f.getFormat(),
+                    sampleRate: f.getSampleRate(),
+                    channels: f.getNumChannels(),
+                    purpose: f.getPurpose() === 1 ? 'announcement' : 'default',
+                    sampleBytes: f.getSampleBytes(),
+                })),
+            };
+        },
         readState: m => {
             const p = m as { getState(): number; getVolume(): number; getMuted(): boolean };
             return { state: MEDIA_STATES[p.getState()] ?? 'none', volume: float32(p.getVolume()), muted: p.getMuted() };
@@ -330,6 +354,49 @@ const KINDS: KindSpec[] = [
 const BY_LIST_MESSAGE = new Map(KINDS.map(k => [k.listMessage, k]));
 const BY_STATE_MESSAGE = new Map(KINDS.map(k => [k.stateMessage, k]));
 const BY_KIND = new Map(KINDS.map(k => [k.kind, k]));
+
+/**
+ * ESPHome's object id for an entity name, as the firmware computes it (`EntityBase::write_object_id_to`): byte by
+ * byte, a space becomes `_`, A–Z lower case, anything else outside `[-_0-9a-z]` `_`.
+ */
+export function esphomeObjectId(name: string): string {
+    let out = '';
+    for (const byte of Buffer.from(name, 'utf8')) {
+        const c = byte === 0x20 ? 0x5f : byte >= 0x41 && byte <= 0x5a ? byte + 0x20 : byte;
+        const keep = c === 0x2d || c === 0x5f || (c >= 0x30 && c <= 0x39) || (c >= 0x61 && c <= 0x7a);
+        out += keep ? String.fromCharCode(c) : '_';
+    }
+    return out;
+}
+
+/**
+ * The state name of an entity. ESPHome 2026 (API 1.19) no longer sends `object_id` at all — only `key` and `name` —
+ * so it has to be derived again (field report 2026-11-03: every control of a device ended up as
+ * `satellites.<id>.controls.`, an invalid id). A Latin name gets exactly the id older firmware sent, so the
+ * existing objects stay in use. A name in another script would come out as nothing but underscores under ESPHome's
+ * rule, so it keeps its letters (ioBroker ids allow them); without any letter or digit the kind and key are left.
+ *
+ * @param announced `object_id` from the device ('' on current firmware)
+ * @param name the entity's name, or the device's friendly name for an entity without one of its own
+ */
+export function entityObjectId(announced: string, name: string, kind: EntityKind, key: number): string {
+    if (announced) {
+        return announced;
+    }
+    // eslint-disable-next-line no-control-regex
+    if (/^[\x00-\x7f]*$/.test(name) && /[a-z0-9]/i.test(name)) {
+        return esphomeObjectId(name);
+    }
+    const unicode = name
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^\p{Ll}\p{Lu}\p{Nd}_-]/gu, '_');
+    if (/[\p{Ll}\p{Lu}\p{Nd}]/u.test(unicode)) {
+        return unicode;
+    }
+    return `${kind.replace(/[A-Z]/g, c => `_${c.toLowerCase()}`)}_${key.toString(16)}`;
+}
 
 /** True when this message announces an entity kind we handle. */
 export function isListEntityMessage(name: string): boolean {
@@ -364,18 +431,33 @@ export class EntityRegistry {
         this.byObjectId.clear();
     }
 
-    /** Take a `ListEntities…Response`. Returns the entity, or null for a kind we ignore. */
-    addFromAnnouncement(name: string, message: unknown): EsphomeEntity | null {
+    /**
+     * Take a `ListEntities…Response`. Returns the entity, or null for a kind we ignore.
+     *
+     * @param name message name
+     * @param message the announcement
+     * @param deviceName the device's friendly name: an entity without a name of its own (the media player of a
+     *        Voice PE) is named after the device — current firmware sends such a name empty.
+     */
+    addFromAnnouncement(name: string, message: unknown, deviceName = ''): EsphomeEntity | null {
         const spec = BY_LIST_MESSAGE.get(name);
         if (!spec) {
             return null;
         }
         const base = message as ListEntityMsg;
+        const key = base.getKey();
+        const label = base.getName() || deviceName;
+        let objectId = entityObjectId(base.getObjectId(), label, spec.kind, key);
+        const taken = this.byObjectId.get(objectId);
+        if (taken && taken.key !== key) {
+            // Two entities with the same name (on different sub-devices): keep both apart.
+            objectId = `${objectId}_${key.toString(16)}`;
+        }
         const entity: EsphomeEntity = {
             kind: spec.kind,
-            objectId: base.getObjectId(),
-            key: base.getKey(),
-            name: base.getName(),
+            objectId,
+            key,
+            name: label,
             category: CATEGORIES[base.getEntityCategory()] ?? 'none',
             icon: base.getIcon?.() || undefined,
             writable: spec.writable,

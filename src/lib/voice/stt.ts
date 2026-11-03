@@ -45,9 +45,8 @@ export function hintsToPrompt(hints: string[] | undefined, maxChars = 800): stri
     return parts.join(', ');
 }
 
-/** Wrap raw mono 16-bit-signed-LE PCM into a minimal 44-byte WAV container. */
-export function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
-    const numChannels = 1;
+/** Wrap raw 16-bit-signed-LE PCM (mono, or interleaved stereo) into a minimal 44-byte WAV container. */
+export function pcmToWav(pcm: Buffer, sampleRate: number, numChannels = 1): Buffer {
     const bitsPerSample = 16;
     const blockAlign = (numChannels * bitsPerSample) / 8;
     const byteRate = sampleRate * blockAlign;

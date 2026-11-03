@@ -80,7 +80,13 @@ import {
 } from './lib/triggers';
 import { VoiceServer } from './lib/voice/voiceServer';
 import { WyomingServer } from './lib/voice/wyoming';
-import { EsphomeSatellites, type TimerEvent, type WakeWordConfig } from './lib/voice/esphome';
+import {
+    EsphomeSatellites,
+    esphomeAddress,
+    type EsphomeDevice,
+    type TimerEvent,
+    type WakeWordConfig,
+} from './lib/voice/esphome';
 import {
     MEDIA_COMMANDS,
     type EsphomeEntity,
@@ -238,6 +244,11 @@ function valuesMatch(actual: unknown, expected: unknown): boolean {
         return Math.abs(a - b) <= Math.max(1, Math.abs(b) * 0.02);
     }
     return String(actual).trim().toLowerCase() === String(expected).trim().toLowerCase();
+}
+
+/** Whether an ESPHome entity id can be the last part of an ioBroker id (empty ones came from ESPHome 2026). */
+function isControlId(objectId: string): boolean {
+    return !!objectId && !/[^\p{Ll}\p{Lu}\p{Nd}_-]/u.test(objectId);
 }
 
 /**
@@ -437,6 +448,8 @@ class Assistant extends Adapter {
     private readonly satControlsReady = new Map<string, Promise<void>>();
     /** Satellites whose `volume` state exists and is subscribed (see updateSatelliteVolume). */
     private readonly satVolumeEnsured = new Set<string>();
+    /** ESPHome satellite id → the table address already written to its object (see markEsphomeSatellite). */
+    private readonly satEsphomeMarked = new Map<string, string>();
     /** Native (ioBroker) satellite state-id → sender instance id, so we can push announcements back to it. */
     private readonly nativeSatFrom = new Map<string, string>();
     /** Countdown timers / reminders (roadmap #2); mirrored into `timers.*` states. Null until onReady. */
@@ -718,6 +731,10 @@ class Assistant extends Adapter {
     private async startEsphome(llmKey: LlmKey | null): Promise<void> {
         const cfg = this.config;
         const devices = (cfg.esphomeDevices || []).filter(d => d?.ip?.trim());
+        // Rows deleted from the table leave their satellite objects behind otherwise — forever offline in the list.
+        await this.removeStaleEsphomeSatellites(devices).catch(e =>
+            this.log.warn(`Could not clean up removed ESPHome satellites: ${(e as Error).message}`),
+        );
         if (!devices.length) {
             this.log.warn('ESPHome satellites are enabled, but no device is configured.');
             return;
@@ -775,11 +792,12 @@ class Assistant extends Adapter {
             mediaHost: (cfg.esphomeMediaHost || '').trim(),
             silenceMs: cfg.esphomeSilenceMs || 0,
             log: this.log,
-            onStatus: (device, room, state) => {
-                this.updateSatelliteState(device, room, state).catch(e =>
-                    this.log.debug(`satellite state update failed: ${(e as Error).message}`),
-                );
+            onStatus: (device, room, state, address) => {
+                this.updateSatelliteState(device, room, state)
+                    .then(() => this.markEsphomeSatellite(device, room, address))
+                    .catch(e => this.log.debug(`satellite state update failed: ${(e as Error).message}`));
             },
+            encodeAudio: (pcm, sampleRate, target) => this.runFfmpegEncode(pcm, sampleRate, target),
             onWakeWords: (device, room, config) => {
                 this.updateSatelliteWakeWords(device, room, config).catch(e =>
                     this.log.debug(`satellite wake word update failed: ${(e as Error).message}`),
@@ -1304,6 +1322,97 @@ class Assistant extends Adapter {
     }
 
     /**
+     * Note which table row an ESPHome satellite belongs to (`native.esphome` on `satellites.<id>`) and show its
+     * address in the host column. That is what lets {@link removeStaleEsphomeSatellites} remove it once the row is
+     * deleted — the id alone is the room or the device name and says nothing about the configuration.
+     */
+    private async markEsphomeSatellite(device: string, room: string, address: string): Promise<void> {
+        const id = await this.ensureSatelliteObjects(device, room);
+        if (this.satEsphomeMarked.get(id) === address) {
+            return;
+        }
+        this.satEsphomeMarked.set(id, address);
+        const obj = await this.getObjectAsync(`satellites.${id}`);
+        if ((obj?.native as { esphome?: string } | undefined)?.esphome !== address) {
+            await this.extendObjectAsync(`satellites.${id}`, { native: { esphome: address } });
+        }
+        await this.setStateAsync(`satellites.${id}.host`, { val: address, ack: true });
+    }
+
+    /**
+     * Remove the objects of ESPHome satellites whose row was deleted from the table (or whose room changed, which
+     * changes the id). Runs before the devices connect, so nothing is re-created meanwhile.
+     *
+     * A satellite marked by {@link markEsphomeSatellite} is matched by its address. One from an older version
+     * carries no mark; it is recognised by `wakeWords` (only ESPHome satellites have it) and removed only when
+     * every row has a room — otherwise a row without one could be it, under its device name.
+     */
+    private async removeStaleEsphomeSatellites(devices: EsphomeDevice[]): Promise<void> {
+        const expected = new Map<string, string | null>(
+            devices.map(d => [esphomeAddress(d), d.room?.trim() ? this.satelliteStateId('', d.room) : null]),
+        );
+        const allHaveRooms = [...expected.values()].every(id => id !== null);
+        const roomIds = new Set([...expected.values()].filter((id): id is string => !!id));
+        const prefix = `${this.namespace}.satellites.`;
+        const view = await this.getObjectViewAsync('system', 'device', {
+            startkey: prefix,
+            endkey: `${prefix}香`,
+        });
+        for (const row of view.rows) {
+            const id = row.id.slice(prefix.length);
+            if (!id || id.includes('.')) {
+                continue;
+            }
+            const address = (row.value?.native as { esphome?: string } | undefined)?.esphome;
+            let reason = '';
+            if (address) {
+                if (!expected.has(address)) {
+                    reason = `${address} is no longer in the ESPHome satellites table`;
+                } else {
+                    const want = expected.get(address);
+                    if (want && want !== id) {
+                        reason = `${address} is now in room ${want}`;
+                    }
+                }
+            } else if (allHaveRooms && !roomIds.has(id) && (await this.getObjectAsync(`satellites.${id}.wakeWords`))) {
+                reason = 'no row of the ESPHome satellites table has this room any more';
+            }
+            if (reason) {
+                this.log.info(`Satellite ${id} removed: ${reason}`);
+                await this.forgetSatellite(id);
+            }
+        }
+    }
+
+    /** Delete a satellite's objects (Satellites tab). Refused while it is online: it would be re-created at once. */
+    private async deleteSatellite(id: string): Promise<void> {
+        if (!id || /[^\w-]/.test(id)) {
+            throw new Error(`invalid satellite id "${id}"`);
+        }
+        if (!(await this.getObjectAsync(`satellites.${id}`))) {
+            throw new Error(`no satellite ${id}`);
+        }
+        const alive = await this.getStateAsync(`satellites.${id}.alive`);
+        if (alive?.val === true) {
+            throw new Error(`satellite ${id} is online`);
+        }
+        await this.forgetSatellite(id);
+        this.log.info(`Satellite ${id} deleted`);
+    }
+
+    /** Drop the object tree of one satellite and everything cached about it. */
+    private async forgetSatellite(id: string): Promise<void> {
+        await this.delObjectAsync(`satellites.${id}`, { recursive: true });
+        this.satStatesEnsured.delete(id);
+        this.satWakeWordStatesEnsured.delete(id);
+        this.satVolumeEnsured.delete(id);
+        this.satControlsReady.delete(id);
+        this.satEsphomeMarked.delete(id);
+        this.satDeviceById.delete(id);
+        this.dndById.delete(id);
+    }
+
+    /**
      * Publish a satellite's wake-word configuration and let it be changed from ioBroker.
      *
      * Only ESPHome satellites have this: the wake word runs on the device, and the ESPHome API lets the
@@ -1531,6 +1640,10 @@ class Assistant extends Adapter {
         });
 
         for (const entity of entities) {
+            if (!isControlId(entity.objectId)) {
+                this.log.debug(`Satellite ${device}: no usable id for "${entity.name}" (${entity.kind}) — skipped`);
+                continue;
+            }
             const id = `${base}.${entity.objectId}`;
             const name = entity.name || entity.objectId;
             if (entity.kind === 'mediaPlayer') {
@@ -1681,6 +1794,9 @@ class Assistant extends Adapter {
 
     /** Write one entity's current value into its state(s). Always acked — this is the device talking. */
     private async writeSatelliteControl(satId: string, entity: EsphomeEntity): Promise<void> {
+        if (!isControlId(entity.objectId)) {
+            return; // never created (see buildSatelliteControls)
+        }
         const base = `satellites.${satId}.controls.${entity.objectId}`;
         if (entity.kind === 'mediaPlayer') {
             const v = entity.value as MediaPlayerValue;
@@ -2175,7 +2291,43 @@ class Assistant extends Adapter {
         });
     }
 
-    /** Invalidate the cached device/room/function listings when a room/function enum changes. */
+    /**
+     * Encode mono 16-bit PCM as MP3 or Opus (Ogg) via ffmpeg — for an ESPHome media player that was built with
+     * nothing but that decoder. FLAC and WAV need no tool and are written in `replyFormat.ts`.
+     */
+    private runFfmpegEncode(
+        pcm: Buffer,
+        sampleRate: number,
+        target: { codec: 'mp3' | 'opus'; sampleRate: number; channels: number },
+    ): Promise<Buffer> {
+        return new Promise((resolve, reject) => {
+            // prettier-ignore
+            const input = ['-hide_banner', '-loglevel', 'error', '-f', 's16le', '-ar', String(sampleRate), '-ac', '1', '-i', 'pipe:0'];
+            // prettier-ignore
+            const output = target.codec === 'mp3'
+                ? ['-c:a', 'libmp3lame', '-b:a', '128k', '-f', 'mp3']
+                : ['-c:a', 'libopus', '-b:a', '64k', '-f', 'ogg'];
+            // Opus runs at 48/24/16/12/8 kHz only; anything else would make libopus refuse.
+            const rate =
+                target.codec === 'opus' && ![48000, 24000, 16000, 12000, 8000].includes(target.sampleRate)
+                    ? 48000
+                    : target.sampleRate;
+            const args = [...input, '-ar', String(rate), '-ac', String(target.channels), ...output, '-'];
+            const proc = spawn('ffmpeg', args);
+            const chunks: Buffer[] = [];
+            proc.stdout.on('data', (d: Buffer) => chunks.push(d));
+            proc.stderr.on('data', (d: Buffer) => this.log.debug(`ffmpeg: ${String(d).trim()}`));
+            proc.on('error', e => reject(new Error(`ffmpeg failed: ${e.message}`)));
+            proc.on('close', code =>
+                code === 0 && chunks.length
+                    ? resolve(Buffer.concat(chunks))
+                    : reject(new Error(`ffmpeg exited with code ${code}`)),
+            );
+            proc.stdin.on('error', () => {}); // ignore EPIPE if ffmpeg exits early
+            proc.stdin.end(pcm);
+        });
+    }
+
     /** Vendor and key of the cloud LLM: speech of the same vendor (OpenAI, OpenRouter) reuses the key. */
     private async speechLlmKey(): Promise<LlmKey | null> {
         const provider = this.config.provider || 'openai';
@@ -2867,6 +3019,23 @@ class Assistant extends Adapter {
                 payload = { error: `${m.control} on ${m.device} rejected the value (see the log)` };
             } else {
                 payload = { ok: true };
+            }
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, payload, obj.callback);
+            }
+            return;
+        }
+
+        // Satellites tab: forget a satellite that is gone. message = { id } (the state id under `satellites.`).
+        if (obj.command === 'deleteSatellite') {
+            const raw = (obj.message as { id?: unknown } | undefined)?.id;
+            const id = typeof raw === 'string' ? raw : '';
+            let payload: Record<string, unknown>;
+            try {
+                await this.deleteSatellite(id);
+                payload = { ok: true };
+            } catch (e) {
+                payload = { error: (e as Error).message };
             }
             if (obj.callback) {
                 this.sendTo(obj.from, obj.command, payload, obj.callback);

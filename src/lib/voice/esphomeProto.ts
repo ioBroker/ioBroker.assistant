@@ -123,6 +123,8 @@ export interface AuthenticationResponse {
 }
 export interface DeviceInfoResponse {
     getName(): string;
+    /** What the device is called in the UI; entities without a name of their own are named after it. */
+    getFriendlyName(): string;
     getModel(): string;
     getEsphomeVersion(): string;
     getMacAddress(): string;

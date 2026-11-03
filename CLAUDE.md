@@ -19,6 +19,31 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **ESPHome 2026.10 / API 1.19 (Feldbericht Alex F., 2026-11-03)** — gegen den ESPHome-dev-Quellcode geprüft
+  (`voice_assistant.cpp`, `api_connection.cpp`, `entity_base.cpp`, `audio.cpp`), nicht gegen das echte Gerät.
+  (1) **Antwortformat** (`replyFormat.ts`, `flac.ts`): der Media-Player wird nur noch mit den Codecs seiner
+  Pipelines gebaut (`USE_AUDIO_WAV_SUPPORT` fehlt dann) → WAV spielte nicht. Wir lesen `supported_formats` des
+  Media-Players (`EsphomeEntity.formats`) und nehmen wie HA das **Announcement-Format** samt Rate/Kanälen:
+  FLAC/WAV selbst (FLAC mit VERBATIM-Subframes, CRC/MD5, Hann-Sinc-Resampler mit Phasentabelle, ~50 ms für 10 s),
+  MP3/Opus per ffmpeg (`main.runFfmpegEncode`, Option `encodeAudio`), ohne ffmpeg FLAC mit Warnung. Gerät ohne
+  Liste (linux-voice-assistant/ThirdReality) → WAV wie bisher. Erkennung im Gerät per Content-Type, sonst
+  Endung → `MediaServer.publish` vergibt `.flac`/`.opus`/`.mp3`. (2) **Stopp der Platine**: in `AWAITING_RESPONSE`
+  schickt `request_stop()` nur `start:false` und wartet auf unser RUN_END → `onStopRequest()` antwortet mit RUN_END
+  und verwirft die laufende Antwort (`run`-Zähler, `current()` nach jedem `await` in `finishCapture`; neuer Wake
+  und Disconnect zählen auch hoch). Stopp ohne offenen Lauf → trotzdem RUN_END, außer ≤ `ERROR_ECHO_MS` nach
+  unserem ERROR (darauf antwortet die Firmware selbst mit `signal_stop_`). (3) **RUN_END direkt nach STT_VAD_END
+  geht verloren** (Zustand `STOP_MICROPHONE`, ältere Firmware; dev hat inzwischen einen Zweig dafür) → beim Verwerfen
+  und bei leerer STT `endWithoutRequest()`: ERROR `stt-no-text-recognized` (wie HA; Voice-PE-YAML spielt dafür
+  keinen Fehlerton) + RUN_END, **kein** STT_END ohne Text. (4) **Kein `object_id` mehr** (nur `key`+`name`;
+  Entity ohne eigenen Namen → `name` leer) → `entityObjectId()`: ASCII-Name nach Firmware-Regel
+  (`esphomeObjectId`, = alte ids), sonst Buchstaben behalten (`\p{Ll}\p{Lu}\p{Nd}`), sonst `<kind>_<key>`; ohne
+  Namen der `friendly_name` aus `DeviceInfoResponse`. `main.isControlId()` überspringt unbrauchbare ids.
+  (5) **Satelliten aufräumen**: `onStatus` liefert die Tabellen-Adresse (`esphomeAddress`: `ip` bzw. `ip:port`),
+  `markEsphomeSatellite` schreibt sie nach `native.esphome` + State `host`; `removeStaleEsphomeSatellites` (vor dem
+  Verbinden) löscht markierte Satelliten ohne Zeile/mit anderem Raum, alte unmarkierte nur mit `wakeWords` und wenn
+  jede Zeile einen Raum hat. sendTo `deleteSatellite {id}` (nicht, solange `alive`), GUI: 🗑 statt ⚙ bei offline.
+  Tests: `replyFormat.test.js` (eigener FLAC-Decoder + ffmpeg-Gegenprobe), `esphome.test.js` (Fake-Gerät:
+  `objectIds:false`, `formats`, `stopAfterVadEndMs`, `sendStop()`).
 - **Skript-Anfragen nur an die Cloud** — `nlu.ts.mentionsScript()` (`SCRIPT_RE`: `skript` überall inkl.
   Komposita, `script` nur am Wortanfang bzw. `java|type`-Präfix — sonst „description"/„subscription" —,
   `скрипт` mit Flexion, `blockly`). `main.ts.cloudOnlyReason()` → `'script'`, oder `'scriptReply'`, wenn das

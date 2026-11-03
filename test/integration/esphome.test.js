@@ -473,7 +473,23 @@ test('media server serves registered files until they are removed, and nothing e
  * Minimal stand-in for `linux-voice-assistant-cpp`: answers the handshake, fires a wake word, and —
  * like the real firmware — keeps streaming microphone audio until the server sends STT_VAD_END.
  */
-function fakeDevice({ speechMs = 600, chirpMs = 600, speechRms = 0, stallAfterMs = 0, wakeWords = ['okay_nabu'] }) {
+/**
+ * A fake ESPHome satellite over loopback TCP.
+ *
+ * @param objectIds false = like ESPHome 2026 (API 1.19): announcements without `object_id`
+ * @param formats `supported_formats` of a media player, as [format, sampleRate, channels, purpose]; null = no player
+ * @param stopAfterVadEndMs ask to stop (`VoiceAssistantRequest{start:false}`) this long after STT_VAD_END
+ */
+function fakeDevice({
+    speechMs = 600,
+    chirpMs = 600,
+    speechRms = 0,
+    stallAfterMs = 0,
+    wakeWords = ['okay_nabu'],
+    objectIds = true,
+    formats = null,
+    stopAfterVadEndMs = 0,
+}) {
     const state = {
         events: [],
         fetched: [],
@@ -499,7 +515,19 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, speechRms = 0, stallAfterMs
         let queue = Promise.resolve();
         let pump = null;
         let elapsed = 0;
-        const send = m => socket.write(encode(m));
+        const send = m => {
+            // Current firmware sends no object ids (API 1.19): every announcement goes out without one.
+            if (!objectIds && typeof m.setObjectId === 'function') {
+                m.setObjectId('');
+            }
+            socket.write(encode(m));
+        };
+        /** Like the firmware's `signal_stop_()`: the device ends the conversation from its side. */
+        state.sendStop = () => {
+            const m = new pb.VoiceAssistantRequest();
+            m.setStart(false);
+            send(m);
+        };
 
         const stop = why => {
             if (pump) {
@@ -612,6 +640,28 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, speechRms = 0, stallAfterMs
         };
         const sendEntities = () => {
             sendSensors();
+            if (formats) {
+                // Like a Voice PE: the media player has no name of its own, so it is named after the device.
+                const player = new pb.ListEntitiesMediaPlayerResponse();
+                player.setKey(40);
+                player.setName(objectIds ? 'Fake Speaker' : '');
+                if (objectIds) {
+                    player.setObjectId('fake_speaker');
+                }
+                player.setSupportsPause(true);
+                player.setSupportedFormatsList(
+                    formats.map(([format, rate, channels, purpose]) => {
+                        const f = new pb.MediaPlayerSupportedFormat();
+                        f.setFormat(format);
+                        f.setSampleRate(rate);
+                        f.setNumChannels(channels);
+                        f.setPurpose(purpose === 'announcement' ? 1 : 0);
+                        f.setSampleBytes(2);
+                        return f;
+                    }),
+                );
+                send(player);
+            }
             for (const e of ENTITIES) {
                 if (e.kind === 'switch') {
                     const m = new pb.ListEntitiesSwitchResponse();
@@ -663,6 +713,7 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, speechRms = 0, stallAfterMs
             } else if (name === 'DeviceInfoRequest') {
                 const reply = new pb.DeviceInfoResponse();
                 reply.setName('fake-speaker');
+                reply.setFriendlyName('Fake Speaker');
                 reply.setModel('fake');
                 send(reply);
             } else if (name === 'SubscribeVoiceAssistantRequest') {
@@ -772,9 +823,12 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, speechRms = 0, stallAfterMs
             } else if (name === 'VoiceAssistantEventResponse') {
                 const type = message.getEventType();
                 const data = Object.fromEntries(message.getDataList().map(d => [d.getName(), d.getValue()]));
-                state.events.push({ type, data });
+                state.events.push({ type, data, at: Date.now() });
                 if (type === 12 || type === 4) {
                     stop(`event ${type}`);
+                }
+                if (type === 12 && stopAfterVadEndMs) {
+                    setTimeout(() => state.sendStop(), stopAfterVadEndMs);
                 }
                 if (type === 8 && data.url) {
                     void fetch(data.url).then(r => {
@@ -1006,6 +1060,11 @@ test('a false wake closes the mic after 5 s instead of the full 12 s cap', async
     assert.ok(discarded.pcm.length >= 5 * 16000 * 2, 'the full recording, chirp included');
     assert.ok(discarded.vad.peak > discarded.vad.analysedPeak, 'the chirp is in peak, not in analysedPeak');
     assert.equal(discarded.vad.startLevel, 250);
+    // A RUN_END right behind STT_VAD_END is lost while the firmware stops its microphone; the error is not.
+    const types = device.events.map(e => e.type);
+    const vadEnd = types.indexOf(12);
+    assert.deepEqual(types.slice(vadEnd), [12, 0, 2], 'STT_VAD_END, ERROR, RUN_END');
+    assert.equal(device.events[vadEnd + 1].data.code, 'stt-no-text-recognized');
 });
 
 test('a device that stops sending audio is closed after 2 s instead of the 30 s pipeline timeout', async t => {
@@ -1091,6 +1150,12 @@ test('a recording the speech recognition returns empty is reported for diagnosis
     assert.equal(discarded.length, 1);
     assert.equal(discarded[0].reason, 'empty-stt');
     assert.ok(discarded[0].vad.analysedPeak >= discarded[0].vad.startLevel, 'it did sound like speech');
+    // Like Home Assistant: no STT_END without text, an error the firmware takes to idle in any state, then RUN_END.
+    const types = device.events.map(e => e.type);
+    assert.ok(!types.includes(4), 'no STT_END without text');
+    const error = device.events.find(e => e.type === 0);
+    assert.equal(error?.data.code, 'stt-no-text-recognized');
+    assert.ok(types.indexOf(0) < types.lastIndexOf(2), 'the error comes before RUN_END');
 });
 
 test('announce reaches a connected satellite as a media url', async t => {
@@ -1466,4 +1531,163 @@ test('timers are mirrored to the satellite as started / updated / cancelled', as
     assert.equal(device.timerEvents[0].name, 'Nudeln');
     assert.equal(device.timerEvents[0].total, 600);
     assert.equal(satellites.timerEvent('no-such-device', timer), 0);
+});
+
+// ── conversation end, reply format, entities of current firmware ────────────
+
+/** Wait until `check()` holds (or the deadline passes) — the fake device runs on real timers. */
+async function until(check, ms = 8000) {
+    for (const deadline = Date.now() + ms; !check() && Date.now() < deadline; ) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+}
+
+test('the device ending the conversation while the answer is worked out gets RUN_END, and no reply', async t => {
+    // The firmware waits for an answer after STT_VAD_END; a wake word then sends `start:false` and nothing else.
+    const device = fakeDevice({ speechMs: 600, stopAfterVadEndMs: 100 });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+    const seen = { answered: false, spoken: false, statuses: [] };
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Gast' }],
+        language: 'de',
+        stt: {
+            transcribe: async () => {
+                await new Promise(resolve => setTimeout(resolve, 600)); // still recognising when the stop comes
+                return 'licht an';
+            },
+        },
+        tts: {
+            synthesize: async () => {
+                seen.spoken = true;
+                return { pcm: Buffer.alloc(3200), sampleRate: 16000 };
+            },
+        },
+        answer: async () => {
+            seen.answered = true;
+            return 'Ok';
+        },
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        onStatus: (_d, _r, status) => seen.statuses.push(status),
+        expectsFollowUp: () => false,
+    });
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    await until(() => device.events.some(e => e.type === 2));
+    await new Promise(resolve => setTimeout(resolve, 1200)); // let the STT finish: it must stay silent
+
+    const types = device.events.map(e => e.type);
+    const vadEnd = types.indexOf(12);
+    assert.ok(vadEnd >= 0, 'the utterance was closed');
+    assert.deepEqual(types.slice(vadEnd), [12, 2], 'RUN_END answers the stop, nothing follows');
+    assert.equal(seen.answered, false, 'the request is not answered any more');
+    assert.equal(seen.spoken, false);
+    assert.equal(seen.statuses.at(-1), 'idle');
+});
+
+test('a stop outside a conversation ends it on the device, but the echo of our own error is left alone', async t => {
+    const device = fakeDevice({ speechMs: 600 });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Gast' }],
+        language: 'de',
+        stt: { transcribe: async () => '' },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(3200), sampleRate: 16000 }) },
+        answer: async () => 'Ok',
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        expectsFollowUp: () => false,
+    });
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    await until(() => device.events.some(e => e.type === 2));
+    const runEnds = () => device.events.filter(e => e.type === 2).length;
+    assert.equal(runEnds(), 1);
+
+    // The firmware answers our error with `signal_stop_()` — that one needs no reply.
+    device.sendStop();
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(runEnds(), 1, 'no second RUN_END for the echo of the error');
+
+    // Later, a device still waiting in the conversation (it missed a RUN_END) asks to stop: end it there.
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    device.sendStop();
+    await until(() => runEnds() === 2, 2000);
+    assert.equal(runEnds(), 2, 'a stop outside a conversation gets its RUN_END');
+});
+
+test('replies go out as FLAC at the rate the media player asks for, and ids are derived without object_id', async t => {
+    // ESPHome 2026.10: the player decodes only what its pipelines use, and announcements carry no object_id.
+    const device = fakeDevice({
+        speechMs: 600,
+        objectIds: false,
+        formats: [
+            ['mp3', 44100, 2, 'default'],
+            ['flac', 48000, 1, 'announcement'],
+        ],
+    });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+    const seen = { info: [], entities: [] };
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Gast' }],
+        language: 'de',
+        // A slow STT: the reply is published after the entity list has arrived, as on a real device.
+        stt: {
+            transcribe: async () => {
+                await new Promise(resolve => setTimeout(resolve, 300));
+                return 'wie spät ist es';
+            },
+        },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(4800), sampleRate: 24000 }) },
+        answer: async () => 'Es ist zwölf',
+        media,
+        silenceMs: 300,
+        log: { ...silentLog, info: m => seen.info.push(m) },
+        onEntities: (_d, _r, entities) => (seen.entities = entities),
+        expectsFollowUp: () => false,
+    });
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    await until(() => device.fetched.length > 0);
+
+    assert.deepEqual(
+        seen.entities.map(e => e.objectId).sort(),
+        // The fake's own ids do not all come from the names (mic_noise = 'Noise Suppression'); a real device's do.
+        ['bssid', 'fake_speaker', 'mic_gain', 'noise_suppression', 'occupancy', 'temperature', 'thinking_sound'],
+        'ids from the names, as older firmware sent them; the nameless player is named after the device',
+    );
+    const ttsEnd = device.events.find(e => e.type === 8);
+    assert.match(ttsEnd.data.url, /\/media\/[0-9a-f]+\.flac$/);
+    const body = device.fetched.at(-1).body;
+    assert.equal(body.subarray(0, 4).toString('latin1'), 'fLaC');
+    const packed = body.readBigUInt64BE(8 + 10);
+    assert.equal(Number(packed >> 44n), 48000, 'at the rate of the announcement format');
+    assert.equal(Number(packed & 0xfffffffffn), 4800, '100 ms of 24 kHz speech is 4800 samples at 48 kHz');
+    assert.ok(
+        seen.info.some(m => /spoken replies as FLAC 48000 Hz/.test(m)),
+        `the log says which format: ${seen.info.join(' | ')}`,
+    );
 });
