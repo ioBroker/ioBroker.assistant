@@ -235,7 +235,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.4.2 (2026-11-03)
 * (@GermanBluefox) ESPHome satellites: after 2.5 seconds of speech a pause may be half as long again before the request ends, so a pause for thought no longer cuts off a longer request. Short commands close as fast as before
 * (@GermanBluefox) ESPHome satellites: speech recognition gets the recording without the device's chirp or beep and without the silence around the speech, and quiet speech is amplified (up to ×10). Whisper made "Продолжение следует..." of the beep and the silence
 * (@GermanBluefox) The speech-to-text fallback also steps in when the first engine returns no text for speech
