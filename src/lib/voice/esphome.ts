@@ -37,9 +37,10 @@ import {
     type VoiceAssistantRequestMsg,
 } from './esphomeProto';
 import { EntityRegistry, isEntityStateMessage, isListEntityMessage, type EsphomeEntity } from './esphomeEntities';
-import { SpeechDetector, type SpeechEnd, type Bytes } from './vad';
+import { SpeechDetector, type SpeechEnd, type Bytes, type VadReport } from './vad';
+import { prepareForStt } from './speechAudio';
 import { pcmToWav } from './stt';
-import type { DiscardedCapture, DiscardReason } from './captures';
+import { levelProfile, type DiscardedCapture, type DiscardReason } from './captures';
 import type { SttEngine } from './stt';
 import type { TtsEngine } from './tts';
 import type { SatelliteState } from './protocol';
@@ -79,8 +80,9 @@ const MIC_SAMPLE_RATE = 16000;
  *
  * so the chirp is still above the gate at 500 ms and only clears it around 550–600. 600 ms is the
  * smallest value that rejects a chirp-only wake while still detecting the speech in every one of the
- * four captures, with no change to when the utterance closes. The audio itself is untouched and still
- * goes to STT in full, so a speaker who starts inside this window loses nothing but a late gate open.
+ * four captures, with no change to when the utterance closes. Only the analysis skips it: STT gets the audio
+ * from 400 ms before the detected speech (`speechAudio.ts`), so a speaker who starts inside this window loses
+ * nothing but a late gate open.
  */
 const WAKE_CHIRP_MS = 600;
 /** Default API port of an ESPHome device. */
@@ -106,6 +108,15 @@ export const DEFAULT_SPEECH_LEVEL = 250;
 const NO_SPEECH_MS = 5000;
 /** The same after a follow-up question re-opened the mic: the user may need a moment to think. */
 const NO_SPEECH_FOLLOW_UP_MS = 8000;
+/** Silence that ends an utterance when the configuration leaves it empty. */
+const DEFAULT_SILENCE_MS = 900;
+/**
+ * After this much speech a pause may be {@link LONG_PAUSE_FACTOR} times as long before the utterance ends: whoever
+ * talks that long is dictating a request and pauses to think, while "Licht an" should still close quickly. Field
+ * report 2026-11-03: "Я хочу, чтоб ты создал задачу, чтобы утром говорить мне…" was cut off right there.
+ */
+const LONG_REQUEST_MS = 2500;
+const LONG_PAUSE_FACTOR = 1.5;
 /** Silence threshold as a share of the speech threshold — keeps the default pair 250/150. */
 const SILENCE_SHARE = 0.6;
 /**
@@ -155,7 +166,7 @@ export interface EsphomeSatellitesOptions {
             wakeWord: string;
             sttMs: number;
             audioMs: number;
-            vad: { peak: number; noiseFloor: number; startLevel: number; endLevel: number };
+            vad: VadReport;
         },
     ) => Promise<string>;
     /** The reply was synthesised: how long that took and how long it plays (for the request journal). */
@@ -770,11 +781,14 @@ class EsphomeConnection {
         }, PIPELINE_TIMEOUT_MS);
         timer.unref();
 
+        const silenceMs = this.opts.silenceMs || DEFAULT_SILENCE_MS;
         this.capture = {
             chunks: [],
             detector: new SpeechDetector({
                 sampleRate: MIC_SAMPLE_RATE,
-                silenceMs: this.opts.silenceMs || undefined,
+                silenceMs,
+                longSilenceMs: Math.round(silenceMs * LONG_PAUSE_FACTOR),
+                longAfterMs: LONG_REQUEST_MS,
                 // Microphone gain differs wildly between these devices, so fixed RMS levels do not
                 // travel: derive them from the room instead, once the wake chirp is out of the way.
                 skipMs: WAKE_CHIRP_MS,
@@ -817,13 +831,11 @@ class EsphomeConnection {
         }
     }
 
-    /** Stop the mic stream and run STT → answer → TTS for what was captured. */
     /** Hand a recording that never became a request to {@link EsphomeSatellitesOptions.onDiscarded}. */
-    private discard(capture: Capture, pcm: Bytes, reason: DiscardReason): void {
+    private discard(capture: Capture, pcm: Bytes, reason: DiscardReason, vad: VadReport): void {
         if (!this.opts.onDiscarded || !pcm.length) {
             return;
         }
-        const d = capture.detector;
         try {
             this.opts.onDiscarded({
                 device: this.deviceName,
@@ -832,19 +844,15 @@ class EsphomeConnection {
                 reason,
                 pcm,
                 sampleRate: MIC_SAMPLE_RATE,
-                vad: {
-                    peak: Math.round(d.peak),
-                    analysedPeak: Math.round(d.analysedPeak),
-                    noiseFloor: Math.round(d.noiseFloor),
-                    startLevel: Math.round(d.startLevel),
-                    endLevel: Math.round(d.endLevel),
-                },
+                // The store writes its own level profile next to it.
+                vad: { ...vad, levels: undefined },
             });
         } catch (e) {
             this.opts.log.debug(`ESPHome ${this.deviceName}: keeping the recording failed — ${(e as Error).message}`);
         }
     }
 
+    /** Stop the mic stream and run STT → answer → TTS for what was captured. */
     private async finishCapture(end?: SpeechEnd): Promise<void> {
         const capture = this.capture;
         if (!capture || capture.closed) {
@@ -859,10 +867,14 @@ class EsphomeConnection {
 
         const pcm = Buffer.concat(capture.chunks);
         const seconds = pcm.length / 2 / MIC_SAMPLE_RATE;
+        const vad: VadReport = { ...capture.detector.report(), end: end ?? 'stream' };
+        const startedAt =
+            vad.speechStartMs !== undefined ? `, speech from ${(vad.speechStartMs / 1000).toFixed(2)} s` : '';
+        const endedBy = vad.end === 'speech-end' ? `ended after ${vad.silenceMs} ms of silence` : `ended by ${vad.end}`;
         this.opts.log.debug(
             `ESPHome ${this.deviceName}: captured ${seconds.toFixed(2)} s ` +
-                `(peak RMS ${Math.round(capture.detector.peak)}, noise floor ${Math.round(capture.detector.noiseFloor)}, ` +
-                `speech/silence gate ${Math.round(capture.detector.startLevel)}/${Math.round(capture.detector.endLevel)})`,
+                `(peak RMS ${vad.peak}, noise floor ${vad.noiseFloor}, speech/silence gate ${vad.startLevel}/${vad.endLevel}` +
+                `${startedAt}, ${endedBy})`,
         );
 
         if (!pcm.length || !capture.detector.sawSpeech) {
@@ -886,7 +898,7 @@ class EsphomeConnection {
                     } — dropping the utterance`,
                 );
             }
-            this.discard(capture, pcm, end === 'no-speech' ? 'no-speech' : 'silence');
+            this.discard(capture, pcm, end === 'no-speech' ? 'no-speech' : 'silence', vad);
             this.event(EVENT.RUN_END);
             this.status('idle');
             return;
@@ -895,8 +907,16 @@ class EsphomeConnection {
         this.status('processing');
         try {
             const hints = this.opts.getHints ? await this.opts.getHints() : undefined;
+            const speech = prepareForStt(pcm, MIC_SAMPLE_RATE, { startMs: vad.speechStartMs, endLevel: vad.endLevel });
+            vad.stt = { fromMs: speech.fromMs, toMs: speech.toMs, gain: speech.gain };
+            this.opts.log.debug(
+                `ESPHome ${this.deviceName}: speech recognition gets ${(speech.fromMs / 1000).toFixed(2)}–` +
+                    `${(speech.toMs / 1000).toFixed(2)} s${speech.gain > 1 ? `, amplified ×${speech.gain}` : ''}`,
+            );
             const sttStart = Date.now();
-            const text = (await this.opts.stt.transcribe(pcm, MIC_SAMPLE_RATE, this.opts.language, hints)).trim();
+            const text = (
+                await this.opts.stt.transcribe(speech.pcm, MIC_SAMPLE_RATE, this.opts.language, hints)
+            ).trim();
             const sttMs = Date.now() - sttStart;
             this.event(EVENT.STT_END, { text });
             if (!text) {
@@ -905,7 +925,7 @@ class EsphomeConnection {
                 this.opts.log.info(
                     `Voice Q (${this.deviceName}): (empty) — speech recognition returned no text for ${seconds.toFixed(1)} s of audio`,
                 );
-                this.discard(capture, pcm, 'empty-stt');
+                this.discard(capture, pcm, 'empty-stt', vad);
                 this.event(EVENT.RUN_END);
                 this.status('idle');
                 return;
@@ -919,12 +939,8 @@ class EsphomeConnection {
                     wakeWord: capture.wakeWord,
                     sttMs,
                     audioMs: Math.round(seconds * 1000),
-                    vad: {
-                        peak: Math.round(capture.detector.peak),
-                        noiseFloor: Math.round(capture.detector.noiseFloor),
-                        startLevel: Math.round(capture.detector.startLevel),
-                        endLevel: Math.round(capture.detector.endLevel),
-                    },
+                    // Numbers only, no audio: shows where a request was cut off without keeping recordings.
+                    vad: { ...vad, levels: levelProfile(pcm, MIC_SAMPLE_RATE) },
                 })
             ).trim();
             const followUp = !!answer && this.opts.expectsFollowUp?.(answer, this.deviceName) === true;

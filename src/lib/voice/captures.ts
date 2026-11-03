@@ -9,7 +9,7 @@
  */
 
 import { pcmToWav } from './stt';
-import { rms, type Bytes } from './vad';
+import { rms, type Bytes, type VadReport } from './vad';
 
 /** Why a recording was dropped. */
 export type DiscardReason =
@@ -28,7 +28,7 @@ export interface DiscardedCapture {
     reason: DiscardReason;
     pcm: Bytes;
     sampleRate: number;
-    vad: { peak: number; analysedPeak: number; noiseFloor: number; startLevel: number; endLevel: number };
+    vad: VadReport;
 }
 
 /** File operations, relative to the store's root (the adapter's file storage). */

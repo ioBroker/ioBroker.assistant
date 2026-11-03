@@ -417,7 +417,10 @@ Zwei Dinge laufen hier anders:
 
 - **Der Adapter entscheidet, wann du fertig geredet hast.** Diese Geräte streamen, bis der Server sie
   stoppt — die Sprachende-Erkennung läuft also im Adapter. Über **Sprachende nach (ms Stille)**
-  (Standard 900) justieren, falls dir die Antwort ins Wort fällt oder der Assistent zu lange wartet.
+  (Standard 900) justieren, falls dir die Antwort ins Wort fällt oder der Assistent zu lange wartet; nach
+  2,5 Sekunden Sprechen gilt das Anderthalbfache, damit eine Denkpause eine längere Anfrage nicht beendet.
+  Bevor die Aufnahme zur Spracherkennung geht, werden Chirp bzw. Piepton des Geräts und die Stille vor und
+  nach der Sprache abgeschnitten und leise Sprache verstärkt (bis ×10).
   Sprache muss die **Sprachschwelle** des Geräts erreichen (Spalte in der Gerätetabelle, leer = RMS 250).
   Reagiert ein Gerät auf das Wake-Word, hört danach aber nichts, ist sein Mikrofon leiser (ein Handy mit
   Satelliten-App liegt typisch unter 200): die Schwelle für diese Zeile senken, z. B. auf 100. Verwirft
@@ -428,7 +431,9 @@ Zwei Dinge laufen hier anders:
   ausgelöst hat, **Verworfene Aufnahmen zur Diagnose behalten** einschalten: als Stille verworfene oder
   leer erkannte Aufnahmen landen als WAV plus JSON (Grund, Wake-Word, Pegel des Detektors, RMS pro 100 ms)
   unter Admin → Dateien → `assistant.0/captures` — die neuesten 50. Sie enthalten Ton aus dem Raum, danach
-  also wieder ausschalten.
+  also wieder ausschalten. Auch ohne Aufnahmen zeigen die Anfrage-Details im Chat-Reiter den Pegelverlauf
+  (RMS pro 100 ms), wo die Sprache begann und warum die Aufnahme endete — genug, um zu sehen, ob eine
+  Anfrage abgeschnitten wurde.
 - **Die gesprochene Antwort wird geholt, nicht geschickt.** Das Gerät spielt eine URL ab, deshalb betreibt
   der Adapter einen kleinen HTTP-Server (**Port des Medien-Servers**, Standard `8099`), der jeden Clip ein paar
   Minuten lang ausliefert. Er muss **vom Gerät aus** erreichbar sein; die Adresse wird automatisch aus der
@@ -611,8 +616,10 @@ Vier Einstellungen, die sich meist selbst bezahlen:
 
 - **Speech-to-Text-/Text-to-Speech-Reserve** (Tab Voice) — eine zweite Engine, die einspringt, wenn die
   erste ausfällt: Störung, abgelaufener Key, leeres Guthaben. Mit `Vosk (lokal)` und `Piper (lokal)`
-  hinter einem Cloud-Anbieter hört und antwortet das Haus auch ohne Internet weiter. Die Übergabe steht
-  im Log.
+  hinter einem Cloud-Anbieter hört und antwortet das Haus auch ohne Internet weiter. Die Reserve für die
+  Spracherkennung springt auch ein, wenn die erste Engine für etwas, das der Satellit für Sprache hielt,
+  keinen Text liefert — bei leisen oder kurzen Antworten unterscheiden sich die Modelle stark. Die Übergabe
+  steht im Log.
 - **Gesprochener Text wird auf Platte gecacht.** Der Assistent sagt dieselben kurzen Dinge immer wieder
   ("Ok.", "Timer abgelaufen"), und sie erneut zu synthetisieren kostet eine Cloud-Runde und eine halbe
   Sekunde Latenz für identisches Audio. Kurze Texte (bis 200 Zeichen) liegen deshalb im Datenverzeichnis

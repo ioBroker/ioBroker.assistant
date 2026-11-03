@@ -937,7 +937,7 @@
                 "esphomeSilenceMs": {
                     "type": "number",
                     "label": "End of speech after (ms of silence)",
-                    "help": "These devices stream until the server stops them, so the adapter decides when you stopped talking. Raise it if replies cut you off, lower it if the assistant waits too long.",
+                    "help": "These devices stream until the server stops them, so the adapter decides when you stopped talking. Raise it if replies cut you off, lower it if the assistant waits too long. After 2.5 seconds of speech half as much again is allowed, so a pause for thought does not end a longer request.",
                     "default": 900,
                     "min": 200,
                     "max": 5000,
@@ -1060,7 +1060,7 @@
                     "newLine": true,
                     "type": "select",
                     "label": "Speech-to-text fallback",
-                    "help": "Used when the provider above fails (outage, expired key, empty quota). A local engine keeps voice working without the internet.",
+                    "help": "Used when the provider above fails (outage, expired key, empty quota) or returns no text for speech. A local engine keeps voice working without the internet.",
                     "options": [
                         { "label": "None", "value": "" },
                         { "label": "OpenAI (Whisper)", "value": "openai" },

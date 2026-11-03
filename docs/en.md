@@ -404,7 +404,10 @@ Two things work differently here:
 
 - **The adapter decides when you stopped talking.** These devices stream until the server tells them to
   stop, so end-of-speech detection runs in the adapter. Tune **End of speech after (ms of silence)**
-  (default 900) if replies cut you off or the assistant waits too long. Speech has to reach the
+  (default 900) if replies cut you off or the assistant waits too long; after 2.5 seconds of speech half
+  as much again is allowed, so a pause for thought does not end a longer request. Before the recording
+  goes to speech recognition, the device's chirp or beep and the silence before and after the speech are
+  cut off, and quiet speech is amplified (up to ×10). Speech has to reach the
   device's **Speech threshold** (column in the device table, empty = RMS 250). A device that reacts to
   the wake word but then hears nothing has a quieter microphone than that (a phone running a satellite
   app is typically below 200): lower the threshold for that row, e.g. to 100. The log says so when it
@@ -414,7 +417,9 @@ Two things work differently here:
   seconds. To find out what set a satellite off, enable **Keep dropped recordings for diagnosis**:
   recordings dropped as silence or returned empty by the speech recognition are stored as WAV plus a JSON
   (reason, wake word, detector levels, RMS per 100 ms) under Admin → Files → `assistant.0/captures` — the
-  newest 50. They contain audio from the room, so switch it off again afterwards.
+  newest 50. They contain audio from the room, so switch it off again afterwards. Without any recording,
+  the request details in the Chat tab show the level profile (RMS per 100 ms), where speech started and
+  why the recording ended — enough to see whether a request was cut off.
 - **The spoken reply is fetched, not pushed.** The device plays a URL, so the adapter runs a small HTTP
   server (**Media server port**, default `8099`) serving each clip for a couple of minutes. It must be
   reachable **from the device**; the address is taken from each device connection automatically and only
@@ -595,7 +600,9 @@ Four settings that mostly pay for themselves:
 
 - **Speech-to-text / text-to-speech fallback** (Voice tab) — a second engine, used when the first one
   fails: an outage, an expired key, an empty quota. With `Vosk (local)` and `Piper (local)` behind a cloud
-  provider, the house keeps listening and answering without the internet. The hand-over is in the log.
+  provider, the house keeps listening and answering without the internet. The speech-to-text fallback also
+  steps in when the first engine returns no text for something the satellite took for speech — models
+  differ a lot on quiet or short answers. The hand-over is in the log.
 - **The spoken text is cached on disk.** The assistant says the same short things over and over ("Okay.",
   "Timer finished"), and synthesising them again costs a cloud round-trip and half a second of latency for
   audio that is identical. Short texts (up to 200 characters) are therefore kept under the instance's data

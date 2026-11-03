@@ -185,3 +185,37 @@ test('with no SSML-capable engine the markup takes the normal path', async () =>
     await tts.synthesizeSsml('<speak>hi</speak>', 'de');
     assert.deepEqual(calls, ['<speak>hi</speak>'], 'handed on as text (the cache layer strips it)');
 });
+
+test('speech recognition that returns no text hands over to the fallback', async () => {
+    const r = recorder();
+    const stt = new FallbackStt(
+        [
+            { name: 'openrouter', engine: okStt('  ') },
+            { name: 'aws', engine: okStt('Мессенджер. Да, да.') },
+        ],
+        r.log,
+    );
+    assert.equal(await stt.transcribe(Buffer.alloc(2), 16000, 'ru'), 'Мессенджер. Да, да.');
+    assert.match(r.lines.join('\n'), /info:Speech-to-text: openrouter returned nothing — trying aws/);
+    assert.match(r.lines.join('\n'), /info:Speech-to-text: answered by the fallback engine \(aws\)/);
+});
+
+test('when neither engine hears anything the result stays empty instead of failing', async () => {
+    const both = new FallbackStt(
+        [
+            { name: 'openrouter', engine: okStt('') },
+            { name: 'vosk', engine: okStt('') },
+        ],
+        recorder().log,
+    );
+    assert.equal(await both.transcribe(Buffer.alloc(2), 16000, 'ru'), '');
+
+    const broken = new FallbackStt(
+        [
+            { name: 'openrouter', engine: okStt('') },
+            { name: 'vosk', engine: failStt('model missing') },
+        ],
+        recorder().log,
+    );
+    assert.equal(await broken.transcribe(Buffer.alloc(2), 16000, 'ru'), '', 'an empty primary result beats an error');
+});

@@ -145,6 +145,38 @@ const CHIRP_RMS = 16000; // the device's wake acknowledgement, heard on its own 
 const SPEECH_RMS = 420; // measured speech level on the same device
 const ROOM_RMS = 15; // between words
 
+test('a pause for thought does not end a long request, but a short command still closes fast', () => {
+    const opts = { adaptive: true, silenceMs: 300, longSilenceMs: 600, longAfterMs: 1500 };
+    const run = (speechFrames, pauseFrames) => {
+        const detector = new SpeechDetector(opts);
+        let verdict = null;
+        for (let i = 0; i < 10; i++) {
+            verdict ||= detector.push(frameAt(ROOM_RMS)); // 300 ms before anybody speaks
+        }
+        for (let i = 0; i < speechFrames; i++) {
+            verdict ||= detector.push(frameAt(SPEECH_RMS));
+        }
+        for (let i = 0; i < pauseFrames; i++) {
+            verdict ||= detector.push(frameAt(ROOM_RMS));
+        }
+        return { detector, verdict };
+    };
+
+    const command = run(20, 10); // 0.6 s "Licht an", 0.3 s quiet
+    assert.equal(command.verdict, 'speech-end', 'a short command ends after the normal silence');
+    assert.equal(command.detector.speechStartMs, 300, 'speech start is where the first loud frame began');
+
+    const thinking = run(60, 10); // 1.8 s of a longer request, then the same 0.3 s pause
+    assert.equal(thinking.verdict, null, 'the same pause does not end a long request');
+    assert.equal(thinking.detector.requiredSilenceMs, 600);
+    const report = thinking.detector.report();
+    assert.equal(report.speechStartMs, 300);
+    assert.equal(report.silenceMs, 600, 'the report says which silence applied');
+
+    const done = run(60, 20); // ... and a real end of 0.6 s still closes it
+    assert.equal(done.verdict, 'speech-end');
+});
+
 test('skipMs keeps the wake chirp from counting as speech', () => {
     const detector = new SpeechDetector({ skipMs: 300, adaptive: true, silenceMs: 100000 });
     for (let i = 0; i < 10; i++) {
@@ -782,8 +814,16 @@ test('wake word → captured audio → STT → answer → TTS url the device fet
     assert.ok(seen.pcmBytes > 0, 'STT should have received the captured audio');
     assert.equal(seen.question, 'wie spät ist es');
     assert.equal(seen.room, 'Wohnzimmer');
-    assert.equal(seen.audioMs, Math.round((seen.pcmBytes / 2 / 16000) * 1000), 'the journal gets the recording length');
     assert.ok(seen.vad.peak > seen.vad.noiseFloor, 'the journal gets the VAD levels');
+    assert.equal(seen.vad.end, 'speech-end');
+    assert.equal(seen.vad.silenceMs, 300, 'a short request ends after the configured silence');
+    assert.ok(seen.vad.speechStartMs >= 600, `speech is found after the chirp (${seen.vad.speechStartMs})`);
+    // STT gets the speech without the chirp in front and the silence behind; the journal the whole recording.
+    assert.ok(seen.vad.stt.fromMs > 0, 'the chirp is cut off');
+    // 300 ms of closing silence is less than the margin kept after the last sound (speechAudio.test.js cuts longer ones).
+    assert.ok(seen.vad.stt.toMs <= seen.audioMs, 'the cut ends inside the recording');
+    assert.equal(seen.pcmBytes, (seen.vad.stt.toMs - seen.vad.stt.fromMs) * 32, 'STT gets exactly the cut');
+    assert.equal(seen.vad.levels.length, Math.ceil(seen.audioMs / 100), 'the trace gets a level per 100 ms');
     assert.equal(seen.spoken.device, 'fake-speaker');
     assert.equal(seen.spoken.audioMs, 100, 'the journal gets the length of the reply');
 
@@ -883,7 +923,12 @@ test('a false wake closes the mic after 5 s instead of the full 12 s cap', async
     });
 
     await satellites.start();
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // 5 s of audio at one frame per timer tick: on Windows (15.6 ms ticks) that alone takes ~2.6 s, so wait for
+    // the stream to end instead of a fixed time.
+    for (const deadline = Date.now() + 10000; !device.stoppedBy && Date.now() < deadline; ) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    await new Promise(resolve => setTimeout(resolve, 300)); // let the server finish the capture
 
     assert.notEqual(device.stoppedBy, 'runaway', 'the server must close the stream itself');
     assert.ok(device.streamedMs >= 5000 && device.streamedMs < 6000, `streamed ${device.streamedMs} ms`);

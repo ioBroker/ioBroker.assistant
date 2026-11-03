@@ -477,6 +477,20 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   (Admin → Dateien, also auch für Nutzer ohne Shell), JSON mit `levels` = RMS pro 100 ms. Nur die neuesten
   `MAX_CAPTURES` (50) bleiben; Speichern läuft seriell (sonst prunen sich parallele Saves gegenseitig).
   Test: `test/integration/captures.test.js`.
+  **Erste Auswertung (2026-11-03, vitanova):** eine Rückfrage-Antwort „Мессенджер. Да, да.“ kam bei
+  RMS 150–500 an (Stimme ein paar Meter weg) — die Stille-Grenze 150 lag mitten in der Sprache, „Мессенджер“
+  stand 0,7 s komplett darunter. Nemotron (`nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b`) lieferte
+  dafür leer, auch ×10 verstärkt; Whisper lieferte mit Piepton+Stille „Продолжение следует...“ (Halluzination),
+  verstärkt den richtigen Text. Folgen: **lange Pause nach langer Rede** (`SpeechDetector` `longSilenceMs`/
+  `longAfterMs`, ESPHome: nach `LONG_REQUEST_MS` 2,5 s Sprache × `LONG_PAUSE_FACTOR` 1,5 — Anlass „…чтобы утром
+  говорить мне“ abgeschnitten), **`speechAudio.ts` `prepareForStt`** (ab Sprachbeginn − `PRE_ROLL_MS` 400,
+  bis letzter Laut ≥ 40 % der Stille-Grenze + `TAIL_MS` 400 — in lauten Räumen bleibt das Ende also stehen —,
+  Peak auf `TARGET_PEAK` 16000, max. ×10; die Diagnose-Aufnahme bleibt unverändert), **`FallbackStt` bei
+  leerem Text** (`overEngines(…, useful)`), und **`VadReport`** (`vad.ts`) im Trace: `speechStartMs`, `end`,
+  `silenceMs`, `stt {fromMs,toMs,gain}`, `levels` (RMS/100 ms, nur im Trace, nicht in der Capture-`vad`).
+  Mit dem Zuschnitt (0,89–4,14 s ×10) lieferte Whisper „Мессенджер. Да, нет?“, mit voller Länge „Мессенджер.
+  Да, да.“ — das Schlüsselwort stimmt beide Male, der leise Rest schwankt; ohne Verstärkung „Меседжет.
+  Меседжет.“. Auf vitanova: `speechLevel` 150, `esphomeSilenceMs` 1200, STT Whisper.
   **Wake-Words aus ioBroker setzbar** (gegen echte Hardware getestet, Originalzustand wiederhergestellt):
   `esphome.ts` merkt sich die `VoiceAssistantConfigurationResponse` als `WakeWordConfig`
   (active/available[{id,phrase,languages}]/max), meldet sie per `onWakeWords` und sendet auf
