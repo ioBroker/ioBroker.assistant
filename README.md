@@ -235,7 +235,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.4.6 (2026-11-03)
 * (@GermanBluefox) Speech recognition: own OpenAI-compatible server (Voice tab, provider OpenAI, "Speech recognition server"), e.g. a local whisper-large-v3-turbo in speaches, faster-whisper-server or LocalAI. It needs no OpenAI key and never gets it; an own key for the server is optional
 
 ### 1.4.5 (2026-11-03)
