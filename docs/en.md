@@ -355,6 +355,15 @@ Without an OpenRouter key on the Voice tab, the key of the AI provider is used i
 from the system-wide AI settings). Unlike OpenAI, OpenRouter ignores vocabulary hints, so device and room
 names are not passed to recognition. MiniMax voices only come as mp3 and need **ffmpeg** on the ioBroker host.
 
+**Own Whisper server** (local recognition, e.g. whisper-large-v3-turbo in a container next to ioBroker):
+choose *OpenAI (Whisper)* as speech-to-text provider and enter the server under **Speech recognition server**,
+e.g. `http://192.168.1.10:8000/v1`. Any server with the OpenAI endpoint `/v1/audio/transcriptions` works
+(speaches/faster-whisper-server, LocalAI, vLLM; whisper.cpp's `whisper-server` only when started with
+`--inference-path /v1/audio/transcriptions`). An address without a path gets `/v1`. Put the model into
+**OpenAI STT model** as the server names it (speaches: `Systran/faster-whisper-large-v3-turbo`). No OpenAI key is
+needed for it, and the OpenAI key is never sent there; if the server wants a key of its own, it goes into
+**Key of the speech recognition server**. Vocabulary hints (room and device names) are passed as with OpenAI.
+
 **Test voice and recognition** (at the bottom of the Voice tab, with the settings as they are in the form —
 also unsaved): *Speech output* speaks a test sentence in the browser and shows sample rate, length and
 synthesis time (a voice too high or too low means a wrong sample rate). *Speech recognition* records the

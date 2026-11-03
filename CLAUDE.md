@@ -19,6 +19,15 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Eigener STT-Server (OpenAI-kompatibel)** — Nutzerwunsch 2026-11-03 (whisper-large-v3-turbo im Container daneben).
+  Kein eigener Anbieter, sondern Felder am Anbieter `openai`: `sttBaseUrl` + `sttServerKey` (encrypted/protected,
+  in `VOICE_FORM_FIELDS`/`VOICE_FORM_SECRETS`), sichtbar bei STT-Anbieter **oder** -Fallback `openai` (wie jetzt
+  auch `sttModel`). `stt.ts.normalizeSttBaseUrl()` (Adresse ohne Pfad → `/v1`, sonst unverändert; kein URL →
+  Fehler), `OpenAiStt(key, model, baseUrl)` baut dann den Client mit `baseURL`, Timeout 60 s, 1 Retry, Key
+  `sttServerKey || 'none'` — **der OpenAI-Key geht nie an einen fremden Server**, und `requireOpenAi` entfällt.
+  Hints (`prompt`) gehen mit (faster-whisper kann `initial_prompt`). Folge: Fallback „OpenAI-Cloud hinter dem
+  eigenen Server“ geht nicht (gleicher Anbieter). Trace: `server` im STT-Schritt. Test: `engines.test.js`
+  (echter HTTP-Fake auf `/v1/audio/transcriptions`, Multipart geprüft). Nicht gegen einen echten Server gelaufen.
 - **ESPHome 2026.10 / API 1.19 (Feldbericht Alex F., 2026-11-03)** — gegen den ESPHome-dev-Quellcode geprüft
   (`voice_assistant.cpp`, `api_connection.cpp`, `entity_base.cpp`, `audio.cpp`), nicht gegen das echte Gerät.
   (1) **Antwortformat** (`replyFormat.ts`, `flac.ts`): der Media-Player wird nur noch mit den Codecs seiner

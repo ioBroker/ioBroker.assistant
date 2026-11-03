@@ -369,6 +369,16 @@ systemweiten KI-Einstellungen). Anders als OpenAI ignoriert OpenRouter Vokabel-H
 Raumnamen gehen also nicht an die Erkennung. MiniMax-Stimmen gibt es nur als mp3; dafür braucht es
 **ffmpeg** auf dem ioBroker-Host.
 
+**Eigener Whisper-Server** (lokale Erkennung, z. B. whisper-large-v3-turbo in einem Container neben
+ioBroker): als Spracherkennungs-Anbieter *OpenAI (Whisper)* wählen und unter **Server für die
+Spracherkennung** den Server eintragen, z. B. `http://192.168.1.10:8000/v1`. Es geht jeder Server mit dem
+OpenAI-Endpunkt `/v1/audio/transcriptions` (speaches/faster-whisper-server, LocalAI, vLLM; der
+`whisper-server` von whisper.cpp nur, wenn er mit `--inference-path /v1/audio/transcriptions` startet). Eine
+Adresse ohne Pfad bekommt `/v1`. Ins Feld **OpenAI-STT-Modell** gehört das Modell so, wie der Server es nennt
+(speaches: `Systran/faster-whisper-large-v3-turbo`). Ein OpenAI-Schlüssel ist dafür nicht nötig und wird auch
+nie dorthin geschickt; verlangt der Server einen eigenen, kommt er in **Schlüssel des
+Spracherkennungs-Servers**. Vokabel-Hinweise (Raum- und Gerätenamen) gehen mit wie bei OpenAI.
+
 **Stimme und Erkennung testen** (unten im Reiter Voice, mit den Einstellungen so, wie sie im Formular
 stehen — auch ungespeichert): *Sprachausgabe* spricht einen Testsatz im Browser und zeigt Abtastrate,
 Länge und Synthesezeit (eine zu hohe oder zu tiefe Stimme heißt: falsche Abtastrate). *Spracherkennung*

@@ -67,13 +67,44 @@ export function pcmToWav(pcm: Buffer, sampleRate: number, numChannels = 1): Buff
     return Buffer.concat([header, pcm]);
 }
 
-/** Cloud STT via the OpenAI transcription API (Whisper). */
+/**
+ * Base URL of an OpenAI-compatible transcription server as the SDK wants it. Practically every such server
+ * (speaches/faster-whisper-server, LocalAI, vLLM, Groq) serves `/v1/audio/transcriptions`, so an address typed
+ * without a path gets `/v1`; one with a path is taken as it is.
+ */
+export function normalizeSttBaseUrl(raw: string): string {
+    const url = raw.trim().replace(/\/+$/, '');
+    if (!url) {
+        return '';
+    }
+    try {
+        const parsed = new URL(url);
+        return parsed.pathname === '/' || parsed.pathname === '' ? `${url}/v1` : url;
+    } catch {
+        throw new Error(`speech recognition base URL "${raw}" is not a URL (e.g. http://192.168.1.10:8000/v1)`);
+    }
+}
+
+/**
+ * STT via the OpenAI transcription API (Whisper) — or any server that speaks it, e.g. a local
+ * whisper-large-v3-turbo next to ioBroker (`baseUrl`).
+ */
 export class OpenAiStt implements SttEngine {
     private readonly client: OpenAI;
     private readonly model: string;
 
-    constructor(apiKey: string, model = 'whisper-1') {
-        this.client = new OpenAI({ apiKey });
+    /**
+     * @param apiKey OpenAI key, or the key of the server at `baseUrl` ('' for a server without one)
+     * @param model model id; on an own server as that server names it
+     * @param baseUrl OpenAI-compatible server instead of api.openai.com ('' = OpenAI)
+     */
+    constructor(apiKey: string, model = 'whisper-1', baseUrl = '') {
+        const baseURL = normalizeSttBaseUrl(baseUrl);
+        this.client = baseURL
+            ? // The SDK refuses an empty key; a local server ignores it. A server that hangs must not hold the
+              // satellite for the SDK's default ten minutes.
+              new OpenAI({ apiKey: apiKey || 'none', baseURL, timeout: 60_000, maxRetries: 1 })
+            : new OpenAI({ apiKey });
         this.model = model;
     }
 

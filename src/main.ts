@@ -177,6 +177,8 @@ const VOICE_FORM_FIELDS = [
     'voiceLanguage',
     'sttProvider',
     'sttModel',
+    'sttBaseUrl',
+    'sttServerKey',
     'openrouterSttModel',
     'voskModel',
     'ttsProvider',
@@ -201,7 +203,13 @@ const VOICE_FORM_FIELDS = [
     'piperVoice',
 ];
 /** Of those, the protected ones: the browser never gets them, so an empty value there means "keep the saved one" */
-const VOICE_FORM_SECRETS = ['voiceApiKey', 'openrouterSpeechKey', 'azureSpeechKey', 'awsSecretAccessKey'];
+const VOICE_FORM_SECRETS = [
+    'voiceApiKey',
+    'openrouterSpeechKey',
+    'azureSpeechKey',
+    'awsSecretAccessKey',
+    'sttServerKey',
+];
 
 /** An empty `ask` from the same caller is reported at most this often. */
 const EMPTY_ASK_REPORT_MS = 60_000;
@@ -851,6 +859,8 @@ class Assistant extends Adapter {
             log: this.log,
             voskModel: (cfg.voskModel || '').trim(),
             sttModel: (cfg.sttModel || '').trim(),
+            sttBaseUrl: (cfg.sttBaseUrl || '').trim(),
+            sttServerKey: cfg.sttServerKey || '',
             ttsModel: (cfg.ttsModel || '').trim(),
             openrouterSttModel: (cfg.openrouterSttModel || '').trim(),
             openrouterTtsModel: (cfg.openrouterTtsModel || '').trim(),
@@ -3384,6 +3394,7 @@ class Assistant extends Adapter {
                 model:
                     (provider === 'openrouter' ? cfg.openrouterSttModel : cfg.sttModel || cfg.voskModel || '').trim() ||
                     undefined,
+                server: (provider === 'openai' && cfg.sttBaseUrl?.trim()) || undefined,
                 language: cfg.voiceLanguage || this.language || '',
                 audioMs: origin.audioMs,
                 wakeWord: origin.wakeWord,

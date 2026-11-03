@@ -198,6 +198,10 @@ export interface AdapterConfig {
     ttsVoice: string;
     /** OpenAI STT model ('' → 'whisper-1'; e.g. 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'). */
     sttModel: string;
+    /** OpenAI-compatible transcription server for the `openai` STT provider ('' = OpenAI), e.g. http://host:8000/v1. */
+    sttBaseUrl: string;
+    /** API key of that server (encrypted; '' = none needed). The OpenAI key is never sent there. */
+    sttServerKey: string;
     /** OpenAI TTS model ('' → 'tts-1'; e.g. 'gpt-4o-mini-tts', 'tts-1-hd'). */
     ttsModel: string;
 

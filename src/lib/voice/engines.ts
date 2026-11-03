@@ -58,6 +58,13 @@ export interface EngineContext {
     voskModel: string;
     /** OpenAI STT model ('' → 'whisper-1'; e.g. 'gpt-4o-transcribe'). */
     sttModel: string;
+    /**
+     * OpenAI-compatible transcription server instead of OpenAI ('' = OpenAI), e.g. a local whisper container.
+     * It gets `sttServerKey`, never the OpenAI key — that one is only for OpenAI.
+     */
+    sttBaseUrl?: string;
+    /** Key for `sttBaseUrl` ('' = the server needs none). */
+    sttServerKey?: string;
     /** OpenAI TTS model ('' → 'tts-1'; e.g. 'gpt-4o-mini-tts'). */
     ttsModel: string;
     /** OpenRouter models ('' → the defaults of openrouter.ts) */
@@ -123,6 +130,9 @@ function buildSttEngine(provider: SpeechProvider, ctx: EngineContext): SttEngine
         case 'piper':
             throw new Error('Piper is a text-to-speech engine, not speech-to-text');
         default:
+            if (ctx.sttBaseUrl?.trim()) {
+                return new OpenAiStt(ctx.sttServerKey || '', ctx.sttModel || undefined, ctx.sttBaseUrl);
+            }
             requireOpenAi(ctx.creds);
             return new OpenAiStt(ctx.creds.openaiKey, ctx.sttModel || undefined);
     }

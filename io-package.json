@@ -235,6 +235,8 @@
     "voiceApiKey": "",
     "ttsVoice": "alloy",
     "sttModel": "",
+    "sttBaseUrl": "",
+    "sttServerKey": "",
     "ttsModel": "",
     "openrouterSpeechKey": "",
     "openrouterCredentialId": "",
@@ -265,14 +267,16 @@
     "voiceApiKey",
     "azureSpeechKey",
     "awsSecretAccessKey",
-    "openrouterSpeechKey"
+    "openrouterSpeechKey",
+    "sttServerKey"
   ],
   "protectedNative": [
     "apiKey",
     "voiceApiKey",
     "azureSpeechKey",
     "awsSecretAccessKey",
-    "openrouterSpeechKey"
+    "openrouterSpeechKey",
+    "sttServerKey"
   ],
   "objects": [],
   "instanceObjects": [
