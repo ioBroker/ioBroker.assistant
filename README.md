@@ -235,7 +235,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.4.1 (2026-11-03)
 * (@GermanBluefox) Satellite settings: compound controls show their name ("Firmware Update") instead of the object id ("thirdreality_firmware_update"), and values of ESPHome devices no longer carry float noise (0.5 instead of 0.5000000237487257, step 0.001 instead of 0.0010000000474974513). Existing number controls get the cleaned range on the next connect
 * (@GermanBluefox) Satellite settings, firmware update: the install button only appears when another version is available, and a running update shows its progress as a bar
 
