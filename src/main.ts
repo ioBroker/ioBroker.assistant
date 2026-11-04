@@ -1,7 +1,8 @@
 import * as os from 'node:os';
 import * as fs from 'node:fs';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { promisify } from 'node:util';
 
 import {
     Adapter,
@@ -117,7 +118,20 @@ import {
 import { pcmFromResponse } from './lib/voice/openrouter';
 import { MAX_TTS_CHARS, parseTtsMaxChars, spokenLengthHint } from './lib/voice/ttsCache';
 import { CaptureStore, type DiscardedCapture } from './lib/voice/captures';
+import { downloadFfmpegStatic, ffmpegStaticPath } from './lib/voice/ffmpegStatic';
 import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
+import {
+    attachmentNote,
+    historyText,
+    imageOnlyQuestion,
+    isVideoError,
+    noVisionText,
+    parseAskImages,
+    parseAskVideo,
+    videoNotSupportedText,
+    type ImageInput,
+    type VideoRef,
+} from './lib/media';
 import {
     SYSTEM_AI_ID,
     readSystemAi,
@@ -154,8 +168,20 @@ const NLU_DEVICES_TTL_MS = 60_000;
  */
 const SCRIPT_TOPIC_MS = 2 * 60_000;
 
-/** Why a request skips the local tiers: it names a script, or it answers a question about one. */
-type CloudOnly = 'script' | 'scriptReply' | null;
+/**
+ * Why a request skips the local tiers: it names a script, it answers a question about one, or pictures came with it
+ * (only the cloud model can see them).
+ */
+type CloudOnly = 'script' | 'scriptReply' | 'image' | null;
+
+/** Pictures and a video that came with a request (`ask` from Telegram). */
+interface Attachments {
+    images: ImageInput[];
+    /** Only where the sender stored it - the assistant does not look at videos yet. */
+    video: VideoRef | null;
+}
+
+const NO_ATTACHMENTS: Attachments = { images: [], video: null };
 
 /** Default for `localLlmTimeoutSec`: after this the local model is stopped and the next tier answers. */
 const LOCAL_LLM_TIMEOUT_SEC = 15;
@@ -172,6 +198,28 @@ const LOCAL_LLM_MAX_TOKENS = 256;
 /** Fields of the Voice tab the voice test takes from the unsaved form (everything an STT or TTS engine is built from). */
 /** Transports whose answer is spoken by a satellite (and therefore cut at `ttsMaxChars`). */
 const VOICE_TRANSPORTS: ReadonlySet<string> = new Set(['esphome', 'udp', 'native', 'wyoming']);
+
+/** Appended to a failed ffmpeg start: the usual cause is a missing binary or a wrong path. */
+const FFMPEG_HINT = ' — install ffmpeg, or download it or set its path on the Voice tab';
+
+/** `sendTo(<instance>, 'ask', …)`: a text question, or a recording (`audio`) when there is no text. */
+interface AskMessage {
+    text?: string;
+    /** Conversation key, e.g. `telegram:Max`; empty = the admin chat. */
+    source?: string;
+    /** Base64 recording, used when `text` is empty (e.g. a Telegram voice message). */
+    audio?: string;
+    /** `ogg`, `mp3`, `wav`, `pcm` … — anything but WAV/PCM is decoded with ffmpeg. */
+    format?: string;
+    /** Only for `pcm` (16-bit mono); default 16000. */
+    sampleRate?: number;
+    /** Recognition language; default = the voice language. */
+    language?: string;
+    /** Pictures for the cloud model: `[{ data: base64, mimeType }]`, at most 4 (see lib/media). */
+    images?: unknown;
+    /** A video, never as content: `{ adapter, path, mimeType?, durationSec?, size? }` of the ioBroker file storage. */
+    video?: unknown;
+}
 
 const VOICE_FORM_FIELDS = [
     'voiceLanguage',
@@ -428,6 +476,8 @@ class Assistant extends Adapter {
     private localLlmLoading: Promise<void> | null = null;
     /** Last reported local-LLM download percent (to throttle state writes / avoid log spam). */
     private lastLlmPct = -1;
+    /** A running "Download ffmpeg" - a second click waits for the same download. */
+    private ffmpegDownload: Promise<string> | null = null;
     /** UDP voice server for satellites (only when voiceEnabled); null otherwise. */
     private voice: VoiceServer | null = null;
     /** Wyoming TCP endpoint (only when wyomingEnabled); null otherwise. */
@@ -490,7 +540,12 @@ class Assistant extends Adapter {
      * Where the request being answered came from, for the LLM tools: a tool only gets the model's
      * arguments, but "play X" from the bedroom satellite should go to the bedroom TV.
      */
-    private readonly requestOrigin = new AsyncLocalStorage<{ source: string; room: string; voice: boolean }>();
+    private readonly requestOrigin = new AsyncLocalStorage<{
+        source: string;
+        room: string;
+        voice: boolean;
+        attachments: Attachments;
+    }>();
     /** Who is at home (roadmap B1); mirrored into `presence.*`. Null until onReady. */
     private presence: PresenceTracker | null = null;
     /** Satellites currently set to Do-Not-Disturb, by state id (mirrors `satellites.<id>.dnd`). */
@@ -2271,24 +2326,66 @@ class Assistant extends Adapter {
         return this.runFfmpegDecode(src);
     }
 
-    /** Decode an in-memory audio buffer (uploaded mp3/wav) to mono 16-bit PCM via ffmpeg (stdin pipe). */
-    private decodeAudioBufferToPcm(buf: Buffer): Promise<{ pcm: Buffer; sampleRate: number }> {
-        return this.runFfmpegDecode('pipe:0', buf);
+    /**
+     * Decode an in-memory audio buffer (uploaded mp3/wav, a Telegram voice message) to mono 16-bit PCM via ffmpeg
+     * (stdin pipe). `sampleRate` 16 kHz is what speech recognition wants; playback keeps 24 kHz.
+     */
+    private decodeAudioBufferToPcm(buf: Buffer, sampleRate = 24000): Promise<{ pcm: Buffer; sampleRate: number }> {
+        return this.runFfmpegDecode('pipe:0', buf, sampleRate);
+    }
+
+    /** The ffmpeg binary: the configured path, else the downloaded one, else `ffmpeg` from the search path. */
+    private ffmpegBin(): string {
+        return this.config.ffmpegPath?.trim() || this.downloadedFfmpeg() || 'ffmpeg';
+    }
+
+    /**
+     * The static ffmpeg from "Download ffmpeg" on the Voice tab, '' if there is none. Looked up every time (one
+     * `stat`), so deleting the file falls back to the search path without a restart.
+     */
+    private downloadedFfmpeg(): string {
+        const file = ffmpegStaticPath(this.instanceDataDir());
+        return fs.existsSync(file) ? file : '';
+    }
+
+    /**
+     * "Download ffmpeg" on the Voice tab: the static build of ffmpeg-static into the data dir, then the same check
+     * as "Check ffmpeg". It is used from now on, unless a path is entered.
+     *
+     * @param configuredPath the path from the (unsaved) form
+     */
+    private async downloadFfmpeg(configuredPath: string): Promise<{ result?: string; error?: string }> {
+        let file: string;
+        try {
+            this.ffmpegDownload ??= downloadFfmpegStatic(this.instanceDataDir(), { log: this.log }).finally(
+                () => (this.ffmpegDownload = null),
+            );
+            file = await this.ffmpegDownload;
+        } catch (e) {
+            this.log.warn(`Download of ffmpeg failed: ${(e as Error).message}`);
+            return { error: `Download failed: ${(e as Error).message}` };
+        }
+        const check = await this.testFfmpeg(file);
+        if (check.error || !configuredPath.trim()) {
+            return check;
+        }
+        return { result: `${check.result} — not used while a path to ffmpeg is entered` };
     }
 
     /** Run ffmpeg to decode `input` (a path/URL, or `pipe:0` with `stdinData`) to mono 16-bit PCM. */
-    private runFfmpegDecode(input: string, stdinData?: Buffer): Promise<{ pcm: Buffer; sampleRate: number }> {
+    private runFfmpegDecode(
+        input: string,
+        stdinData?: Buffer,
+        sampleRate = 24000,
+    ): Promise<{ pcm: Buffer; sampleRate: number }> {
         return new Promise((resolve, reject) => {
-            const sampleRate = 24000;
             // prettier-ignore
             const args = ['-hide_banner', '-loglevel', 'error', '-i', input, '-ac', '1', '-ar', String(sampleRate), '-f', 's16le', '-'];
-            const proc = spawn('ffmpeg', args);
+            const proc = spawn(this.ffmpegBin(), args);
             const chunks: Buffer[] = [];
             proc.stdout.on('data', (d: Buffer) => chunks.push(d));
             proc.stderr.on('data', (d: Buffer) => this.log.debug(`ffmpeg: ${String(d).trim()}`));
-            proc.on('error', e =>
-                reject(new Error(`ffmpeg failed: ${e.message} — install ffmpeg to play audio files`)),
-            );
+            proc.on('error', e => reject(new Error(`ffmpeg failed: ${e.message}${FFMPEG_HINT}`)));
             proc.on('close', code =>
                 code === 0
                     ? resolve({ pcm: Buffer.concat(chunks), sampleRate })
@@ -2323,11 +2420,11 @@ class Assistant extends Adapter {
                     ? 48000
                     : target.sampleRate;
             const args = [...input, '-ar', String(rate), '-ac', String(target.channels), ...output, '-'];
-            const proc = spawn('ffmpeg', args);
+            const proc = spawn(this.ffmpegBin(), args);
             const chunks: Buffer[] = [];
             proc.stdout.on('data', (d: Buffer) => chunks.push(d));
             proc.stderr.on('data', (d: Buffer) => this.log.debug(`ffmpeg: ${String(d).trim()}`));
-            proc.on('error', e => reject(new Error(`ffmpeg failed: ${e.message}`)));
+            proc.on('error', e => reject(new Error(`ffmpeg failed: ${e.message}${FFMPEG_HINT}`)));
             proc.on('close', code =>
                 code === 0 && chunks.length
                     ? resolve(Buffer.concat(chunks))
@@ -2336,6 +2433,34 @@ class Assistant extends Adapter {
             proc.stdin.on('error', () => {}); // ignore EPIPE if ffmpeg exits early
             proc.stdin.end(pcm);
         });
+    }
+
+    /**
+     * "Check ffmpeg" on the Voice tab: start the binary at `path` ('' = from the search path), report its version and
+     * whether it can write MP3 and Opus (ESPHome devices that play nothing else). Decoding needs no extra library.
+     */
+    private async testFfmpeg(path: string): Promise<{ result?: string; error?: string }> {
+        const bin = path.trim() || this.downloadedFfmpeg() || 'ffmpeg';
+        const run = async (args: string[]): Promise<string> =>
+            (await promisify(execFile)(bin, args, { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 })).stdout;
+        try {
+            const firstLine = (await run(['-version'])).split(/\r?\n/)[0];
+            const version = firstLine.replace(/\s+Copyright.*$/i, '').trim();
+            const encoders = await run(['-hide_banner', '-encoders']).catch(() => '');
+            const has = (name: string): boolean => new RegExp(`\\s${name}\\s`).test(encoders);
+            const missing = ['libmp3lame', 'libopus'].filter(e => !has(e));
+            return {
+                result: `${version} (${bin})${missing.length ? ` — without ${missing.join(', ')}: MP3/Opus replies for ESPHome devices are not possible` : ''}`,
+            };
+        } catch (e) {
+            const err = e as NodeJS.ErrnoException;
+            return {
+                error:
+                    err.code === 'ENOENT'
+                        ? `${bin} not found${path.trim() ? '' : ' in the search path'} — install ffmpeg, download it or enter the full path`
+                        : `${bin} failed: ${err.message}`,
+            };
+        }
     }
 
     /** Vendor and key of the cloud LLM: speech of the same vendor (OpenAI, OpenRouter) reuses the key. */
@@ -3036,6 +3161,26 @@ class Assistant extends Adapter {
             return;
         }
 
+        // Voice tab: "Check ffmpeg" with the (unsaved) path from the form. message = { path }.
+        if (obj.command === 'testFfmpeg') {
+            const raw = (obj.message as { path?: unknown } | undefined)?.path;
+            const result = await this.testFfmpeg(typeof raw === 'string' ? raw : this.config.ffmpegPath);
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
+
+        // Voice tab: "Download ffmpeg". message = { path } (the unsaved path, only for the result text).
+        if (obj.command === 'downloadFfmpeg') {
+            const raw = (obj.message as { path?: unknown } | undefined)?.path;
+            const result = await this.downloadFfmpeg(typeof raw === 'string' ? raw : this.config.ffmpegPath || '');
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
+
         // Satellites tab: forget a satellite that is gone. message = { id } (the state id under `satellites.`).
         if (obj.command === 'deleteSatellite') {
             const raw = (obj.message as { id?: unknown } | undefined)?.id;
@@ -3306,15 +3451,57 @@ class Assistant extends Adapter {
         if (obj.command !== 'ask') {
             return;
         }
-        const message = obj.message as { text?: string; source?: string } | string;
+        const message = obj.message as AskMessage | string;
         const text = typeof message === 'string' ? message : message?.text;
         // Origin for text.querySource: caller-provided (e.g. 'telegram:Max') or 'chat' for the admin chat.
         const source = (typeof message === 'string' ? '' : message?.source?.trim()) || 'chat';
         // Who sent it (javascript.0, telegram.0, admin.0 for the chat tab) — the way to find a script gone wrong.
         const caller = String(obj.from || '').replace(/^system\.adapter\./, '') || 'unknown';
 
-        const question = String(text ?? '').trim();
-        if (!question) {
+        let question = String(text ?? '').trim();
+        // A recording instead of text (a Telegram voice message): recognise it first, then answer as usual.
+        const audio = typeof message === 'string' ? undefined : message?.audio;
+        let heard: { sttMs: number; audioMs: number } | undefined;
+        if (!question && typeof audio === 'string' && audio) {
+            if (!this.ready) {
+                if (obj.callback) {
+                    this.sendTo(obj.from, obj.command, { error: 'agent not ready' }, obj.callback);
+                }
+                return;
+            }
+            try {
+                const res = await this.transcribeAsk(message as AskMessage);
+                if (!res.text) {
+                    this.log.info(
+                        `Voice Q (ask from ${caller}, ${source}): (empty) — speech recognition returned no text for ${res.audioMs} ms of audio`,
+                    );
+                    if (obj.callback) {
+                        this.sendTo(obj.from, obj.command, { heard: '', error: this.nothingHeardText() }, obj.callback);
+                    }
+                    return;
+                }
+                question = res.text;
+                heard = { sttMs: res.sttMs, audioMs: res.audioMs };
+            } catch (e) {
+                this.log.warn(`Voice message from ${caller} (${source}) not recognised: ${(e as Error).message}`);
+                if (obj.callback) {
+                    this.sendTo(obj.from, obj.command, { error: (e as Error).message }, obj.callback);
+                }
+                return;
+            }
+        }
+        // Pictures (a Telegram photo or album) go to the cloud model; a video only as the place it was stored.
+        const attachments = this.askAttachments(message, caller, source);
+        if (typeof attachments === 'string') {
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, { error: attachments }, obj.callback);
+            }
+            return;
+        }
+        if (!question && attachments.images.length) {
+            question = imageOnlyQuestion(this.answerLanguage(), attachments.images.length);
+        }
+        if (!question && !attachments.video) {
             this.reportEmptyAsk(caller);
             if (obj.callback) {
                 this.sendTo(obj.from, obj.command, { error: 'empty question' }, obj.callback);
@@ -3327,16 +3514,25 @@ class Assistant extends Adapter {
             }
             return;
         }
-        this.log.info(`Q (${obj.command} from ${caller}): ${question}`);
-        this.setStateAsync('text.request', { val: question, ack: true }).catch(() => {});
+        const shown = historyText(question, attachments.images.length, !!attachments.video);
+        this.log.info(
+            `${heard ? 'Voice Q' : 'Q'} (${obj.command} from ${caller}): ${shown}${attachments.video ? ` (video ${attachments.video.adapter}/${attachments.video.path})` : ''}`,
+        );
+        this.setStateAsync('text.request', { val: shown, ack: true }).catch(() => {});
         this.setQuerySource(source);
         try {
-            const answer = await this.answer(question, source);
+            const answer = await this.answer(question, source, heard ?? {}, attachments);
             this.log.info(`A: ${answer}`);
             this.setStateAsync('text.response', { val: answer, ack: true }).catch(() => {});
             if (obj.callback) {
                 // `journaled`: the admin chat gets this exchange from the journal and must not add it twice.
-                this.sendTo(obj.from, obj.command, { answer, journaled: !!this.journal?.enabled }, obj.callback);
+                // `heard`: what was recognised in a recording, so the caller can show it with the answer.
+                this.sendTo(
+                    obj.from,
+                    obj.command,
+                    { answer, journaled: !!this.journal?.enabled, ...(heard ? { heard: question } : {}) },
+                    obj.callback,
+                );
             }
         } catch (e) {
             this.log.error(`Assistant error: ${(e as Error).message}`);
@@ -3344,11 +3540,88 @@ class Assistant extends Adapter {
                 this.sendTo(
                     obj.from,
                     obj.command,
-                    { error: (e as Error).message, journaled: !!this.journal?.enabled },
+                    {
+                        error: (e as Error).message,
+                        journaled: !!this.journal?.enabled,
+                        ...(heard ? { heard: question } : {}),
+                    },
                     obj.callback,
                 );
             }
         }
+    }
+
+    /**
+     * The pictures and the video of an `ask`, or why they are refused (then nothing is answered: a question about a
+     * picture without the picture would be answered with a guess).
+     */
+    private askAttachments(message: AskMessage | string, caller: string, source: string): Attachments | string {
+        if (typeof message === 'string' || !message) {
+            return NO_ATTACHMENTS;
+        }
+        const { images, error } = parseAskImages(message.images);
+        if (error) {
+            this.log.warn(`Pictures from ${caller} (${source}) refused: ${error}`);
+            return `pictures: ${error}`;
+        }
+        const video = parseAskVideo(message.video);
+        if (isVideoError(video)) {
+            this.log.warn(`Video from ${caller} (${source}) refused: ${video.error}`);
+            return video.error;
+        }
+        return images.length || video ? { images, video } : NO_ATTACHMENTS;
+    }
+
+    /** Pictures and video of the request being answered */
+    private attachments(): Attachments {
+        return this.requestOrigin.getStore()?.attachments ?? NO_ATTACHMENTS;
+    }
+
+    /** Language of fixed replies: the voice language, else the system language. */
+    private answerLanguage(): string {
+        return String(this.config.voiceLanguage || this.language || 'en');
+    }
+
+    /**
+     * Speech recognition for an `ask` that carries a recording instead of text. `audio` is base64; `format` says what
+     * it is: `wav` and `pcm` (16-bit mono, `sampleRate`, default 16 kHz) are read directly, anything else (`ogg` from
+     * Telegram, mp3, m4a …) goes through ffmpeg. Uses the STT engine of the Voice tab, so voice must be enabled.
+     */
+    private async transcribeAsk(msg: AskMessage): Promise<{ text: string; sttMs: number; audioMs: number }> {
+        if (!this.config.voiceEnabled) {
+            throw new Error('speech recognition is off — enable voice on the Voice tab of the assistant');
+        }
+        const engines = await this.getSpeechEngines();
+        if (!engines) {
+            throw new Error('speech recognition is not configured — check the Voice tab of the assistant');
+        }
+        const data = Buffer.from(msg.audio || '', 'base64');
+        const format = (msg.format || '').toLowerCase().replace(/^\./, '');
+        let pcm: Buffer;
+        let sampleRate: number;
+        if (format === 'pcm') {
+            pcm = data;
+            sampleRate = Number(msg.sampleRate) || 16000;
+        } else if (data.toString('latin1', 0, 4) === 'RIFF') {
+            ({ pcm, sampleRate } = pcmFromResponse(data, ''));
+        } else {
+            ({ pcm, sampleRate } = await this.decodeAudioBufferToPcm(data, 16000));
+        }
+        const audioMs = Math.round((pcm.length / 2 / sampleRate) * 1000);
+        const language = msg.language || engines.language;
+        const start = Date.now();
+        const text = (await engines.stt.transcribe(pcm, sampleRate, language, await this.buildSttHints())).trim();
+        return { text, sttMs: Date.now() - start, audioMs };
+    }
+
+    /** Reply to a voice message in which speech recognition found nothing. */
+    private nothingHeardText(): string {
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        return lang === 'ru'
+            ? 'В голосовом сообщении я ничего не разобрала.'
+            : lang === 'de'
+              ? 'In der Sprachnachricht habe ich nichts verstanden.'
+              : "I couldn't make out anything in the voice message.";
     }
 
     /**
@@ -3360,20 +3633,45 @@ class Assistant extends Adapter {
      * is applied to the cloud LLM tier; every completed exchange (whichever tier answered) is recorded so
      * later turns have the full thread.
      */
-    private answer(question: string, source = '', origin: JournalOrigin = {}): Promise<string> {
-        if (!question.trim()) {
+    private answer(
+        question: string,
+        source = '',
+        origin: JournalOrigin = {},
+        attachments: Attachments = NO_ATTACHMENTS,
+    ): Promise<string> {
+        if (!question.trim() && !attachments.video) {
             // Nothing to answer — and a model asked with nothing but the time context still costs a request.
             return Promise.resolve('');
         }
         const voice = VOICE_TRANSPORTS.has(origin.transport || '');
-        return this.requestOrigin.run({ source, room: origin.room || '', voice }, () =>
+        // The journal shows "[picture] What is in this picture?", like the conversation history
+        const shown = historyText(question, attachments.images.length, !!attachments.video);
+        return this.requestOrigin.run({ source, room: origin.room || '', voice, attachments }, () =>
             this.journal
-                ? this.journal.run(question, source, origin, () => {
+                ? this.journal.run(shown, source, origin, () => {
                       this.traceSpeechInput(question, origin);
+                      this.traceAttachments(attachments);
                       return this.answerTracked(question, source);
                   })
                 : this.answerTracked(question, source),
         );
+    }
+
+    /** Pictures and video of the request at the head of its trace (sizes only, not the base64). */
+    private traceAttachments({ images, video }: Attachments): void {
+        if (!images.length && !video) {
+            return;
+        }
+        const kb = (base64: string): number => Math.round((base64.length * 3) / 4 / 1024);
+        const parts = [
+            images.length ? `${images.length} picture(s), ${images.reduce((n, i) => n + kb(i.data), 0)} KB` : '',
+            video ? `video ${video.adapter}/${video.path}` : '',
+        ].filter(Boolean);
+        this.journal?.step({
+            stage: 'request',
+            title: `Attachments: ${parts.join(', ')}`,
+            data: { images: images.map(i => ({ mimeType: i.mimeType, kb: kb(i.data) })), video: video || undefined },
+        });
     }
 
     /** Speech recognition happened before the request: put it at the head of its trace. */
@@ -3422,7 +3720,7 @@ class Assistant extends Adapter {
         const followUp = /\[\[LISTEN\]\]/i.test(raw);
         this.followUps.set(source, followUp);
         // A script conversation goes on while the cloud model asks back: the reply goes to it as well.
-        if (cloudOnly && followUp) {
+        if ((cloudOnly === 'script' || cloudOnly === 'scriptReply') && followUp) {
             this.scriptTopics.set(source, Date.now());
         } else {
             this.scriptTopics.delete(source);
@@ -3450,7 +3748,9 @@ class Assistant extends Adapter {
             data: { answer: result, raw: raw !== result ? raw : undefined, followUp, tone: toned || undefined },
         });
         if (useCtx && (result || toned)) {
-            this.context.add(source, question, result || this.doneText());
+            // The pictures are not sent again in later turns; a marker says there were some
+            const { images, video } = this.attachments();
+            this.context.add(source, historyText(question, images.length, !!video), result || this.doneText());
         }
         return result;
     }
@@ -3512,7 +3812,11 @@ class Assistant extends Adapter {
             return 'script';
         }
         const since = this.scriptTopics.get(source);
-        return since !== undefined && Date.now() - since < SCRIPT_TOPIC_MS ? 'scriptReply' : null;
+        if (since !== undefined && Date.now() - since < SCRIPT_TOPIC_MS) {
+            return 'scriptReply';
+        }
+        // Rules and the local model are blind: the caption of a photo is about the photo, not a command
+        return this.attachments().images.length ? 'image' : null;
     }
 
     /**
@@ -3684,6 +3988,14 @@ class Assistant extends Adapter {
         cloudOnly: CloudOnly = null,
     ): Promise<string> {
         this.log.debug(`answer: source='${source}', context=${history.length} turn(s)`);
+        const { images, video } = this.attachments();
+        if (!question.trim() && video) {
+            // A video without a question: nothing looks at videos yet
+            this.log.info(`Video from '${source}' (${video.adapter}/${video.path}) not looked at: not supported yet.`);
+            this.journal?.note({ tier: 'none' });
+            this.journal?.step({ stage: 'none', title: 'A video without a question: videos are not looked at yet' });
+            return videoNotSupportedText(this.answerLanguage());
+        }
         // A ringing timer/alarm is silenced by a stop word ("stop"/"halt"/"aufhören"/…) — checked first so
         // it always wins over the normal pipeline while something is ringing.
         if (this.rings.length && isStopCommand(question)) {
@@ -3710,11 +4022,23 @@ class Assistant extends Adapter {
                 return '';
             }
         }
+        if (images.length && !this.agent && !this.piAgent) {
+            this.log.info(`Pictures from '${source}' not looked at: no cloud model is configured.`);
+            this.journal?.note({ tier: 'none' });
+            this.journal?.step({
+                stage: 'none',
+                level: 'warn',
+                title: 'Pictures came with the request, but no cloud model is configured to look at them',
+            });
+            return noVisionText(this.answerLanguage());
+        }
         if (cloudOnly) {
             const why =
                 cloudOnly === 'script'
                     ? 'it is about a script'
-                    : 'it answers a question of the cloud model about a script';
+                    : cloudOnly === 'scriptReply'
+                      ? 'it answers a question of the cloud model about a script'
+                      : 'pictures came with it, only the cloud model can see them';
             this.log.info(`Routines, NLU and local LLM skipped (source='${source}'): ${why}.`);
             this.journal?.step({
                 stage: 'nlu',
@@ -3793,7 +4117,10 @@ class Assistant extends Adapter {
         // every time voice and text requests alternate.
         const time = this.buildTimeContext();
         const lengthHint = this.spokenLengthHint();
-        const questionForLlm = [time, weather, question, lengthHint].filter(Boolean).join('\n\n');
+        // The pictures themselves go along; only a video needs a word, the model gets nothing of it
+        const questionForLlm = [time, weather, question, attachmentNote(0, !!video), lengthHint]
+            .filter(Boolean)
+            .join('\n\n');
         this.journal?.note({
             tier: 'cloud',
             detail: `${this.llm?.provider || this.config.provider || 'openai'} · ${this.agent.model || 'auto'}`,
@@ -3813,10 +4140,12 @@ class Assistant extends Adapter {
                 devices: deviceLines,
                 time,
                 weather: weather || undefined,
+                images: images.length || undefined,
+                video: video ? `${video.adapter}/${video.path}` : undefined,
             },
         });
         try {
-            return await this.agent.ask(questionForLlm, sys, history);
+            return await this.agent.ask(questionForLlm, sys, history, images);
         } catch (e) {
             // Offline, quota, outage: the local model is the fallback — unless it was already asked above.
             if (useLocal && !localFirst) {
@@ -3858,7 +4187,15 @@ class Assistant extends Adapter {
         if (dropped) {
             this.log.debug(`pi-agent: ${dropped} context block(s) left out, the instructions would be too long.`);
         }
-        const text = [this.buildTimeContext(), weather, this.buildPresenceContext(), question]
+        // An older pi-agent drops the pictures: the note at least tells the model that there were some
+        const { images, video } = this.attachments();
+        const text = [
+            this.buildTimeContext(),
+            weather,
+            this.buildPresenceContext(),
+            question,
+            attachmentNote(images.length, !!video),
+        ]
             .filter(Boolean)
             .join('\n\n');
         this.log.info(`Cloud tier ${harness.instance} (source='${source}') — asking pi-agent…`);
@@ -3867,7 +4204,7 @@ class Assistant extends Adapter {
             // pi-agent asks its questions to confirm a write ("… Say yes or no.") in this language, not in the system
             // language: a satellite listening in Russian does not hear a German "Ja"
             const language = String(this.config.voiceLanguage || this.language || '');
-            return await harness.ask({ text, conversation: source, instructions, language });
+            return await harness.ask({ text, conversation: source, instructions, language, images });
         } catch (e) {
             if (localFallback) {
                 this.log.warn(`pi-agent failed (${(e as Error).message}) — asking the local LLM instead.`);

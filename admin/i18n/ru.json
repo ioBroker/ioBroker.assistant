@@ -226,5 +226,10 @@
   "Speech recognition server (optional)": "Сервер распознавания речи (опционально)",
   "OpenAI-compatible server instead of OpenAI, e.g. a local Whisper: http://192.168.1.10:8000/v1 (speaches, faster-whisper-server, LocalAI). Empty = OpenAI.": "OpenAI-совместимый сервер вместо OpenAI, напр. локальный Whisper: http://192.168.1.10:8000/v1 (speaches, faster-whisper-server, LocalAI). Пусто = OpenAI.",
   "Key of the speech recognition server": "Ключ сервера распознавания речи",
-  "Only if the server wants one. The OpenAI key is never sent to it.": "Только если сервер его требует. Ключ OpenAI туда никогда не отправляется."
+  "Only if the server wants one. The OpenAI key is never sent to it.": "Только если сервер его требует. Ключ OpenAI туда никогда не отправляется.",
+  "Path to ffmpeg": "Путь к ffmpeg",
+  "Empty = the downloaded ffmpeg, otherwise ffmpeg from the search path. Needed for timer/alarm sounds, Telegram voice messages and MP3/Opus replies. Example: /usr/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe": "Пусто = загруженный ffmpeg, иначе ffmpeg из пути поиска (PATH). Нужен для звуков таймера/будильника, голосовых сообщений Telegram и ответов в MP3/Opus. Пример: /usr/bin/ffmpeg или C:\\ffmpeg\\bin\\ffmpeg.exe",
+  "Check ffmpeg": "Проверить ffmpeg",
+  "Download ffmpeg": "Загрузить ffmpeg",
+  "Downloads a static ffmpeg (ffmpeg-static, 20-30 MB) into the data directory of the instance. It is used when no path is entered.": "Загружает статический ffmpeg (ffmpeg-static, 20–30 МБ) в каталог данных экземпляра. Используется, если путь не указан."
 }

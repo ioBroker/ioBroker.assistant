@@ -141,6 +141,23 @@ satellites stay simple. See §7.
   **`assistant.0.text.response`**. The origin is recorded in `text.querySource`.
 - Or from a script: `sendTo('assistant.0', 'ask', { text: 'Is a window open?' }, cb)`.
 - Or use the **Test chat** tab in the adapter settings (works while the instance is running).
+- Or via **Telegram**: select the assistant instance in the telegram adapter. Text messages and **voice
+  messages** then go to the assistant; the answer comes back to the same chat, for a voice message with the
+  recognized text in front (🎤 …). Voice messages need voice enabled with a speech recognition engine on the
+  Voice tab, and **ffmpeg** on the ioBroker host (Telegram sends OGG/Opus). This needs a telegram version
+  that forwards voice messages.
+- A script can send a recording instead of text: `sendTo('assistant.0', 'ask', { audio: <base64>,
+  format: 'ogg', source: 'script' }, cb)` → `{ answer, heard }` (`heard` = the recognized text). `wav` and
+  `pcm` (16-bit mono, `sampleRate`) need no ffmpeg, everything else (ogg, mp3, m4a …) does.
+- **Photos** from Telegram go to the cloud model with their caption as the question (without one: "What is in
+  this picture?"); an album is one question. A script sends pictures the same way: `sendTo('assistant.0', 'ask',
+  { text, images: [{ data: <base64>, mimeType: 'image/jpeg' }] }, cb)` — JPEG, PNG, GIF or WebP, at most 4, each
+  under 3.75 MB. Rules, routines and the local model are skipped (they cannot see), so it needs a cloud provider
+  whose model takes pictures (or pi-agent with picture support); without one the answer says so. Later turns of
+  the conversation only know that there was a picture, they do not get it again.
+- **Videos** are never sent as content: Telegram stores them in its file storage, and `ask` only gets
+  `video: { adapter, path, mimeType, durationSec, size }`. The assistant does not look at videos yet — a video
+  without a question gets a short answer saying so, with a question the model is told about it.
 
 The chat shows every request live — also those from satellites, Telegram and scripts. **Click a question
 or an answer** to open its details for debugging: speech recognition (recording length, duration,
@@ -958,6 +975,16 @@ things that matter, not a diary.
 - **Satellite can't reach the assistant** — make sure the assistant instance is **running**; for
   ioBroker-native transport nothing else is needed, for UDP check the port/host.
 - **Voice tab options hidden** — enable **Enable voice (STT/TTS)** first.
+- **"ffmpeg failed: … ENOENT"** (sounds, Telegram voice messages, MP3/Opus replies) — ffmpeg is missing or not
+  in the search path of the ioBroker process. Install it (`sudo apt install ffmpeg`), click **Download ffmpeg** on
+  the Voice tab or enter the full path under **Path to ffmpeg**; **Check ffmpeg** shows whether it is right.
+  **Download ffmpeg** fetches a static build of [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static)
+  (20–30 MB, GPL, checked against a fixed SHA-256) into the data directory of the instance — for Linux
+  (x64, arm64, arm, ia32), Windows x64 and macOS. It is used while **Path to ffmpeg** is empty, also instead of an
+  installed ffmpeg; delete `iobroker-data/assistant.0/ffmpeg/` to go back to the one from the search path.
+- **An old satellite is still listed** — on the Satellites tab a satellite that is offline shows a trash can
+  instead of the gear; it deletes its objects. A satellite that is online cannot be deleted (it would be
+  re-created at once).
 - **ESPHome satellite stays offline** — the adapter dials the device, so the *device* must be reachable
   on TCP 6053 (`nc -vz <ip> 6053`). Check the address, and that no other controller (a Home Assistant
   instance, for example) already holds the device's voice-assistant subscription.
@@ -996,7 +1023,7 @@ Everything the assistant can do is reachable from a script. The reply always arr
 
 | Command | Message | Answer |
 |---|---|---|
-| `ask` | `{ text, source? }` | `{ answer }` / `{ error }` — the full pipeline, like asking by voice |
+| `ask` | `{ text, source? }` or `{ audio, format, source? }`, optionally `images` / `video` | `{ answer }` / `{ error }` — the full pipeline, like asking by voice; with `audio` also `heard` (the recognized text) |
 | `askUser` | `{ question, room?/target?/source?, timeoutMs? }` | `{ answer }` / `{ timeout: true }` — ask and wait (§9) |
 | `notify` | `{ text, severity?, target?/room?, onlyWhenHome? }` | `{ spoken }` — speak a system notification (§9) |
 | `tts` / `ttsAvailable` | `{ text, language? }` / `{}` | a WAV as base64 / whether an engine is configured |

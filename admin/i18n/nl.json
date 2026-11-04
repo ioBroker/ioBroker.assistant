@@ -226,5 +226,10 @@
   "Speech recognition server (optional)": "Server voor spraakherkenning (optioneel)",
   "OpenAI-compatible server instead of OpenAI, e.g. a local Whisper: http://192.168.1.10:8000/v1 (speaches, faster-whisper-server, LocalAI). Empty = OpenAI.": "OpenAI-compatibele server in plaats van OpenAI, bijv. een lokale Whisper: http://192.168.1.10:8000/v1 (speaches, faster-whisper-server, LocalAI). Leeg = OpenAI.",
   "Key of the speech recognition server": "Sleutel van de spraakherkenningsserver",
-  "Only if the server wants one. The OpenAI key is never sent to it.": "Alleen als de server er een vraagt. De OpenAI-sleutel wordt er nooit naartoe gestuurd."
+  "Only if the server wants one. The OpenAI key is never sent to it.": "Alleen als de server er een vraagt. De OpenAI-sleutel wordt er nooit naartoe gestuurd.",
+  "Path to ffmpeg": "Pad naar ffmpeg",
+  "Empty = the downloaded ffmpeg, otherwise ffmpeg from the search path. Needed for timer/alarm sounds, Telegram voice messages and MP3/Opus replies. Example: /usr/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe": "Leeg = de gedownloade ffmpeg, anders ffmpeg uit het zoekpad. Nodig voor timer-/wekkergeluiden, Telegram-spraakberichten en MP3/Opus-antwoorden. Voorbeeld: /usr/bin/ffmpeg of C:\\ffmpeg\\bin\\ffmpeg.exe",
+  "Check ffmpeg": "ffmpeg controleren",
+  "Download ffmpeg": "ffmpeg downloaden",
+  "Downloads a static ffmpeg (ffmpeg-static, 20-30 MB) into the data directory of the instance. It is used when no path is entered.": "Downloadt een statische ffmpeg (ffmpeg-static, 20-30 MB) naar de gegevensmap van de instantie. Die wordt gebruikt als er geen pad is ingevuld."
 }

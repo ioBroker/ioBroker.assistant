@@ -248,6 +248,7 @@
     "sttFallback": "",
     "ttsFallback": "",
     "ttsMaxChars": 400,
+    "ffmpegPath": "",
     "azureSpeechKey": "",
     "azureSpeechRegion": "",
     "azureVoice": "",

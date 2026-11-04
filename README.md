@@ -57,7 +57,9 @@ the origin in `assistant.0.text.querySource` (satellite name, `chat`, or empty f
 or — if it is a URL/path to an audio file (`.mp3`/`.wav`/…) — played back.
 
 > **Playing audio files needs [ffmpeg](https://ffmpeg.org/) on the host** (Windows and Linux):
-> Linux → `sudo apt install ffmpeg`; Windows → install ffmpeg and add it to the `PATH`.
+> Linux → `sudo apt install ffmpeg`; Windows → install ffmpeg and add it to the `PATH`, or enter its full path
+> under **Path to ffmpeg** on the Voice tab. Without either, **Download ffmpeg** on the Voice tab fetches a static
+> build (ffmpeg-static, 20–30 MB) into the data directory of the instance.
 > Plain-text TTS does not need it — only audio-file playback (mp3/wav/…) does.
 
 ### Start a Hannah satellite pointed at this adapter
@@ -235,6 +237,13 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) Voice messages: `ask` also takes a recording (`audio` as base64 plus `format`, e.g. `ogg`) instead of text. It is recognised with the speech recognition of the Voice tab and answered like a text question; the reply carries the recognised text as `heard`. Telegram uses it for voice messages
+* (@GermanBluefox) Path to ffmpeg can be set on the Voice tab (empty = from the search path), with a button that checks it
+* (@GermanBluefox) Hosts without ffmpeg: "Download ffmpeg" on the Voice tab fetches a static build of ffmpeg-static (20-30 MB, checked against a fixed SHA-256) into the data directory of the instance; it is used while no path is entered
+* (@GermanBluefox) Pictures: `ask` takes `images` (base64 JPEG/PNG/GIF/WebP, at most 4) and passes them to the cloud model (OpenAI-compatible, Anthropic, pi-agent); without a text the question is "What is in this picture?". Rules and the local model are skipped for them. Telegram uses it for photos
+* (@GermanBluefox) Videos: `ask` takes a reference `video: { adapter, path }` into the file storage (never the content). Videos are not looked at yet: without a question the answer says so, with one the model is told
+
 ### 1.4.6 (2026-11-03)
 * (@GermanBluefox) Speech recognition: own OpenAI-compatible server (Voice tab, provider OpenAI, "Speech recognition server"), e.g. a local whisper-large-v3-turbo in speaches, faster-whisper-server or LocalAI. It needs no OpenAI key and never gets it; an own key for the server is optional
 

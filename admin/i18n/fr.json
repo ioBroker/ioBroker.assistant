@@ -226,5 +226,10 @@
   "Speech recognition server (optional)": "Serveur de reconnaissance vocale (facultatif)",
   "OpenAI-compatible server instead of OpenAI, e.g. a local Whisper: http://192.168.1.10:8000/v1 (speaches, faster-whisper-server, LocalAI). Empty = OpenAI.": "Serveur compatible OpenAI à la place d'OpenAI, p. ex. un Whisper local : http://192.168.1.10:8000/v1 (speaches, faster-whisper-server, LocalAI). Vide = OpenAI.",
   "Key of the speech recognition server": "Clé du serveur de reconnaissance vocale",
-  "Only if the server wants one. The OpenAI key is never sent to it.": "Seulement si le serveur en demande une. La clé OpenAI n'y est jamais envoyée."
+  "Only if the server wants one. The OpenAI key is never sent to it.": "Seulement si le serveur en demande une. La clé OpenAI n'y est jamais envoyée.",
+  "Path to ffmpeg": "Chemin vers ffmpeg",
+  "Empty = the downloaded ffmpeg, otherwise ffmpeg from the search path. Needed for timer/alarm sounds, Telegram voice messages and MP3/Opus replies. Example: /usr/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe": "Vide = le ffmpeg téléchargé, sinon ffmpeg du chemin de recherche. Nécessaire pour les sons de minuterie/réveil, les messages vocaux Telegram et les réponses MP3/Opus. Exemple : /usr/bin/ffmpeg ou C:\\ffmpeg\\bin\\ffmpeg.exe",
+  "Check ffmpeg": "Vérifier ffmpeg",
+  "Download ffmpeg": "Télécharger ffmpeg",
+  "Downloads a static ffmpeg (ffmpeg-static, 20-30 MB) into the data directory of the instance. It is used when no path is entered.": "Télécharge un ffmpeg statique (ffmpeg-static, 20 à 30 Mo) dans le répertoire de données de l'instance. Il est utilisé quand aucun chemin n'est indiqué."
 }

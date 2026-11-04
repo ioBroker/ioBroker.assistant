@@ -147,6 +147,24 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
   **`assistant.0.text.response`**. Die Herkunft steht in `text.querySource`.
 - Oder aus einem Skript: `sendTo('assistant.0', 'ask', { text: 'Ist ein Fenster offen?' }, cb)`.
 - Oder den **Test-Chat**-Reiter in den Adapter-Einstellungen nutzen (funktioniert bei laufender Instanz).
+- Oder über **Telegram**: im telegram-Adapter die Assistant-Instanz auswählen. Textnachrichten und
+  **Sprachnachrichten** gehen dann an den Assistenten; die Antwort kommt in denselben Chat, bei einer
+  Sprachnachricht mit dem erkannten Text davor (🎤 …). Für Sprachnachrichten muss im Reiter Voice die
+  Sprache aktiviert und eine Spracherkennung eingerichtet sein, und auf dem ioBroker-Host braucht es
+  **ffmpeg** (Telegram schickt OGG/Opus). Dafür braucht es telegram ab der Version mit
+  Sprachnachrichten-Weiterleitung.
+- Aus einem Skript geht statt Text auch eine Aufnahme: `sendTo('assistant.0', 'ask', { audio: <base64>,
+  format: 'ogg', source: 'skript' }, cb)` → `{ answer, heard }` (`heard` = erkannter Text). `wav` und `pcm`
+  (16 Bit mono, `sampleRate`) gehen ohne ffmpeg, alles andere (ogg, mp3, m4a …) mit.
+- **Fotos** aus Telegram gehen mit ihrer Bildunterschrift als Frage an das Cloud-Modell (ohne: „Was ist auf diesem
+  Bild?“); ein Album ist eine Frage. Ein Skript schickt Bilder genauso: `sendTo('assistant.0', 'ask', { text,
+  images: [{ data: <base64>, mimeType: 'image/jpeg' }] }, cb)` — JPEG, PNG, GIF oder WebP, höchstens 4, je unter
+  3,75 MB. Regeln, Routinen und das lokale Modell werden übersprungen (sie sehen nichts), es braucht also einen
+  Cloud-Anbieter, dessen Modell Bilder nimmt (oder pi-agent mit Bild-Unterstützung); sonst sagt die Antwort das.
+  Spätere Runden des Gesprächs wissen nur, dass es ein Bild gab, sie bekommen es nicht noch einmal.
+- **Videos** werden nie als Inhalt geschickt: Telegram legt sie in seinem Dateispeicher ab, und `ask` bekommt nur
+  `video: { adapter, path, mimeType, durationSec, size }`. Videos sieht sich der Assistent noch nicht an — ein
+  Video ohne Frage bekommt eine kurze Antwort, die das sagt, mit Frage erfährt das Modell davon.
 
 Der Chat zeigt live alle Anfragen — auch die von Satelliten, Telegram und Skripten. **Ein Klick auf eine
 Frage oder Antwort** öffnet die Details zur Fehlersuche: Spracherkennung (Aufnahmelänge, Dauer,
@@ -987,6 +1005,17 @@ sie also auf Dinge, die zählen, statt auf ein Tagebuch.
 - **Satellit erreicht den Assistant nicht** — die Assistant-Instanz muss **laufen**; für ioBroker-nativen
   Transport ist sonst nichts nötig, für UDP Port/Host prüfen.
 - **Voice-Tab-Optionen ausgeblendet** — zuerst **Sprache aktivieren (STT/TTS)**.
+- **„ffmpeg failed: … ENOENT"** (Töne, Telegram-Sprachnachrichten, MP3/Opus-Antworten) — ffmpeg fehlt oder
+  liegt nicht im Suchpfad des ioBroker-Prozesses. Installieren (`sudo apt install ffmpeg`), im Reiter Voice
+  **ffmpeg herunterladen** klicken oder unter **Pfad zu ffmpeg** den vollen Pfad eintragen; **ffmpeg prüfen**
+  zeigt, ob er stimmt. **ffmpeg herunterladen** holt einen statischen Build von
+  [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) (20–30 MB, GPL, gegen eine feste SHA-256 geprüft)
+  ins Datenverzeichnis der Instanz — für Linux (x64, arm64, arm, ia32), Windows x64 und macOS. Er wird genutzt,
+  solange **Pfad zu ffmpeg** leer ist, auch statt eines installierten ffmpeg; wer zurück will, löscht
+  `iobroker-data/assistant.0/ffmpeg/`.
+- **Alter Satellit steht noch in der Liste** — im Reiter Satelliten zeigt ein Satellit, der offline ist, statt
+  des Zahnrads einen Papierkorb; der löscht seine Objekte. Einen Satelliten, der online ist, kann man nicht
+  löschen (er würde sofort neu angelegt).
 - **ESPHome-Satellit bleibt offline** — der Adapter wählt das Gerät an, also muss das *Gerät* auf TCP 6053
   erreichbar sein (`nc -vz <ip> 6053`). Adresse prüfen — und ob nicht schon ein anderer Controller (z. B.
   eine Home-Assistant-Instanz) die Voice-Assistant-Subscription des Geräts hält.
@@ -1025,7 +1054,7 @@ Alles, was der Assistent kann, ist aus einem Skript erreichbar. Die Antwort komm
 
 | Befehl                                               | Message                                                                  | Antwort                                                                      |
 |------------------------------------------------------|--------------------------------------------------------------------------|------------------------------------------------------------------------------|
-| `ask`                                                | `{ text, source? }`                                                      | `{ answer }` / `{ error }` — die komplette Pipeline, wie per Sprache gefragt |
+| `ask`                                                | `{ text, source? }` oder `{ audio, format, source? }`, dazu `images`/`video` | `{ answer }` / `{ error }` — die komplette Pipeline, wie per Sprache gefragt; mit `audio` zusätzlich `heard` (erkannter Text) |
 | `askUser`                                            | `{ question, room?/target?/source?, timeoutMs? }`                        | `{ answer }` / `{ timeout: true }` — fragen und warten (§9)                  |
 | `notify`                                             | `{ text, severity?, target?/room?, onlyWhenHome? }`                      | `{ spoken }` — Systemmeldung sprechen (§9)                                   |
 | `tts` / `ttsAvailable`                               | `{ text, language? }` / `{}`                                             | ein WAV als base64 / ob eine Engine konfiguriert ist                         |

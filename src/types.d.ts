@@ -59,6 +59,11 @@ export interface AdapterConfig {
      */
     ttsMaxChars: number;
     /**
+     * Path to the ffmpeg binary ('' = `ffmpeg` from the PATH). Needed for sounds, Telegram voice messages,
+     * MP3/Opus replies and speech engines that only deliver MP3.
+     */
+    ffmpegPath: string;
+    /**
      * Phrase-triggered macros: a spoken or typed phrase runs a list of actions and answers with a fixed
      * reply. Matched before the rule-based NLU, because a macro the user wrote down must not be
      * reinterpreted. `actions` has the same shape as a trigger's; the settings table stores it as JSON.

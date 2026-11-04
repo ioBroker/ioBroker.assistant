@@ -1510,6 +1510,47 @@
                     "lg": 5,
                     "xl": 5
                 },
+                "ffmpegPath": {
+                    "newLine": true,
+                    "type": "text",
+                    "label": "Path to ffmpeg",
+                    "help": "Empty = the downloaded ffmpeg, otherwise ffmpeg from the search path. Needed for timer/alarm sounds, Telegram voice messages and MP3/Opus replies. Example: /usr/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe",
+                    "default": "",
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 8,
+                    "md": 5,
+                    "lg": 5,
+                    "xl": 5
+                },
+                "_testFfmpeg": {
+                    "type": "sendTo",
+                    "command": "testFfmpeg",
+                    "label": "Check ffmpeg",
+                    "variant": "outlined",
+                    "jsonData": "{\"path\":\"${data.ffmpegPath}\"}",
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 4,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "_downloadFfmpeg": {
+                    "type": "sendTo",
+                    "command": "downloadFfmpeg",
+                    "label": "Download ffmpeg",
+                    "title": "Downloads a static ffmpeg (ffmpeg-static, 20-30 MB) into the data directory of the instance. It is used when no path is entered.",
+                    "variant": "outlined",
+                    "showProcess": true,
+                    "jsonData": "{\"path\":\"${data.ffmpegPath}\"}",
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 4,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
                 "_voiceTest": {
                     "newLine": true,
                     "type": "custom",

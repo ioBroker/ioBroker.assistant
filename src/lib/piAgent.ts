@@ -16,6 +16,8 @@
  * ask that question in the language the satellite listens in.
  */
 
+import type { ImageInput } from './media';
+
 /** Longest instructions pi-agent accepts for a conversation; anything beyond is cut there. */
 export const PI_AGENT_MAX_INSTRUCTIONS = 20000;
 
@@ -40,6 +42,11 @@ export interface PiAgentRequest {
      * system language, and a satellite listening in Russian does not hear a German "Ja" (the STT returns nothing).
      */
     language?: string;
+    /**
+     * Pictures that came with the question (`{ data: base64, mimeType }`, the form of pi-ai's `ImageContent`).
+     * Versions of pi-agent before image support ignore them; the text then says that pictures came along.
+     */
+    images?: ImageInput[];
 }
 
 /**
@@ -98,6 +105,7 @@ export class PiAgentHarness {
                 conversation: conversationOf(req.conversation),
                 instructions: req.instructions,
                 ...(req.language ? { language: req.language } : {}),
+                ...(req.images?.length ? { images: req.images } : {}),
                 requestId,
             },
             { timeout: this.timeoutMs },

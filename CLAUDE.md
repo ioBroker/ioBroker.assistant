@@ -19,6 +19,49 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Bilder (und Video-Verweise) im `ask`** (Nutzerwunsch 2026-11-04, Telegram-Fotos) — `src/lib/media.ts`:
+  `parseAskImages` (base64/Data-URL, Typ per Magic Bytes JPEG/PNG/GIF/WebP — die Angabe des Absenders zählt nicht,
+  max. `MAX_IMAGES` 4, je ≤ 5 MB base64 = Anthropic-Grenze; ein kaputtes Bild → ganze Anfrage `{error}`, weil eine
+  Frage zum Bild ohne Bild geraten würde), `parseAskVideo` (**nur** `{adapter, path, …}` im Dateispeicher, `data` →
+  Fehler; `error` vom Absender = konnte nicht gespeichert werden, z. B. > 20 MB), `redactImages` (Trace + Debug-Dump:
+  `<image/jpeg, 180 KB>` statt base64), Texte de/en/ru. `main.ts`: `Attachments` im `requestOrigin`-Store,
+  `askAttachments()` im `ask`-Handler, ohne Text → `imageOnlyQuestion`. `CloudOnly` + `'image'` (Routinen/NLU/lokales
+  LLM blind; nach `script`/`scriptReply` geprüft, `scriptTopics` nur bei Skript), ohne Cloud-Stufe `noVisionText`;
+  Video ohne Frage → `videoNotSupportedText` (Journal-Stufe `none`), mit Frage `attachmentNote` im User-Turn.
+  Verlauf/Journal-Frage = `historyText` („[picture] …“) — Bilder gehen nicht in spätere Runden. `llm.ts`:
+  `openAiUserContent` (`image_url` Data-URL, auch Gemini/OpenRouter) / `anthropicUserContent` (Bilder vor Text).
+  pi-agent: `images` im `ask` + `attachmentNote` im Text (ältere pi-agent verwerfen die Bilder). **pi-agent** (main,
+  nicht committet): `askImages()` → Content-Array mit pi-ai-`ImageContent`, `chat.pending` hält nur `contentText()`
+  (ein Neustart findet die Submission per requestId), Admin-Chat zeigt „[picture]“; Modelle ohne Bildeingang ersetzt
+  pi-ai selbst durch einen Platzhalter. **Telegram** (Branch `feat/assistant-media`, auf `feat/assistant-timeout`):
+  `forwardsMediaToAssistant` (Config `assistantMedia`, Default an, nur mit `msg.from`), Alben per `media_group_id`
+  1,5 s gesammelt, Foto-Größe ≤ 1600 px (`assistantPhotoSize`), Videos → `telegram.0/assistant/video_<Zeit>_<id>.mp4`
+  (neueste 20), `downloadFileOnce` (Speichern + Weiterleiten = ein Download), die Caption geht dann nicht zusätzlich
+  über `processTelegramText` an den Assistenten. Tests: `media.test.js` hier, `test/images.test.js` in pi-agent,
+  Telegram per Wegwerf-Harness.
+- **Telegram-Sprachnachrichten + ffmpeg-Pfad** (Nutzerwunsch 2026-11-04). `ask` nimmt statt `text` auch
+  `audio` (base64) + `format` (`AskMessage`): `transcribeAsk()` — `pcm` (+`sampleRate`) und RIFF direkt, sonst
+  ffmpeg auf **16 kHz** (`decodeAudioBufferToPcm(buf, rate)`), STT aus `getSpeechEngines()` mit Hints, nur bei
+  `voiceEnabled`. Danach normales `answer(question, source, {sttMs, audioMs})` → Journal mit STT-Schritt;
+  `requestOrigin.voice` bleibt false (Antwort ist Text). Antwort `{answer, heard}`; leere Erkennung →
+  `{heard:'', error: nothingHeardText()}` (de/en/ru); Text gewinnt, wenn beides kommt. **Telegram**
+  (`C:\pWork\ioBroker.telegram`, nicht committet): `saveFile` geteilt in `downloadFile`/`storeFile`, die
+  Sprachnachricht wird **einmal** geladen, gespeichert wie bisher (`communicate.pathFile`) und bei
+  `assistantInstance` + `msg.from` + ohne Caption an `askAssistantByVoice()` gegeben: gleiche Alters- und
+  Nutzerprüfung wie Text (Passwort/`doNotAcceptNewUsers`), `typing`-Action, `ask` mit `format:'ogg'`, Antwort
+  „🎤 <heard>\n\n<answer>“; ein alter Assistant antwortet `empty question` ohne `heard` → einmal warnen, nichts
+  in den Chat. **ffmpeg-Pfad**: Config `ffmpegPath` (Reiter Voice, leer = PATH), `ffmpegBin()` an beiden
+  `spawn`s, `FFMPEG_HINT` in der Fehlermeldung, Knopf `testFfmpeg` (Version + ob libmp3lame/libopus da sind).
+  **ffmpeg herunterladen** (`src/lib/voice/ffmpegStatic.ts`, sendTo `downloadFfmpeg`, Nutzerwunsch 2026-11-04):
+  die Binaries von **ffmpeg-static** (Release `b6.1.1`, `ffmpeg-<platform>-<arch>.gz`), aber **nicht das npm-Paket**
+  — dessen Install-Script lädt 20–30 MB bei jeder Installation, und neuere npm fragen vor Install-Scripts (dann
+  fehlt die Binary still). SHA-256 der `.gz` gepinnt (GitHub liefert `digest` pro Asset), Download per Stream
+  durch Hash → Gunzip → `.part` → rename, nach `<Datenverzeichnis>/ffmpeg/ffmpeg(.exe)`. `ffmpegBin()`:
+  Pfad → heruntergeladenes → `ffmpeg` aus PATH; `downloadedFfmpeg()` prüft **jedes Mal** per `existsSync`
+  (Löschen wirkt ohne Neustart). Der Name täuscht: auf linux-arm64 ist es ffmpeg **7.0.2** (johnvansickle).
+  Test: `ffmpegStatic.test.js`. Auf vitanova: Download, `ask` mit OGG dekodiert, danach wieder gelöscht.
+  Geprüft mit Wegwerf-Harnessen (echte Adapter-Klasse, Fake-adapter-core, echtes OGG/Opus aus ffmpeg, Fake-STT;
+  Telegram mit Fake-Bot). Nicht gegen echtes Telegram/echte STT gelaufen.
 - **Eigener STT-Server (OpenAI-kompatibel)** — Nutzerwunsch 2026-11-03 (whisper-large-v3-turbo im Container daneben).
   Kein eigener Anbieter, sondern Felder am Anbieter `openai`: `sttBaseUrl` + `sttServerKey` (encrypted/protected,
   in `VOICE_FORM_FIELDS`/`VOICE_FORM_SECRETS`), sichtbar bei STT-Anbieter **oder** -Fallback `openai` (wie jetzt
