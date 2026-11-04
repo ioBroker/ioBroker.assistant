@@ -9,7 +9,14 @@ const crypto = require('node:crypto');
 const { pb, encode, decode, registrySize } = require('../../build/lib/voice/esphomeProto.js');
 const { SpeechDetector, rms } = require('../../build/lib/voice/vad.js');
 const { MediaServer } = require('../../build/lib/voice/mediaServer.js');
-const { EsphomeSatellites, speechLevelOf, DEFAULT_SPEECH_LEVEL } = require('../../build/lib/voice/esphome.js');
+const {
+    EsphomeSatellites,
+    speechLevelOf,
+    DEFAULT_SPEECH_LEVEL,
+    yesNoWord,
+    confirmAnswerOf,
+    displayLanguageOption,
+} = require('../../build/lib/voice/esphome.js');
 const { prepareWakeWord } = require('../../build/lib/voice/wakeWords.js');
 const { microModel } = require('./tfliteModel.js');
 
@@ -479,6 +486,7 @@ test('media server serves registered files until they are removed, and nothing e
  * @param objectIds false = like ESPHome 2026 (API 1.19): announcements without `object_id`
  * @param formats `supported_formats` of a media player, as [format, sampleRate, channels, purpose]; null = no player
  * @param stopAfterVadEndMs ask to stop (`VoiceAssistantRequest{start:false}`) this long after STT_VAD_END
+ * @param screen a device with a screen: yes/no buttons (event `confirm_answer`) and a select `display_language`
  */
 function fakeDevice({
     speechMs = 600,
@@ -489,12 +497,15 @@ function fakeDevice({
     objectIds = true,
     formats = null,
     stopAfterVadEndMs = 0,
+    screen = false,
 }) {
     const state = {
         events: [],
         fetched: [],
         streamedMs: 0,
         stoppedBy: null,
+        /** How many pipelines the server accepted (VoiceAssistantResponse) */
+        responses: 0,
         /** When the device stopped sending audio without ending the stream (`stallAfterMs`). */
         stalledAt: 0,
         // The firmware owns the wake-word selection and persists it; mirror that here.
@@ -526,6 +537,24 @@ function fakeDevice({
         state.sendStop = () => {
             const m = new pb.VoiceAssistantRequest();
             m.setStart(false);
+            send(m);
+        };
+        /**
+         * Start a pipeline: with a wake phrase like a wake word, without one like the firmware does after a reply with
+         * continue_conversation. The microphone then hears only the room.
+         */
+        state.startPipeline = (phrase = '') => {
+            elapsed = chirpMs + speechMs;
+            const m = new pb.VoiceAssistantRequest();
+            m.setStart(true);
+            m.setWakeWordPhrase(phrase);
+            send(m);
+        };
+        /** A touch on the screen's yes or no button. */
+        state.press = type => {
+            const m = new pb.EventResponse();
+            m.setKey(50);
+            m.setEventType(type);
             send(m);
         };
 
@@ -690,12 +719,30 @@ function fakeDevice({
                     send(m);
                 }
             }
+            if (screen) {
+                const buttons = new pb.ListEntitiesEventResponse();
+                buttons.setObjectId('confirm_answer');
+                buttons.setKey(50);
+                buttons.setName('Confirm Answer');
+                buttons.setEventTypesList(['yes', 'no']);
+                send(buttons);
+                const language = new pb.ListEntitiesSelectResponse();
+                language.setObjectId('display_language');
+                language.setKey(51);
+                language.setName('Display Language');
+                language.setEntityCategory(1);
+                language.setOptionsList(['Deutsch', 'English', 'Русский']);
+                send(language);
+            }
             send(new pb.ListEntitiesDoneResponse());
             // Like the real device: the current values follow the announcements.
             sendSwitchState(1, false);
             sendNumberState(7, 10);
             sendSelectState(8, 'Medium');
             sendSensorStates();
+            if (screen) {
+                sendSelectState(51, 'English');
+            }
         };
 
         const handle = (name, message) => {
@@ -795,6 +842,7 @@ function fakeDevice({
                     }
                 })();
             } else if (name === 'VoiceAssistantResponse') {
+                state.responses++;
                 pump = setInterval(() => {
                     if (stallAfterMs && elapsed >= stallAfterMs) {
                         // Seen on a ThirdReality speaker: the audio just stops, no end flag, the stream stays open.
@@ -824,7 +872,8 @@ function fakeDevice({
                 const type = message.getEventType();
                 const data = Object.fromEntries(message.getDataList().map(d => [d.getName(), d.getValue()]));
                 state.events.push({ type, data, at: Date.now() });
-                if (type === 12 || type === 4) {
+                // RUN_END while the mic streams stops it, like ESPHome's voice_assistant
+                if (type === 12 || type === 4 || type === 2) {
                     stop(`event ${type}`);
                 }
                 if (type === 12 && stopAfterVadEndMs) {
@@ -842,6 +891,7 @@ function fakeDevice({
                 // start_conversation is how a question re-opens the mic — record it like the firmware would.
                 state.announces.push({
                     mediaId: message.getMediaId(),
+                    text: message.getText(),
                     startConversation: message.getStartConversation(),
                 });
                 void fetch(message.getMediaId()).then(r => {
@@ -950,6 +1000,9 @@ test('wake word → captured audio → STT → answer → TTS url the device fet
         assert.ok(types.includes(type), `missing ${label} event`);
     }
     assert.ok(types.indexOf(12) < types.indexOf(8), 'the mic must be stopped before the reply is sent');
+    // ESPHome keeps the flag of the last INTENT_END that carried it: "0" has to be said, not left out
+    assert.equal(device.events.find(e => e.type === 6).data.continue_conversation, '0');
+    assert.equal(device.events.find(e => e.type === 2).data.continue_conversation, '0');
 
     const ttsEnd = device.events.find(e => e.type === 8);
     assert.match(ttsEnd.data.url, /^http:\/\/127\.0\.0\.1:\d+\/media\/[0-9a-f]+\.wav$/);
@@ -1197,6 +1250,151 @@ test('announce reaches a connected satellite as a media url', async t => {
     assert.equal(device.announces.at(-1).startConversation, true, 'a question must open the mic');
 
     assert.equal(await satellites.announce('does-not-exist', Buffer.alloc(16), 16000), 0);
+});
+
+// ── a satellite with a screen ───────────────────────────────────────────────
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function waitFor(condition, what, ms = 8000) {
+    for (const deadline = Date.now() + ms; !condition(); ) {
+        if (Date.now() > deadline) {
+            throw new Error(`timed out waiting for ${what}`);
+        }
+        await sleep(20);
+    }
+}
+
+test('yes/no word, button event and display language option', () => {
+    assert.equal(yesNoWord('de', true), 'Ja');
+    assert.equal(yesNoWord('ru', false), 'Нет');
+    assert.equal(yesNoWord('zh-cn', true), '是');
+    assert.equal(yesNoWord('xx', true), 'Yes');
+    assert.equal(confirmAnswerOf('yes'), true);
+    assert.equal(confirmAnswerOf(' NO '), false);
+    assert.equal(confirmAnswerOf('maybe'), null);
+    assert.equal(confirmAnswerOf(undefined), null);
+    const names = ['Deutsch', 'English', 'Русский'];
+    assert.equal(displayLanguageOption(names, 'de'), 'Deutsch');
+    assert.equal(displayLanguageOption(names, 'en'), 'English');
+    assert.equal(displayLanguageOption(names, 'ru'), 'Русский');
+    assert.equal(displayLanguageOption(names, 'fr'), null);
+    assert.equal(displayLanguageOption(names, ''), null);
+    // codes instead of names, if the firmware switches to them
+    assert.equal(displayLanguageOption(['de', 'en', 'ru'], 'ru'), 'ru');
+    assert.equal(displayLanguageOption(['de-DE', 'en-US'], 'de'), 'de-DE');
+    assert.equal(displayLanguageOption(['German', 'Russian'], 'ru'), 'Russian');
+});
+
+/** A satellite with a screen whose first request is answered with a question that waits for yes or no. */
+async function screenSatellite(t) {
+    const device = fakeDevice({ speechMs: 600, screen: true });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+    const QUESTION = 'testLamp auf true setzen? Sag ja oder nein.';
+    const asked = [];
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Salon' }],
+        language: 'de',
+        stt: { transcribe: async () => 'schalte die Testlampe ein' },
+        tts: { synthesize: async text => ({ pcm: Buffer.alloc(text.length * 32), sampleRate: 16000 }) },
+        answer: async (question, ctx) => {
+            asked.push({ question, ctx });
+            return asked.length === 1 ? QUESTION : 'Die Testlampe ist jetzt eingeschaltet.';
+        },
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        // like the [[LISTEN]] marker pi-agent puts on its confirmation
+        expectsFollowUp: answer => answer === QUESTION,
+    });
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+    await satellites.start();
+    await waitFor(() => device.events.some(e => e.type === 2), 'the end of the first run');
+    return { device, asked };
+}
+
+test('a screen shows the voice language: set once on connect', async t => {
+    const { device } = await screenSatellite(t);
+    await sleep(200);
+    // English on the device, German in the assistant; the device's echo of the new value is not answered again
+    assert.deepEqual(
+        device.commands.filter(c => c.key === 51),
+        [{ kind: 'select', key: 51, value: 'Deutsch' }],
+    );
+});
+
+test('a yes button answers the open question: the mic closes, the reply is announced', async t => {
+    const { device, asked } = await screenSatellite(t);
+    assert.equal(device.events.find(e => e.type === 6).data.continue_conversation, '1', 'the question continues');
+
+    // The device re-opens the mic for the answer; the user touches "yes" instead of speaking.
+    device.startPipeline('');
+    await waitFor(() => device.responses === 2, 'the follow-up pipeline');
+    await sleep(150);
+    const before = device.events.length;
+    device.press('yes');
+    await waitFor(() => device.announces.length === 1, 'the announced reply');
+
+    const after = device.events.slice(before);
+    assert.ok(
+        after.some(e => e.type === 2),
+        'RUN_END closes the microphone',
+    );
+    assert.ok(!after.some(e => e.type === 0 || e.type === 12), 'no error and no end of speech: nothing was said');
+    assert.equal(device.stoppedBy, 'event 12', 'the first run ended normally');
+    assert.equal(asked.length, 2);
+    assert.equal(asked[1].question, 'Ja', 'the button goes on as the yes word of the voice language');
+    assert.equal(asked[1].ctx.button, 'yes');
+    assert.equal(asked[1].ctx.wakeWord, undefined);
+    assert.deepEqual(
+        { text: device.announces[0].text, startConversation: device.announces[0].startConversation },
+        { text: 'Die Testlampe ist jetzt eingeschaltet.', startConversation: false },
+    );
+    await waitFor(() => device.fetched.length === 2, 'the device fetching the reply');
+
+    // No question open any more: a press changes nothing.
+    device.press('no');
+    await sleep(300);
+    assert.equal(asked.length, 2);
+});
+
+test('a button pressed before the mic opened answers too, and that mic is closed at once', async t => {
+    const { device, asked } = await screenSatellite(t);
+    device.press('no');
+    await waitFor(() => device.announces.length === 1, 'the announced reply');
+    assert.equal(asked[1].question, 'Nein');
+
+    // The firmware still opens the mic for the question (its continue flag): it is closed without a pipeline.
+    const before = device.events.length;
+    device.startPipeline('');
+    await waitFor(() => device.events.length > before, 'the answer to the follow-up request');
+    await sleep(200);
+    assert.deepEqual(
+        device.events.slice(before).map(e => e.type),
+        [2],
+        'only RUN_END: no RUN_START, nothing recorded',
+    );
+    assert.equal(device.responses, 1, 'the follow-up pipeline is not accepted');
+
+    // A wake word afterwards is a new request as usual.
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 2, 'the next pipeline');
+});
+
+test('a button after the user started over with the wake word is not an answer', async t => {
+    const { device, asked } = await screenSatellite(t);
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 2, 'the new pipeline');
+    device.press('yes');
+    await sleep(400);
+    assert.equal(asked.length, 1, 'the press was ignored');
+    assert.equal(device.announces.length, 0);
 });
 
 // ── wake words ──────────────────────────────────────────────────────────────

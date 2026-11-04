@@ -96,6 +96,24 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   jede Zeile einen Raum hat. sendTo `deleteSatellite {id}` (nicht, solange `alive`), GUI: 🗑 statt ⚙ bei offline.
   Tests: `replyFormat.test.js` (eigener FLAC-Decoder + ffmpeg-Gegenprobe), `esphome.test.js` (Fake-Gerät:
   `objectIds:false`, `formats`, `stopAfterVadEndMs`, `sendStop()`).
+- **ESPHome-Satelliten mit Bildschirm + Mikro nur nach Fragen** (Wunsch eines Firmware-Entwicklers, 2026-11-04,
+  `esphome.ts`, gegen ESPHome-dev `voice_assistant.cpp` geprüft, nicht am Gerät). (1) **`continue_conversation`
+  immer explizit** `'1'`/`'0'` in INTENT_END **und** RUN_END: ESPHome setzt das Flag nur in INTENT_END mit dem Key
+  und zurück nur in `request_stop()` → nach **einer** Rückfrage öffnete jede spätere Antwort das Mikro wieder
+  („No text recognized“ nach 5 s). HA schickt „0“ genauso; linux-voice-assistant liest RUN_END und ignoriert „0“.
+  Dazu `ask.ts.endsWithQuestion()`: „?“ zählt nur **am Ende** (vorher überall), Rückfragen mitten im Text brauchen
+  `[[LISTEN]]` (pi-agent setzt es). (2) **Ja/Nein-Knopf**: Event-Entity `confirm_answer` (Typen `yes`/`no`) zählt
+  nur bei offener Frage (`questionUntil` = Antwortlänge + `FOLLOW_UP_START_MS` nach RUN_END mit „1“ bzw. Durchsage
+  mit `start_conversation`; während der Folge-Aufnahme `capture.answersQuestion`; nach Stopp/stiller Aufnahme noch
+  `CONFIRM_GRACE_MS`, weil die Firmware das Mikro beim Tippen evtl. selbst stoppt; Wake-Word = neue Runde → zu).
+  Dann: offene Aufnahme per **RUN_END ohne STT_VAD_END** schließen (Mikro läuft → STOP_MICROPHONE→IDLE, keine
+  Fehleranzeige), `run++`, `opts.answer(yesNoWord(lang), {button})` — pi-agent entscheidet wie bei Sprache —,
+  Antwort als **Durchsage** mit `text` (Display) und `start_conversation` = neue Rückfrage. Ein Folge-Mikro, das das
+  Gerät für die schon beantwortete Frage noch öffnet, wird `IGNORE_FOLLOW_UP_MS` lang sofort per RUN_END beendet.
+  `JournalOrigin.button` im Trace. (3) **Displaysprache**: Select `display_language` einmal pro Verbindung mit dem
+  ersten gemeldeten Zustand abgleichen (`displayLanguageOption`: Name in der Sprache, englischer Name oder Code,
+  `Intl.DisplayNames` + Tabelle); Sprachwechsel = Adapter-Neustart = neuer Abgleich. Tests: `esphome.test.js`
+  (Fake-Gerät `screen:true`, `startPipeline()`, `press()`; gegen den alten Code scheitern 5 von 6), `ask.test.js`.
 - **Skript-Anfragen nur an die Cloud** — `nlu.ts.mentionsScript()` (`SCRIPT_RE`: `skript` überall inkl.
   Komposita, `script` nur am Wortanfang bzw. `java|type`-Präfix — sonst „description"/„subscription" —,
   `скрипт` mit Flexion, `blockly`). `main.ts.cloudOnlyReason()` → `'script'`, oder `'scriptReply'`, wenn das
@@ -264,10 +282,23 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   (2) **Rückfrage-Flag pro Quelle** (`followUps`-Map + `wantsFollowUp`/`followUpFor`) statt des geteilten
   `lastFollowUp`; ESPHome bekommt jetzt auch das `[[LISTEN]]`-Signal, **UDP** schickt `tts_end.listen`
   (im `tts_end`, damit nichts das Audio überholt) und hält `listening` mit Timer (`LISTEN_WINDOW_MS`).
-  (3) **Lib `C:\iot\assistant-satellite`**: UDP-`Satellite` kennt `listen`/`tts_end.listen` (Follow-up-Fenster
+  (3) **Lib `C:\pWork\assistant-satellite`** (`github.com/ioBroker/assistant-satellite`; der alte Pfad
+  `C:\iot\…` existiert nicht mehr): UDP-`Satellite` kennt `listen`/`tts_end.listen` (Follow-up-Fenster
   wie `LocalListener`, ohne Stille an STT zu streamen, `maxFollowUps`, Ansagen zählen nicht als Antwort) und
   `volume` (absolut/relativ, Software-Gain quadratisch, meldet `{type:'volume',level}` zurück; Host-Hooks
   `onVolume`/`mixerVolume`, `setVolume()`). **Noch nicht veröffentlicht** — Wrapper braucht Lib 0.2.0.
+  **Barge-in im ioBroker-Transport** (Nutzerwunsch 2026-11-04, Branch `feat/barge-in-local` in der Lib,
+  `feat/barge-in` im Wrapper `ioBroker.assistant-satellite`, nicht committet): `LocalListener` wertet das Mikro
+  jetzt auch während `processing`/`speaking` aus (`endRecording` wartet die Antwort nicht mehr ab, `answer()`
+  mit `turn`-Zähler) — Wake-Word stoppt die Wiedergabe bzw. verwirft die noch kommende Antwort und nimmt neu
+  auf. `bargeIn` (Default an), `bargeInThreshold` (Schwelle während der Wiedergabe, 0 = gleich), Hook
+  `onWakeWord` (Wrapper stoppt damit Durchsagen), `onUtterance` liefert `text` → eine Antwort, die das Wake-Word
+  selbst sagt („ioBroker“ bei `io_broker`), unterbricht sich nicht (`wakePhrases`/`saysWakeWord`). Test:
+  `test/bargeIn.test.js` in der Lib (Fake-Mic/-Modell/-Wiedergabe; gegen 0.1.7 scheitern 7 von 9). Ohne AEC hört
+  das Mikro die Antwort mit — nicht am echten Gerät geprüft. **ESPHome-Geräte** können das schon in ihrer
+  Firmware: ThirdReality (`Satellite.cpp`: Wake-Word während TTS → Stopp + neue Runde, eingebautes
+  microWakeWord-„stop“ mit Entity `stop_word_sensitivity`, Tippen), Voice PE („stop“ ab 1 s TTS, Wake-Word
+  stoppt). Unser `onPipelineRequest` verwirft dabei die alte Antwort (`run`-Zähler).
   (4) **Lokales LLM = Fallback**, wenn ein Cloud-Provider da ist (`localLlmFirst` stellt es wieder davor);
   `localLlmTimeoutSec` (Default 15) bricht per `AbortSignal` ab, `threads` = Kerne−1, max. 256 Tokens,
   parallele Fragen → `HANDOFF` statt Warten. (5) NLU-Intent **`volumeSet`** („lauter/leiser/Lautstärke 5",

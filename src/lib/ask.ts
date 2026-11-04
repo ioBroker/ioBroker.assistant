@@ -18,6 +18,16 @@ export const ANY_SOURCE = '*';
 /** Default time to wait for an answer before giving up. */
 export const ASK_TIMEOUT_MS = 60_000;
 
+/**
+ * Whether a reply ends with a question, so a satellite should re-open its mic for the answer. Only the end counts:
+ * "Wie spät es ist? Es ist zwölf." waits for nothing, and a mic opened for nothing hears the room and ends with
+ * "No text recognized" (field report 2026-11-04). A model that asks in the middle ("… setzen? Sag ja oder nein.")
+ * marks its reply with [[LISTEN]] instead — pi-agent does that for its confirmations.
+ */
+export function endsWithQuestion(reply: string): boolean {
+    return /[?？؟][\s"'»«“”„)\]]*$/u.test(reply || '');
+}
+
 interface Entry {
     keys: string[];
     question: string;

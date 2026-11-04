@@ -2,7 +2,7 @@
 // Integration test: pending questions (askUser) — arming per source, answer routing, timeout, re-arming.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { PendingQuestions, ANY_SOURCE } = require('../../build/lib/ask.js');
+const { PendingQuestions, ANY_SOURCE, endsWithQuestion } = require('../../build/lib/ask.js');
 
 test('the armed source answers the question', async () => {
     const p = new PendingQuestions();
@@ -90,4 +90,15 @@ test('cancel and cancelAll release their callers', async () => {
     assert.equal(await two, null);
     assert.equal(await three, null);
     assert.deepEqual(p.list(), []);
+});
+
+test('endsWithQuestion: only a question at the end re-opens the mic', () => {
+    assert.equal(endsWithQuestion('Meinst du Büro oder Wohnzimmer?'), true);
+    assert.equal(endsWithQuestion('Какой свет включить? '), true);
+    assert.equal(endsWithQuestion('Soll ich das Licht ausschalten?“'), true);
+    assert.equal(endsWithQuestion('Die Testlampe ist jetzt eingeschaltet.'), false);
+    // a question in the middle waits for nothing; pi-agent marks its confirmation with [[LISTEN]] instead
+    assert.equal(endsWithQuestion('Wie spät es ist? Es ist zwölf Uhr.'), false);
+    assert.equal(endsWithQuestion('testLamp auf true setzen? Sag ja oder nein.'), false);
+    assert.equal(endsWithQuestion(''), false);
 });

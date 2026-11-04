@@ -123,6 +123,8 @@ export interface JournalOrigin {
     audioMs?: number;
     /** Voice activity detection of the utterance (ESPHome) — trace only. */
     vad?: VadReport;
+    /** Answered with the yes/no button of a satellite's screen instead of speech (ESPHome) — trace only. */
+    button?: 'yes' | 'no';
 }
 
 /** What a transport reports after it synthesised the reply. */

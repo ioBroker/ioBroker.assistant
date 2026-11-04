@@ -41,7 +41,7 @@ import { Journal, errorInfo, traceDirFor, type JournalOrigin } from './lib/journ
 import { LocalLlm, installLocalLlm, isLocalLlmInstalled, isHandoff, DEFAULT_LOCAL_MODEL_URL } from './lib/localLlm';
 import { resolveApiKey, resolveVoiceCredentials, type LlmKey } from './lib/credentials';
 import { ConversationStore, type ConversationTurn } from './lib/context';
-import { PendingQuestions, ANY_SOURCE, ASK_TIMEOUT_MS } from './lib/ask';
+import { PendingQuestions, ANY_SOURCE, ASK_TIMEOUT_MS, endsWithQuestion } from './lib/ask';
 import { PresenceTracker, buildPresencePrompt, parsePresenceRows, type PresenceInfo } from './lib/presence';
 import { describeTargets, findTarget, isBroadcast, parseTargetRows, type TargetGroup } from './lib/targets';
 import { matchRoutine, parseRoutineRows, type Routine } from './lib/routines';
@@ -848,6 +848,7 @@ class Assistant extends Adapter {
                     sttMs: origin.sttMs,
                     audioMs: origin.audioMs,
                     vad: origin.vad,
+                    button: origin.button,
                 }),
             onSpoken: (device, info) => this.reportSpoken(device, info),
             getHints: () => this.buildSttHints(),
@@ -1031,11 +1032,10 @@ class Assistant extends Adapter {
 
     /**
      * True when the assistant's reply asks the user something, so a satellite should re-open its mic to
-     * capture the answer without a wake word (→ the `listen` flag of the voice response). Detects a question
-     * mark anywhere, not just at the end, because a clarifying reply often reads "Welches Gerät …? Sag mir …".
+     * capture the answer without a wake word (→ the `listen` flag of the voice response). See {@link endsWithQuestion}.
      */
     private expectsFollowUp(answer: string): boolean {
-        return /[?？]/.test(answer || '');
+        return endsWithQuestion(answer);
     }
 
     /** A transport synthesised the reply to `source`'s latest request — the journal shows it with that request. */

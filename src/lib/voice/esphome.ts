@@ -150,6 +150,112 @@ const NO_TEXT_ERROR = { code: 'stt-no-text-recognized', message: 'No text recogn
  * that was too quiet, not an empty room — worth telling the user where to lower the threshold.
  */
 const QUIET_VOICE_SHARE = 0.4;
+/**
+ * Event entity of a satellite with a screen: the user answered the open question by touch, event type `yes` or `no`.
+ * Pressing it is the same as saying "yes"/"no" into the open microphone — no speech recognition to get it wrong
+ * (a German "Ja" came back as "Я" once).
+ */
+const CONFIRM_ENTITY = 'confirm_answer';
+/** Select entity of a satellite with a screen: the language of the date and the hints it shows. */
+const DISPLAY_LANGUAGE_ENTITY = 'display_language';
+/**
+ * After a reply that asks something: how long, beyond the reply's own length, the device may take to play it and
+ * open the microphone. Until then a button press answers the question.
+ */
+const FOLLOW_UP_START_MS = 10_000;
+/**
+ * A button press still answers the question this long after the follow-up microphone closed: the firmware may stop
+ * the microphone on the press before it reports which button it was.
+ */
+const CONFIRM_GRACE_MS = 3000;
+/**
+ * After a button answer: a follow-up microphone the device opens this soon was asked for by the question the button
+ * already answered, and is closed at once (unless our reply asked something again).
+ */
+const IGNORE_FOLLOW_UP_MS = 15_000;
+
+/** "Yes" and "no" as a button answer is passed on: the words of the satellite's language, which pi-agent also takes. */
+const YES_NO: Record<string, [yes: string, no: string]> = {
+    en: ['Yes', 'No'],
+    de: ['Ja', 'Nein'],
+    ru: ['Да', 'Нет'],
+    pt: ['Sim', 'Não'],
+    nl: ['Ja', 'Nee'],
+    fr: ['Oui', 'Non'],
+    it: ['Sì', 'No'],
+    es: ['Sí', 'No'],
+    pl: ['Tak', 'Nie'],
+    uk: ['Так', 'Ні'],
+    zh: ['是', '不'],
+};
+
+/** The word a yes/no button stands for in `language` (ISO 639-1, `zh-cn` too); English for an unknown one. */
+export function yesNoWord(language: string, yes: boolean): string {
+    const base = (language || 'en').trim().toLowerCase().split(/[-_]/)[0];
+    return (YES_NO[base] ?? YES_NO.en)[yes ? 0 : 1];
+}
+
+/** The event type of a {@link CONFIRM_ENTITY} as yes (true) or no (false); null for anything else. */
+export function confirmAnswerOf(eventType: unknown): boolean | null {
+    const type = typeof eventType === 'string' ? eventType.trim().toLowerCase() : '';
+    if (type === 'yes' || type === 'confirm') {
+        return true;
+    }
+    if (type === 'no' || type === 'cancel') {
+        return false;
+    }
+    return null;
+}
+
+/**
+ * Names of the adapter's languages in that language, for a display-language select. `Intl.DisplayNames` covers the
+ * rest, but a Node.js built with only English ICU data knows no "Deutsch" or "Русский".
+ */
+const NATIVE_LANGUAGE_NAMES: Record<string, string> = {
+    en: 'english',
+    de: 'deutsch',
+    ru: 'русский',
+    pt: 'português',
+    nl: 'nederlands',
+    fr: 'français',
+    it: 'italiano',
+    es: 'español',
+    pl: 'polski',
+    uk: 'українська',
+    zh: '中文',
+};
+
+/**
+ * The option of a display-language select that means `language`: its name in that language ("Deutsch"), in English
+ * ("German") or its code ("de", "de-DE"), case ignored. Null when the device offers none of them.
+ */
+export function displayLanguageOption(options: string[], language: string): string | null {
+    const code = (language || '').trim().toLowerCase();
+    const base = code.split(/[-_]/)[0];
+    if (!base) {
+        return null;
+    }
+    const names = new Set<string>([code, base]);
+    if (NATIVE_LANGUAGE_NAMES[base]) {
+        names.add(NATIVE_LANGUAGE_NAMES[base]);
+    }
+    for (const locale of [base, 'en']) {
+        try {
+            const name = new Intl.DisplayNames([locale], { type: 'language' }).of(base);
+            if (name) {
+                names.add(name.toLocaleLowerCase(locale));
+            }
+        } catch {
+            /* not a language code Intl knows */
+        }
+    }
+    const norm = (option: string): string => option.trim().toLocaleLowerCase();
+    return (
+        options.find(o => names.has(norm(o))) ??
+        options.find(o => norm(o).split(/[-_]/)[0] === base && /^[a-z]{2,3}([-_][a-z0-9]+)?$/.test(norm(o))) ??
+        null
+    );
+}
 
 /** The configured speech threshold of a device, or 0 for the default. Table cells may arrive as strings. */
 export function speechLevelOf(device: EsphomeDevice): number {
@@ -189,17 +295,20 @@ export interface EsphomeSatellitesOptions {
     tts: TtsEngine;
     /**
      * Produce the assistant reply for a transcribed utterance. `audioMs` is the length of the recording,
-     * `vad` what the voice activity detection made of it (both for the request journal).
+     * `vad` what the voice activity detection made of it (both for the request journal). An answer given with the
+     * device's yes/no button ({@link CONFIRM_ENTITY}) comes as the yes or no word, with `button` and no recording.
      */
     answer: (
         question: string,
         ctx: {
             device: string;
             room: string;
-            wakeWord: string;
-            sttMs: number;
-            audioMs: number;
-            vad: VadReport;
+            /** Wake word of the recording; '' = the mic was re-opened for a follow-up; absent for a button. */
+            wakeWord?: string;
+            sttMs?: number;
+            audioMs?: number;
+            vad?: VadReport;
+            button?: 'yes' | 'no';
         },
     ) => Promise<string>;
     /** The reply was synthesised: how long that took and how long it plays (for the request journal). */
@@ -406,6 +515,8 @@ interface Capture {
     conversationId: string;
     /** Wake word that opened this capture; '' when the mic was re-opened for a follow-up/question. */
     wakeWord: string;
+    /** The mic was re-opened for a reply that asked something: a yes/no button press answers it too. */
+    answersQuestion: boolean;
     timer: NodeJS.Timeout;
     /** Watches for a device that stops sending audio without ending the stream. */
     stallCheck: NodeJS.Timeout;
@@ -461,6 +572,15 @@ class EsphomeConnection {
     private errorSentAt = 0;
     /** The reply format last reported in the log, to log it again only when it changes. */
     private loggedFormat = '';
+    /**
+     * The last reply asked something (`continue_conversation`, or an announcement with `start_conversation`): until
+     * when a yes/no button press answers it while no follow-up recording is open. 0 = no open question.
+     */
+    private questionUntil = 0;
+    /** After a button answer: until when a follow-up microphone is the stale one of the answered question. */
+    private ignoreFollowUpUntil = 0;
+    /** The display language was compared with ours since the last connect. */
+    private displayLanguageChecked = false;
 
     constructor(
         device: EsphomeDevice,
@@ -509,6 +629,7 @@ class EsphomeConnection {
         // reboots, so starting from a clean slate is the only safe option.
         this.entities.clear();
         this.configChecks = [];
+        this.displayLanguageChecked = false;
 
         const socket = net.createConnection({ host: this.host, port: this.port }, () => {
             this.opts.log.debug(`ESPHome ${this.host}:${this.port} connected`);
@@ -536,6 +657,8 @@ class EsphomeConnection {
         // A reply still being worked out must not land on the next connection, in the middle of another run.
         this.run++;
         this.runOpen = false;
+        this.questionUntil = 0;
+        this.ignoreFollowUpUntil = 0;
         if (this.online) {
             this.opts.log.info(`ESPHome satellite offline: ${this.deviceName}`);
         }
@@ -782,9 +905,119 @@ class EsphomeConnection {
                     const entity = this.entities.applyState(name, message);
                     if (entity) {
                         this.opts.onEntityState?.(this.deviceName, this.room, entity);
+                        this.onEntityChange(entity);
                     }
                 }
                 return;
+        }
+    }
+
+    /** Entities of a satellite with a screen that take part in the conversation (see {@link CONFIRM_ENTITY}). */
+    private onEntityChange(entity: EsphomeEntity): void {
+        if (entity.objectId === CONFIRM_ENTITY && entity.kind === 'event') {
+            this.onConfirmButton(entity.value);
+        } else if (entity.objectId === DISPLAY_LANGUAGE_ENTITY && entity.kind === 'select') {
+            // Once per connect, with the state the device reports on subscribing: a language the user picks on the
+            // device afterwards stays until the next connect (a change of the voice language restarts the adapter).
+            if (!this.displayLanguageChecked) {
+                this.displayLanguageChecked = true;
+                this.syncDisplayLanguage(entity);
+            }
+        }
+    }
+
+    /** Show the device's screen in the voice language, if it offers that language. */
+    private syncDisplayLanguage(entity: EsphomeEntity): void {
+        const language = this.opts.language;
+        if (!language) {
+            return;
+        }
+        const option = displayLanguageOption(entity.options ?? [], language);
+        if (!option) {
+            this.opts.log.debug(
+                `ESPHome ${this.deviceName}: ${DISPLAY_LANGUAGE_ENTITY} has no option for "${language}" ` +
+                    `(${(entity.options ?? []).join(', ')})`,
+            );
+            return;
+        }
+        if (entity.value === option) {
+            return;
+        }
+        const shown = typeof entity.value === 'string' ? entity.value : '?';
+        this.opts.log.info(`ESPHome ${this.deviceName}: display language ${shown} → ${option}`);
+        this.setEntity(DISPLAY_LANGUAGE_ENTITY, option);
+    }
+
+    /** Whether a yes/no button press now answers a question the last reply asked. */
+    private questionOpen(): boolean {
+        return !!this.capture?.answersQuestion || Date.now() < this.questionUntil;
+    }
+
+    /**
+     * The user pressed yes or no on the device's screen. While a reply waits for an answer that is the answer: the
+     * microphone opened for it is closed, the yes or no word goes on as the user's reply (pi-agent decides its
+     * confirmation on it like on a spoken one), and the reply to that is announced on this device.
+     */
+    private onConfirmButton(eventType: unknown): void {
+        const yes = confirmAnswerOf(eventType);
+        if (yes === null) {
+            this.opts.log.debug(
+                `ESPHome ${this.deviceName}: ${CONFIRM_ENTITY} "${String(eventType)}" — not yes/no, ignored`,
+            );
+            return;
+        }
+        if (!this.questionOpen()) {
+            this.opts.log.debug(
+                `ESPHome ${this.deviceName}: ${CONFIRM_ENTITY} "${yes ? 'yes' : 'no'}" without an open question — ignored`,
+            );
+            return;
+        }
+        this.questionUntil = 0;
+        if (this.capture) {
+            // A RUN_END while the microphone streams stops it and puts the device back to idle — without the error
+            // display an empty recognition would end with.
+            this.abortCapture();
+            this.event(EVENT.RUN_END);
+        }
+        // Whatever is still in flight for the question stays silent; so does the follow-up microphone the device may
+        // still open for it.
+        const run = ++this.run;
+        this.ignoreFollowUpUntil = Date.now() + IGNORE_FOLLOW_UP_MS;
+        void this.answerButton(yes, run);
+    }
+
+    /** Pass a button answer on and announce the reply (see {@link onConfirmButton}). */
+    private async answerButton(yes: boolean, run: number): Promise<void> {
+        const text = yesNoWord(this.opts.language, yes);
+        this.opts.log.info(`ESPHome ${this.deviceName}: answered "${text}" with the button`);
+        this.status('processing');
+        try {
+            const answer = (
+                await this.opts.answer(text, { device: this.deviceName, room: this.room, button: yes ? 'yes' : 'no' })
+            ).trim();
+            if (run !== this.run) {
+                return;
+            }
+            if (!answer) {
+                this.status('idle');
+                return;
+            }
+            const followUp = this.opts.expectsFollowUp?.(answer, this.deviceName) === true;
+            const ttsStart = Date.now();
+            const { pcm, sampleRate } = await this.opts.tts.synthesize(answer, this.opts.language);
+            if (run !== this.run) {
+                return;
+            }
+            this.opts.onSpoken?.(this.deviceName, {
+                ms: Date.now() - ttsStart,
+                audioMs: (pcm.length / 2 / sampleRate) * 1000,
+            });
+            await this.announce(pcm, sampleRate, followUp, answer);
+        } catch (e) {
+            this.opts.log.warn(`ESPHome ${this.deviceName}: answer to the button failed — ${(e as Error).message}`);
+            if (run === this.run) {
+                this.status('idle');
+            }
         }
     }
 
@@ -833,14 +1066,28 @@ class EsphomeConnection {
             this.opts.log.debug(`ESPHome ${this.deviceName}: pipeline already running — ignoring wake`);
             return;
         }
+        const phrase = request.getWakeWordPhrase();
+        if (!phrase && Date.now() < this.ignoreFollowUpUntil) {
+            // The microphone for the question a button already answered: close it at once. In this state the device
+            // takes a RUN_END as "stop the microphone" and goes back to idle.
+            this.ignoreFollowUpUntil = 0;
+            this.opts.log.debug(`ESPHome ${this.deviceName}: follow-up of a question answered by button — closing it`);
+            this.event(EVENT.RUN_END);
+            return;
+        }
         if (this.runOpen) {
             // The device started over while the last request was still being answered: that answer is not
             // wanted any more, and its events would land in the middle of the new run.
             this.opts.log.debug(`ESPHome ${this.deviceName}: new wake while answering — dropping the old reply`);
         }
         this.run++;
+        // Without a wake word the device re-opened the mic for the reply that asked something; with one, the user
+        // started over and the question is gone.
+        const answersQuestion = !phrase && Date.now() < this.questionUntil;
+        if (phrase) {
+            this.questionUntil = 0;
+        }
 
-        const phrase = request.getWakeWordPhrase();
         this.opts.log.debug(`ESPHome ${this.deviceName}: wake "${phrase || '(follow-up)'}"`);
 
         const response = new pb.VoiceAssistantResponse();
@@ -875,6 +1122,7 @@ class EsphomeConnection {
             }),
             conversationId: request.getConversationId(),
             wakeWord: phrase || '',
+            answersQuestion,
             timer,
             stallCheck,
             startedAt: Date.now(),
@@ -899,6 +1147,8 @@ class EsphomeConnection {
      */
     private onStopRequest(): void {
         const running = !!this.capture || this.runOpen;
+        // A device with yes/no buttons may stop its microphone on the press before it reports which button it was.
+        this.questionUntil = this.questionOpen() ? Date.now() + CONFIRM_GRACE_MS : 0;
         this.abortCapture();
         if (running) {
             this.run++; // whatever is still being answered stays silent
@@ -1011,6 +1261,12 @@ class EsphomeConnection {
                 `${startedAt}, ${endedBy})`,
         );
 
+        if (capture.answersQuestion) {
+            // Spoken: that is the answer, a button press now would be a second one. Silent: the buttons still answer
+            // for a moment, as the screen may still show them.
+            this.questionUntil = capture.detector.sawSpeech ? 0 : Date.now() + CONFIRM_GRACE_MS;
+        }
+
         if (!pcm.length || !capture.detector.sawSpeech) {
             const loudest = Math.round(capture.detector.analysedPeak);
             const gate = Math.round(capture.detector.startLevel);
@@ -1070,6 +1326,9 @@ class EsphomeConnection {
                     `Voice Q (${this.deviceName}): (empty) — speech recognition returned no text for ${seconds.toFixed(1)} s of audio`,
                 );
                 this.discard(capture, pcm, 'empty-stt', vad);
+                if (capture.answersQuestion) {
+                    this.questionUntil = Date.now() + CONFIRM_GRACE_MS;
+                }
                 // No STT_END without text — like Home Assistant, which reports this case as an error only.
                 this.endWithoutRequest();
                 return;
@@ -1092,7 +1351,11 @@ class EsphomeConnection {
                 return;
             }
             const followUp = !!answer && this.opts.expectsFollowUp?.(answer, this.deviceName) === true;
-            this.event(EVENT.INTENT_END, followUp ? { continue_conversation: '1' } : undefined);
+            // Always say it, "0" included: ESPHome keeps the flag of the last INTENT_END that carried it, so after
+            // one question every later reply re-opened the microphone (field report 2026-11-04). Home Assistant
+            // sends "0" just the same.
+            const conversation = { continue_conversation: followUp ? '1' : '0' };
+            this.event(EVENT.INTENT_END, conversation);
 
             if (!answer) {
                 this.event(EVENT.RUN_END);
@@ -1117,7 +1380,11 @@ class EsphomeConnection {
             this.status('speaking');
             this.event(EVENT.TTS_START, { text: answer });
             this.event(EVENT.TTS_END, { url });
-            this.event(EVENT.RUN_END, followUp ? { continue_conversation: '1' } : undefined);
+            // linux-voice-assistant reads the flag here (ignoring "0"), ESPHome at INTENT_END
+            this.event(EVENT.RUN_END, conversation);
+            this.questionUntil = followUp
+                ? Date.now() + (ttsPcm.length / 2 / sampleRate) * 1000 + FOLLOW_UP_START_MS
+                : 0;
             this.armPlaybackTimeout();
         } catch (e) {
             const reason = (e as Error).message;
@@ -1231,17 +1498,23 @@ class EsphomeConnection {
      * Speak a ready PCM buffer on this device (timers, alarms, `tts.text`, jingles). With
      * `startConversation` the microphone opens once the clip has played, to catch the answer to a question.
      */
-    async announce(pcm: Buffer, sampleRate: number, startConversation = false): Promise<void> {
+    async announce(pcm: Buffer, sampleRate: number, startConversation = false, text = ''): Promise<void> {
         if (!this.online || !pcm.length) {
             return;
         }
         const request = new pb.VoiceAssistantAnnounceRequest();
         request.setMediaId(await this.publish(pcm, sampleRate));
-        request.setText('');
+        // What a device with a screen shows while it plays (its on_tts_start)
+        request.setText(text);
         request.setPreannounceMediaId('');
         // Needs feature flag 32 (START_CONVERSATION); on a device without it the clip still plays and
         // only the microphone stays shut, so there is nothing to guard here.
         request.setStartConversation(startConversation);
+        if (startConversation) {
+            // A question: the microphone the device opens after it is wanted, and a button press answers it
+            this.ignoreFollowUpUntil = 0;
+            this.questionUntil = Date.now() + (pcm.length / 2 / sampleRate) * 1000 + FOLLOW_UP_START_MS;
+        }
         this.status('speaking');
         this.send(request);
         this.armPlaybackTimeout();
