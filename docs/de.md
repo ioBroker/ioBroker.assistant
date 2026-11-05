@@ -180,6 +180,17 @@ alle Tool-Aufrufe mit vollständigen Argumenten und Ergebnissen, gelesene und ge
 die Sprachausgabe — mit Zeitleiste und als JSON zum Kopieren oder Herunterladen. Die Details werden für
 die letzten 200 Anfragen aufbewahrt.
 
+**Dialog** (der Knopf mit dem sprechenden Kopf links neben dem Eingabefeld): Das Mikrofon des Browsers bleibt
+offen, und alles, was du sagst, wird zur Frage — ohne Wake-Word und ohne Klick, bis du den Knopf noch einmal
+drückst. Der Browser merkt, wann du aufhörst zu sprechen (eine Pause von etwa einer Sekunde, nach einer längeren
+Anfrage etwas mehr), die Aufnahme geht an den Assistenten und wird von der Spracherkennung des Reiters Sprache
+erkannt, die Antwort wird mit der Stimme der Satelliten vorgelesen (mit der des Browsers, wenn es keine
+Sprachausgabe gibt), und danach hört er wieder zu. Während er nachdenkt und spricht, hört er nicht zu, damit er
+sich nicht selbst antwortet. Die Antworten sind so kurz wie an einem Satelliten. Es braucht die eingeschaltete
+Sprache mit einer Spracherkennung und den Admin über https oder auf localhost (nur dort erlauben Browser das
+Mikrofon). Jede Äußerung geht an die Spracherkennung — bei einer Cloud-Engine auch ein Husten oder ein Gespräch im
+Raum; eine Aufnahme ohne erkennbaren Text wird still verworfen.
+
 ### Wetter
 
 Wetterfragen (*„Wie ist das Wetter?"*, *„Regnet es morgen?"*) beantwortet der Assistent aus einem

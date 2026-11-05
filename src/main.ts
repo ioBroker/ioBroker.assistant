@@ -227,6 +227,8 @@ interface AskMessage {
     sampleRate?: number;
     /** Recognition language; default = the voice language. */
     language?: string;
+    /** The caller reads the answer aloud (dialog mode of the admin chat): the model is asked for a short spoken answer. */
+    spoken?: boolean;
     /** Pictures for the cloud model: `[{ data: base64, mimeType }]`, at most 4 (see lib/media). */
     images?: unknown;
     /** A video, never as content: `{ adapter, path, mimeType?, durationSec?, size? }` of the ioBroker file storage. */
@@ -3821,7 +3823,8 @@ class Assistant extends Adapter {
         this.setStateAsync('text.request', { val: shown, ack: true }).catch(() => {});
         this.setQuerySource(source);
         try {
-            const answer = await this.answer(question, source, heard ?? {}, attachments);
+            const spoken = typeof message !== 'string' && message?.spoken === true;
+            const answer = await this.answer(question, source, heard ?? {}, attachments, spoken);
             this.log.info(`A: ${answer}`);
             this.setStateAsync('text.response', { val: answer, ack: true }).catch(() => {});
             if (obj.callback) {
@@ -3938,13 +3941,16 @@ class Assistant extends Adapter {
         source = '',
         origin: JournalOrigin = {},
         attachments: Attachments = NO_ATTACHMENTS,
+        /** The answer is read aloud although the request came by `ask` (dialog mode of the admin chat). */
+        spoken = false,
     ): Promise<string> {
         if (!question.trim() && !attachments.video) {
             // Nothing to answer — and a model asked with nothing but the time context still costs a request.
             return Promise.resolve('');
         }
-        const voice = VOICE_TRANSPORTS.has(origin.transport || '');
-        const satellite = voice ? this.knownSatelliteId(origin.satellite || source, origin.room || '') : '';
+        const fromSatellite = VOICE_TRANSPORTS.has(origin.transport || '');
+        const voice = fromSatellite || spoken;
+        const satellite = fromSatellite ? this.knownSatelliteId(origin.satellite || source, origin.room || '') : '';
         // The journal shows "[picture] What is in this picture?", like the conversation history
         const shown = historyText(question, attachments.images.length, !!attachments.video);
         return this.requestOrigin.run({ source, room: origin.room || '', voice, satellite, attachments }, () =>

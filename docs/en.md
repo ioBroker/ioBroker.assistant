@@ -171,6 +171,17 @@ run locally), the full prompt and every round of the language model with token c
 with complete arguments and results, the states read and written, and speech synthesis — as a timeline,
 and as JSON to copy or download. Details are kept for the latest 200 requests.
 
+**Dialog** (the button with the speaking head left of the input field): the microphone of the browser stays
+open, and everything you say becomes a question — without a wake word and without a click, until you press the
+button again. The browser notices when you stop talking (a pause of about a second, longer after a longer
+request), the recording goes to the assistant and is recognized by the speech recognition of the Voice tab, the
+answer is read aloud with the voice of the satellites (the browser's voice if there is no speech output), and
+then it listens again. While it thinks and speaks it does not listen, so it does not answer itself. The answers
+are kept as short as for a satellite. It needs voice enabled with a speech recognition engine, and the admin
+over https or on localhost (browsers allow the microphone only there). Every utterance goes to the speech
+recognition — with a cloud engine also a cough or a conversation in the room; a recording without recognizable
+text is dropped silently.
+
 ### Weather
 
 Weather questions (*"What's the weather like?"*, *"Will it rain tomorrow?"*) are answered from a weather

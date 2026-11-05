@@ -19,6 +19,19 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Dialog-Modus im Chat-Tab** (Nutzerwunsch 2026-11-05): Knopf `RecordVoiceOver` links vom Eingabefeld, nur bei
+  `VoiceDialog.supported` (Secure Context + getUserMedia), aktiv nur mit `voiceEnabled`. `src-admin/src/voiceDialog.ts`:
+  `VoiceDialog` (getUserMedia mit AEC/NS/AGC, ScriptProcessor 2048 → `Resampler` linear auf 16 kHz),
+  `UtteranceDetector` (Energie-Gate wie `vad.ts`: Rauschboden, Kandidat ≥ 250 ms, Lücke 300 ms, Stille 1 s bzw. 1,6 s
+  nach 2,5 s Rede, max 30 s, Pre-Roll 400 / Tail 300 ms; `BROWSER_DETECTOR` min 400/240 — Browser-Mikro mit AGC).
+  **Halbduplex**: während `ask` und Vorlesen wird das Mikro nicht ausgewertet, danach 400 ms Pause, Detektor-Reset
+  (Rauschboden bleibt). `ChatComponent.dialogTurn` → `ask {audio: PCM base64, format:'pcm', sampleRate:16000,
+  spoken:true}` (Quelle `chat` = gleiche Konversation wie getippt), `heard:''` → still weiter, Antwort per `tts`-sendTo
+  (Satellitenstimme), sonst `speechSynthesis` in `voiceLanguage`, Schutz-Timeout. Backend: `AskMessage.spoken` →
+  `answer(…, spoken)` setzt `requestOrigin.voice` → Längenhinweis wie bei Satelliten (Satellit bleibt leer).
+  Detektor/Resampler mit synthetischem Audio geprüft (Scratch, `--experimental-transform-types`), nicht im echten
+  Browser am Mikro. ⚠️ `src-admin`-`tsc` (TS 7) lehnt die eigene tsconfig ab (`esModuleInterop=false`,
+  `moduleResolution=node10`) — Typprüfung mit Root-`tsc` 6 + `ignoreDeprecations:"6.0"`; Vite prüft keine Typen.
 - **ai-parakeet als STT + Installations-Knöpfe für pi-agent/ai-parakeet** (Nutzerwunsch 2026-11-05). Anbieter
   `parakeet` (auch als Reserve): `src/lib/voice/parakeet.ts` `ParakeetStt` → `sendTo(<inst>,'transcribe',{pcm base64,
   sampleRate, prompt})` (Buffer würde als JSON-Zahlenarray serialisiert; Sprache geht nicht mit, das Modell erkennt
