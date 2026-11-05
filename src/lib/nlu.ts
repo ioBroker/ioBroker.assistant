@@ -879,6 +879,36 @@ export function mentionsScript(text: string): boolean {
     return SCRIPT_RE.test(normalize(text));
 }
 
+/** "Dialogmodus", "dialog mode", "режим диалога" and their variants (on normalized text). */
+const DIALOG_MODE_RE =
+    /(?<![\p{L}])(?:dialog\p{L}*[\s-]*modus|gespraechs[\s-]*modus|unterhaltungs[\s-]*modus|dialog(?:ue)?[\s-]*mode|conversation[\s-]*mode|режим\p{L}*\s+(?:диалог|разговор)\p{L}*|диалогов\p{L}*\s+режим\p{L}*)(?![\p{L}])/iu;
+const DIALOG_ON_RE =
+    /(?<![\p{L}])(?:an|ein|einschalten|anschalten|anmachen|aktivier\p{L}*|start\p{L}*|beginn\p{L}*|on|enable\p{L}*|activate\p{L}*|включ\p{L}*|запуст\p{L}*|начн\p{L}*|начать|активир\p{L}*)(?![\p{L}])/iu;
+const DIALOG_OFF_RE =
+    /(?<![\p{L}])(?:aus|ausschalten|ausmachen|deaktivier\p{L}*|beend\p{L}*|stopp?\p{L}*|ende|off|disable\p{L}*|deactivate\p{L}*|end|exit|quit|выключ\p{L}*|отключ\p{L}*|останов\p{L}*|заверш\p{L}*|законч\p{L}*|выйд\p{L}*|выход\p{L}*)(?![\p{L}])/iu;
+/** A question about the dialog mode is not a command to switch it ("how do I switch the dialog mode on?"). */
+const DIALOG_QUESTION_RE =
+    /^(?:wie|was|warum|wieso|weshalb|wozu|wofuer|gibt es|ist|sind|how|what|why|is|are|как|что|зачем|почему)(?![\p{L}])|(?<![\p{L}])ли(?![\p{L}])/iu;
+
+/**
+ * "Dialogmodus an" / "dialog mode off" / "включи режим диалога": switch the dialog mode of the satellite (it listens
+ * again after every answer, without the wake word). null when the text is no such command — a question about it, a
+ * longer sentence that only mentions it, or one that says both on and off.
+ */
+export function dialogCommand(text: string): 'on' | 'off' | null {
+    const norm = normalize(text)
+        .replace(/[.,!;:"„“«»]/g, ' ')
+        .trim();
+    if (!DIALOG_MODE_RE.test(norm) || DIALOG_QUESTION_RE.test(norm) || norm.split(/\s+/).length > 8) {
+        return null;
+    }
+    // only the words around the mode phrase say on or off
+    const rest = norm.replace(DIALOG_MODE_RE, ' ');
+    const on = DIALOG_ON_RE.test(rest);
+    const off = DIALOG_OFF_RE.test(rest);
+    return on === off ? null : on ? 'on' : 'off';
+}
+
 /** Normalize for matching: lowercase, German umlauts → ascii, ß → ss, Russian ё → е. */
 export function normalize(s: string): string {
     return s

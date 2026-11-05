@@ -2,7 +2,14 @@
 // Integration test: rule-based NLU (device command parsing) — the offline fast-path.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Nlu, normalize, splitCommands, spelledNumbersToDigits, mentionsScript } = require('../../build/lib/nlu.js');
+const {
+    Nlu,
+    normalize,
+    splitCommands,
+    spelledNumbersToDigits,
+    mentionsScript,
+    dialogCommand,
+} = require('../../build/lib/nlu.js');
 
 const light = {
     name: 'Licht',
@@ -844,5 +851,38 @@ test('mentionsScript: a request about a script goes to the cloud model, whatever
         'дверь скрипит',
     ]) {
         assert.equal(mentionsScript(text), false, text);
+    }
+});
+
+test('dialogCommand: switching the dialog mode of a satellite, but not a question about it', () => {
+    for (const [text, wanted] of [
+        ['ioBroker, Dialogmodus an', 'on'],
+        ['Dialogmodus an.', 'on'],
+        ['Schalte den Dialog-Modus ein', 'on'],
+        ['Gesprächsmodus aktivieren', 'on'],
+        ['Dialogmodus aus', 'off'],
+        ['Dialogmodus beenden!', 'off'],
+        ['Mach den Dialog Modus aus', 'off'],
+        ['turn on dialog mode', 'on'],
+        ['conversation mode off', 'off'],
+        ['exit dialogue mode', 'off'],
+        ['включи режим диалога', 'on'],
+        ['Режим разговора включить', 'on'],
+        ['выключи режим диалога', 'off'],
+        ['Заверши диалоговый режим', 'off'],
+    ]) {
+        assert.equal(dialogCommand(text), wanted, text);
+    }
+    for (const text of [
+        'Wie schalte ich den Dialogmodus an?',
+        'Ist der Dialogmodus an?',
+        'is dialog mode on',
+        'Включен ли режим диалога?',
+        'Dialogmodus',
+        'Dialogmodus an oder aus',
+        'Licht an',
+        'Erklär mir bitte ganz genau, was der Dialogmodus macht, wenn ich ihn an der Box einschalte',
+    ]) {
+        assert.equal(dialogCommand(text), null, text);
     }
 });

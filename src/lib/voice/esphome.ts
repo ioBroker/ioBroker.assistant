@@ -20,6 +20,11 @@
  *
  * Two consequences shape this file: end-of-speech detection is ours (`vad.ts`), and the spoken reply
  * has to be reachable over HTTP (`mediaServer.ts`) rather than streamed down the socket.
+ *
+ * The first one also makes the **dialog mode** possible ({@link EsphomeConnection.setDialog}): the device streams as
+ * long as we do not end the utterance, so while nobody speaks the detector just starts over, and every reply asks the
+ * device to open its microphone again (`continue_conversation`). Talking goes on without a wake word until the mode
+ * is switched off, the device is stopped, or nobody said anything for {@link DIALOG_IDLE_MS}.
  */
 import * as net from 'node:net';
 import {
@@ -44,6 +49,7 @@ import { levelProfile, type DiscardedCapture, type DiscardReason } from './captu
 import type { SttEngine } from './stt';
 import type { TtsEngine } from './tts';
 import type { SatelliteState } from './protocol';
+import { confirmationTone } from './tone';
 
 /** `VoiceAssistantEvent` (api.proto) — the subset we emit. */
 const EVENT = {
@@ -175,6 +181,22 @@ const CONFIRM_GRACE_MS = 3000;
  * already answered, and is closed at once (unless our reply asked something again).
  */
 const IGNORE_FOLLOW_UP_MS = 15_000;
+/**
+ * Dialog mode: nobody spoke for this much audio — the detector starts over on the audio that keeps coming (no new pipeline,
+ * the device does not notice), so its noise floor, its limits and the memory of the recording stay those of a request.
+ */
+const DIALOG_WINDOW_MS = 10_000;
+/** Dialog mode: the longest request. */
+const DIALOG_MAX_SPEECH_MS = 20_000;
+/** Dialog mode ends by itself when nothing was said for this long. */
+export const DIALOG_IDLE_MS = 5 * 60_000;
+/** How often the dialog mode checks whether it ran idle. */
+const DIALOG_CHECK_MS = 5000;
+/**
+ * Dialog mode, nothing recognised (a cough, the TV): a reply of this much silence ends the run and makes the device
+ * open its microphone again — an ESPHome device does that only after a reply has played.
+ */
+const DIALOG_PAUSE_MS = 250;
 
 /** "Yes" and "no" as a button answer is passed on: the words of the satellite's language, which pi-agent also takes. */
 const YES_NO: Record<string, [yes: string, no: string]> = {
@@ -352,11 +374,19 @@ export interface EsphomeSatellitesOptions {
      */
     onDiscarded?: (capture: DiscardedCapture) => void;
     /**
+     * The dialog mode of a satellite changed — also by itself: the device was stopped, went offline, nothing was said
+     * for {@link DIALOG_IDLE_MS}, or its pipeline failed.
+     */
+    onDialog?: (device: string, room: string, on: boolean, reason: DialogChange) => void;
+    /**
      * Custom wake words to offer the devices, re-read for every configuration request. The device lists
      * them next to its own and downloads one (from the media server) only when it is selected.
      */
     externalWakeWords?: () => ExternalWakeWordOffer[];
 }
+
+/** Why the dialog mode of a satellite changed. */
+export type DialogChange = 'command' | 'idle' | 'stop' | 'offline' | 'error';
 
 /** A custom wake word as offered to the devices; the files are on the media server under `path`. */
 export interface ExternalWakeWordOffer {
@@ -487,6 +517,25 @@ export class EsphomeSatellites {
     }
 
     /**
+     * Switch the dialog mode of one satellite: after every reply it listens again without a wake word. Switched on
+     * while the satellite is idle, `open` is played and the microphone opens after it (a request in progress re-opens
+     * it with its reply). False when the satellite is not connected.
+     */
+    setDialog(device: string, on: boolean, open?: { pcm: Buffer; sampleRate: number }): boolean {
+        const target = this.connections.find(c => c.online && c.deviceName === device);
+        if (!target) {
+            return false;
+        }
+        target.setDialog(on, 'command', open);
+        return true;
+    }
+
+    /** Whether a satellite is in dialog mode. */
+    dialog(device: string): boolean {
+        return !!this.connections.find(c => c.online && c.deviceName === device)?.dialog;
+    }
+
+    /**
      * Mirror an assistant timer onto the satellites so they can show it on their own LED ring and ring
      * it themselves. `device` null broadcasts. Returns how many devices were told.
      */
@@ -535,6 +584,8 @@ interface Capture {
     /** When the last audio arrived; 0 = none yet. */
     lastAudioAt: number;
     closed: boolean;
+    /** Opened in dialog mode: while nobody speaks, the detector starts over instead of ending the run. */
+    dialog: boolean;
 }
 
 /** One satellite: socket lifecycle, handshake, and the voice pipeline. */
@@ -596,6 +647,11 @@ class EsphomeConnection {
     private stoppedAt = 0;
     /** The display language was compared with ours since the last connect. */
     private displayLanguageChecked = false;
+    /** Dialog mode: every reply opens the microphone again, see {@link setDialog}. */
+    private dialogOn = false;
+    /** Dialog mode: when something was last recognised (or the mode was switched on). */
+    private dialogHeardAt = 0;
+    private dialogTimer: NodeJS.Timeout | null = null;
 
     constructor(
         device: EsphomeDevice,
@@ -674,6 +730,7 @@ class EsphomeConnection {
         this.runOpen = false;
         this.questionUntil = 0;
         this.ignoreFollowUpUntil = 0;
+        this.setDialog(false, 'offline');
         if (this.online) {
             this.opts.log.info(`ESPHome satellite offline: ${this.deviceName}`);
         }
@@ -704,6 +761,10 @@ class EsphomeConnection {
         if (this.playbackTimer) {
             clearTimeout(this.playbackTimer);
             this.playbackTimer = null;
+        }
+        if (this.dialogTimer) {
+            clearInterval(this.dialogTimer);
+            this.dialogTimer = null;
         }
     }
 
@@ -1109,10 +1170,20 @@ class EsphomeConnection {
         // microphone carries the last wake word too. Should the user really have said the wake word, the utterance
         // is still the next one after the question — which is what pi-agent and askUser take as the answer anyway.
         const answersQuestion = Date.now() < this.questionUntil;
-        const followUp = answersQuestion || !phrase;
+        // In dialog mode every microphone is the next turn: the phrase is the stale one of the last wake word.
+        const dialog = this.dialogOn;
+        const followUp = answersQuestion || !phrase || dialog;
 
         this.opts.log.debug(
-            `ESPHome ${this.deviceName}: ${answersQuestion ? 'answer to the question' : followUp ? 'follow-up' : `wake "${phrase}"`}`,
+            `ESPHome ${this.deviceName}: ${
+                answersQuestion
+                    ? 'answer to the question'
+                    : dialog
+                      ? 'dialog'
+                      : followUp
+                        ? 'follow-up'
+                        : `wake "${phrase}"`
+            }`,
         );
 
         const response = new pb.VoiceAssistantResponse();
@@ -1120,39 +1191,21 @@ class EsphomeConnection {
         response.setError(false);
         this.send(response);
 
-        const timer = setTimeout(() => {
-            this.opts.log.warn(`ESPHome ${this.deviceName}: no end of speech within ${PIPELINE_TIMEOUT_MS} ms`);
-            void this.finishCapture('pipeline-timeout');
-        }, PIPELINE_TIMEOUT_MS);
-        timer.unref();
         const stallCheck = setInterval(() => this.checkStall(), STALL_CHECK_MS);
         stallCheck.unref();
 
-        const silenceMs = this.opts.silenceMs || DEFAULT_SILENCE_MS;
         this.capture = {
             chunks: [],
-            detector: new SpeechDetector({
-                sampleRate: MIC_SAMPLE_RATE,
-                silenceMs,
-                longSilenceMs: Math.round(silenceMs * LONG_PAUSE_FACTOR),
-                longAfterMs: LONG_REQUEST_MS,
-                // Microphone gain differs wildly between these devices, so fixed RMS levels do not
-                // travel: derive them from the room instead, once the wake chirp is out of the way.
-                skipMs: WAKE_CHIRP_MS,
-                adaptive: true,
-                startTimeoutMs: followUp ? NO_SPEECH_FOLLOW_UP_MS : NO_SPEECH_MS,
-                minStartLevel: this.speechLevel || DEFAULT_SPEECH_LEVEL,
-                minEndLevel: Math.round((this.speechLevel || DEFAULT_SPEECH_LEVEL) * SILENCE_SHARE),
-                minSpeechMs: MIN_SPEECH_MS,
-            }),
+            detector: this.speechDetector(followUp, dialog, WAKE_CHIRP_MS),
             conversationId: request.getConversationId(),
             wakeWord: followUp ? '' : phrase,
             answersQuestion,
-            timer,
+            timer: this.pipelineTimer(dialog),
             stallCheck,
             startedAt: Date.now(),
             lastAudioAt: 0,
             closed: false,
+            dialog,
         };
 
         this.status('listening');
@@ -1162,6 +1215,103 @@ class EsphomeConnection {
         }
         this.event(EVENT.STT_START);
         this.event(EVENT.STT_VAD_START);
+    }
+
+    /**
+     * End-of-speech detection for one recording. `skipMs`: the wake chirp at its start.
+     *
+     * Microphone gain differs wildly between these devices, so fixed RMS levels do not travel: the levels are derived
+     * from the room, once the chirp is out of the way. In dialog mode nobody may speak for a while — there the window
+     * starts over (see {@link onAudio}) instead of the run ending, and a request may take longer.
+     */
+    private speechDetector(followUp: boolean, dialog: boolean, skipMs: number): SpeechDetector {
+        const silenceMs = this.opts.silenceMs || DEFAULT_SILENCE_MS;
+        return new SpeechDetector({
+            sampleRate: MIC_SAMPLE_RATE,
+            silenceMs,
+            longSilenceMs: Math.round(silenceMs * LONG_PAUSE_FACTOR),
+            longAfterMs: LONG_REQUEST_MS,
+            skipMs,
+            adaptive: true,
+            startTimeoutMs: dialog ? 0 : followUp ? NO_SPEECH_FOLLOW_UP_MS : NO_SPEECH_MS,
+            maxMs: dialog ? DIALOG_WINDOW_MS + DIALOG_MAX_SPEECH_MS : undefined,
+            minStartLevel: this.speechLevel || DEFAULT_SPEECH_LEVEL,
+            minEndLevel: Math.round((this.speechLevel || DEFAULT_SPEECH_LEVEL) * SILENCE_SHARE),
+            minSpeechMs: MIN_SPEECH_MS,
+        });
+    }
+
+    /** Last resort for a recording that never ends; in dialog mode per window. */
+    private pipelineTimer(dialog: boolean): NodeJS.Timeout {
+        const ms = dialog ? DIALOG_WINDOW_MS + DIALOG_MAX_SPEECH_MS + 5000 : PIPELINE_TIMEOUT_MS;
+        const timer = setTimeout(() => {
+            this.opts.log.warn(`ESPHome ${this.deviceName}: no end of speech within ${ms} ms`);
+            void this.finishCapture('pipeline-timeout');
+        }, ms);
+        timer.unref();
+        return timer;
+    }
+
+    /**
+     * Dialog mode on or off. On: every reply asks the device to open its microphone again (`continue_conversation`),
+     * and while nobody speaks the recording just goes on. Switched on while nothing runs, `open` is played as an
+     * announcement that opens the microphone. Off: a microphone that hears nothing is closed now; a request being
+     * answered closes it with its reply.
+     */
+    setDialog(on: boolean, reason: DialogChange, open?: { pcm: Buffer; sampleRate: number }): void {
+        if (this.dialogOn === on) {
+            return;
+        }
+        this.dialogOn = on;
+        this.dialogHeardAt = Date.now();
+        if (this.dialogTimer) {
+            clearInterval(this.dialogTimer);
+            this.dialogTimer = null;
+        }
+        const why =
+            reason === 'idle'
+                ? ` (nothing said for ${DIALOG_IDLE_MS / 60_000} min)`
+                : reason === 'stop'
+                  ? ' (the device was stopped)'
+                  : reason === 'offline'
+                    ? ' (offline)'
+                    : reason === 'error'
+                      ? ' (the voice pipeline failed)'
+                      : '';
+        this.opts.log.info(`ESPHome ${this.deviceName}: dialog mode ${on ? 'on' : 'off'}${why}`);
+        this.opts.onDialog?.(this.deviceName, this.room, on, reason);
+        if (on) {
+            this.dialogTimer = setInterval(() => this.checkDialogIdle(), DIALOG_CHECK_MS);
+            this.dialogTimer.unref();
+            if (open && this.online && !this.capture && !this.runOpen) {
+                void this.announce(open.pcm, open.sampleRate, true, '', false).catch(e =>
+                    this.opts.log.warn(
+                        `ESPHome ${this.deviceName}: opening the microphone failed — ${(e as Error).message}`,
+                    ),
+                );
+            }
+            return;
+        }
+        const capture = this.capture;
+        if (capture?.dialog && !capture.detector.hearing) {
+            void this.finishCapture('no-speech'); // nobody talks: close the microphone now
+        }
+    }
+
+    get dialog(): boolean {
+        return this.dialogOn;
+    }
+
+    /** Dialog mode: switch it off when nothing was said for a long time — but not while somebody speaks or is answered. */
+    private checkDialogIdle(): void {
+        if (!this.dialogOn || Date.now() - this.dialogHeardAt < DIALOG_IDLE_MS) {
+            return;
+        }
+        const capture = this.capture;
+        if (capture ? capture.detector.hearing : this.runOpen) {
+            return;
+        }
+        this.setDialog(false, 'idle');
     }
 
     /**
@@ -1185,6 +1335,10 @@ class EsphomeConnection {
         // was (state messages can be batched): the question stays open a moment longer for that report.
         this.questionUntil = this.questionOpen() ? Math.max(this.questionUntil, Date.now() + CONFIRM_GRACE_MS) : 0;
         this.abortCapture();
+        if (Date.now() - this.errorSentAt >= ERROR_ECHO_MS) {
+            // Stopping the device ends the dialog, too (a reply in progress is dropped below, so it re-opens nothing)
+            this.setDialog(false, 'stop');
+        }
         if (running) {
             this.run++; // whatever is still being answered stays silent
             this.opts.log.debug(`ESPHome ${this.deviceName}: the device ended the conversation`);
@@ -1214,10 +1368,24 @@ class EsphomeConnection {
                 void this.finishCapture(end);
                 return;
             }
+            if (capture.dialog && !capture.detector.hearing && capture.detector.analysedMs >= DIALOG_WINDOW_MS) {
+                this.nextDialogWindow(capture);
+            }
         }
         if (audio.getEnd()) {
             void this.finishCapture('stream');
         }
+    }
+
+    /**
+     * Dialog mode, nobody spoke during a window: forget it and start a new one on the audio that keeps coming. Only
+     * while nothing is heard, so a word that just began is not cut.
+     */
+    private nextDialogWindow(capture: Capture): void {
+        capture.chunks = [];
+        capture.detector = this.speechDetector(true, true, 0);
+        clearTimeout(capture.timer);
+        capture.timer = this.pipelineTimer(true);
     }
 
     /** End a capture whose device stopped sending audio without ending the stream. */
@@ -1331,8 +1499,20 @@ class EsphomeConnection {
                     } — dropping the utterance`,
                 );
             }
-            this.discard(capture, pcm, end === 'no-speech' ? 'no-speech' : 'silence', vad);
+            if (capture.dialog && this.dialogOn && (end === 'timeout' || end === 'speech-end')) {
+                // a long noise in dialog mode: listen on
+                this.event(EVENT.INTENT_END, { continue_conversation: '1' });
+                await this.reopenDialog(run);
+                return;
+            }
+            if (!capture.dialog) {
+                this.discard(capture, pcm, end === 'no-speech' ? 'no-speech' : 'silence', vad);
+            }
             this.endWithoutRequest();
+            if (capture.dialog) {
+                // the device ended or stopped the stream itself: it does not want to listen any more
+                this.setDialog(false, 'stop');
+            }
             return;
         }
 
@@ -1366,9 +1546,18 @@ class EsphomeConnection {
                 if (capture.answersQuestion) {
                     this.questionUntil = Math.max(this.questionUntil, Date.now() + CONFIRM_GRACE_MS);
                 }
+                if (capture.dialog && this.dialogOn) {
+                    // a cough, the TV: listen on, without a word about it
+                    this.event(EVENT.INTENT_END, { continue_conversation: '1' });
+                    await this.reopenDialog(run);
+                    return;
+                }
                 // No STT_END without text — like Home Assistant, which reports this case as an error only.
                 this.endWithoutRequest();
                 return;
+            }
+            if (capture.dialog) {
+                this.dialogHeardAt = Date.now();
             }
             this.event(EVENT.STT_END, { text });
 
@@ -1390,11 +1579,18 @@ class EsphomeConnection {
             const followUp = !!answer && this.opts.expectsFollowUp?.(answer, this.deviceName) === true;
             // Always say it, "0" included: ESPHome keeps the flag of the last INTENT_END that carried it, so after
             // one question every later reply re-opened the microphone (field report 2026-11-04). Home Assistant
-            // sends "0" just the same.
-            const conversation = { continue_conversation: followUp ? '1' : '0' };
+            // sends "0" just the same. In dialog mode (switched on or off by this very request, too) always "1".
+            const conversation = { continue_conversation: followUp || this.dialogOn ? '1' : '0' };
             this.event(EVENT.INTENT_END, conversation);
 
             if (!answer) {
+                if (this.dialogOn) {
+                    // A command done without words (the confirmation tone instead): the tone is the reply here, after
+                    // it the device listens again. The adapter does not play it itself in dialog mode.
+                    const tone = confirmationTone();
+                    await this.reopenDialog(run, tone.pcm, tone.sampleRate);
+                    return;
+                }
                 this.event(EVENT.RUN_END);
                 this.status('idle');
                 return;
@@ -1431,6 +1627,33 @@ class EsphomeConnection {
             this.event(EVENT.ERROR, { code: 'pipeline-failed', message: reason });
             this.event(EVENT.RUN_END);
             this.status('idle');
+            this.setDialog(false, 'error');
+        }
+    }
+
+    /**
+     * Dialog mode: end the run with a reply that only makes the device listen again — silence when nothing was
+     * recognised, else the given clip. ESPHome opens the microphone after a reply has played when the INTENT_END
+     * (sent by the caller) said so; linux-voice-assistant reads the flag in RUN_END.
+     */
+    private async reopenDialog(run: number, pcm?: Buffer, sampleRate = MIC_SAMPLE_RATE): Promise<void> {
+        const clip = pcm ?? Buffer.alloc(Math.round((MIC_SAMPLE_RATE * DIALOG_PAUSE_MS) / 1000) * 2);
+        try {
+            const url = await this.publish(clip, sampleRate);
+            if (run !== this.run) {
+                return;
+            }
+            this.status('speaking');
+            this.event(EVENT.TTS_START, { text: '' });
+            this.event(EVENT.TTS_END, { url });
+            this.event(EVENT.RUN_END, { continue_conversation: '1' });
+            this.armPlaybackTimeout();
+        } catch (e) {
+            this.opts.log.warn(`ESPHome ${this.deviceName}: dialog cannot go on — ${(e as Error).message}`);
+            if (run === this.run) {
+                this.endWithoutRequest();
+                this.setDialog(false, 'error');
+            }
         }
     }
 
@@ -1533,7 +1756,13 @@ class EsphomeConnection {
      * Speak a ready PCM buffer on this device (timers, alarms, `tts.text`, jingles). With
      * `startConversation` the microphone opens once the clip has played, to catch the answer to a question.
      */
-    async announce(pcm: Buffer, sampleRate: number, startConversation = false, text = ''): Promise<void> {
+    async announce(
+        pcm: Buffer,
+        sampleRate: number,
+        startConversation = false,
+        text = '',
+        question = true,
+    ): Promise<void> {
         if (!this.online || !pcm.length) {
             return;
         }
@@ -1546,9 +1775,11 @@ class EsphomeConnection {
         // only the microphone stays shut, so there is nothing to guard here.
         request.setStartConversation(startConversation);
         if (startConversation) {
-            // A question: the microphone the device opens after it is wanted, and a button press answers it
+            // The microphone the device opens after it is wanted; for a question a button press answers it, too
             this.ignoreFollowUpUntil = 0;
-            this.questionUntil = Date.now() + (pcm.length / 2 / sampleRate) * 1000 + QUESTION_OPEN_MS;
+            if (question) {
+                this.questionUntil = Date.now() + (pcm.length / 2 / sampleRate) * 1000 + QUESTION_OPEN_MS;
+            }
         }
         this.status('speaking');
         this.send(request);

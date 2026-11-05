@@ -19,6 +19,24 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Dialogmodus für ESPHome-Satelliten** (Nutzerwunsch 2026-11-05: „ioBroker – Dialogmodus an“ → ohne Wake-Word
+  weitersprechen, „Dialogmodus aus“ → normal). `nlu.ts.dialogCommand()` (de/en/ru, Modus-Phrase Pflicht, Fragen
+  und > 8 Wörter → null, an **und** aus → null) → `main.switchDialog()` in `produceAnswer` nach der
+  `askUser`-Antwort, vor allen Stufen; im Dialog schaltet auch ein bloßes Stoppwort (≤ 2 Wörter) aus. Journal
+  `nlu`/`dialog on|off`. `esphome.ts`: `EsphomeConnection.setDialog(on, reason, open?)` / `EsphomeSatellites.
+  setDialog|dialog`, Option `onDialog` → State `satellites.<id>.dialog` (boolean, `switch.mode`, schreibbar, in
+  `markEsphomeSatellite` angelegt; Schreiben an einem wartenden Satelliten = Bestätigungston per Durchsage mit
+  `start_conversation`, `question=false` → keine offene Ja/Nein-Frage). Im Dialog: jede Antwort `continue_conversation
+  '1'` (INTENT_END + RUN_END), Folge-Mikro ohne WAKE_WORD_END (die Phrase ist die alte), `startTimeoutMs` 0, Detektor
+  fängt nach `DIALOG_WINDOW_MS` 10 s **Audio** ohne Laut neu an (`nextDialogWindow`, `SpeechDetector.hearing`/
+  `analysedMs`), max. 20 s Rede. Nichts erkannt (Stille-`timeout`/`speech-end`, leere STT) → INTENT_END „1“ +
+  `reopenDialog()` = 250 ms Stille als TTS_END + RUN_END „1“ (ESPHome öffnet das Mikro erst nach einer gespielten
+  Antwort); leere Antwort (Ton-Bestätigung) → der Ton als Antwort (`playConfirmationTone` tut im Dialog nichts).
+  Aus: Stopp des Geräts (außer Echo unseres ERROR), offline, Pipeline-Fehler, Stream-Ende/Stall, 5 min ohne
+  verstandene Anfrage (`DIALOG_IDLE_MS`, Prüfung alle 5 s, nicht während gehört/geantwortet wird); beim Ausschalten
+  schließt ein Mikro, das nichts hört, sofort. Tests: `esphome.test.js` (Fake-Gerät `speak()`/`position()`/
+  `maxStreamMs`), `nlu.test.js` (`dialogCommand`). ⚠️ Nicht am Gerät: ob ESPHome/linux-voice-assistant nach dem
+  stillen Clip das Mikro wirklich wieder öffnet, ist aus dem Quellcode abgeleitet (gleicher Weg wie Rückfragen).
 - **Dialog-Modus im Chat-Tab** (Nutzerwunsch 2026-11-05): Knopf `RecordVoiceOver` links vom Eingabefeld, nur bei
   `VoiceDialog.supported` (Secure Context + getUserMedia), aktiv nur mit `voiceEnabled`. `src-admin/src/voiceDialog.ts`:
   `VoiceDialog` (getUserMedia mit AEC/NS/AGC, ScriptProcessor 2048 → `Resampler` linear auf 16 kHz),

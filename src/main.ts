@@ -22,6 +22,7 @@ import {
     parseClockTime,
     parseWeekdays,
     isStopCommand,
+    dialogCommand,
     mentionsScript,
     type NluDevice,
     type NluIntent,
@@ -912,6 +913,12 @@ class Assistant extends Adapter {
                 );
             },
             expectsFollowUp: (answer, device) => this.followUpFor(device, answer),
+            onDialog: (device, room, on) => {
+                const id = this.knownSatelliteId(device, room);
+                if (id) {
+                    this.setStateAsync(`satellites.${id}.dialog`, { val: on, ack: true }).catch(() => {});
+                }
+            },
             onDiscarded: cfg.esphomeSaveCaptures ? capture => this.keepCapture(capture) : undefined,
             externalWakeWords: () =>
                 [...this.customWakeWords.values()].map(w => ({
@@ -1440,6 +1447,20 @@ class Assistant extends Adapter {
             return;
         }
         this.satEsphomeMarked.set(id, address);
+        await this.setObjectNotExistsAsync(`satellites.${id}.dialog`, {
+            type: 'state',
+            common: {
+                name: 'Dialog mode: listens again after every answer, without the wake word',
+                type: 'boolean',
+                role: 'switch.mode',
+                read: true,
+                write: true,
+                def: false,
+            },
+            native: {},
+        });
+        this.subscribeStates(`satellites.${id}.dialog`);
+        await this.setStateAsync(`satellites.${id}.dialog`, { val: !!this.esphome?.dialog(device), ack: true });
         const obj = await this.getObjectAsync(`satellites.${id}`);
         if ((obj?.native as { esphome?: string } | undefined)?.esphome !== address) {
             await this.extendObjectAsync(`satellites.${id}`, { native: { esphome: address } });
@@ -2190,6 +2211,69 @@ class Assistant extends Adapter {
     }
 
     /**
+     * Apply a write to `satellites.<id>.dialog`. Switched on while the satellite is idle, it plays the confirmation
+     * tone and opens its microphone after it.
+     */
+    private async setSatelliteDialog(satId: string, on: boolean): Promise<void> {
+        const device = this.satDeviceById.get(satId) || satId;
+        const tone = confirmationTone();
+        if (this.esphome?.setDialog(device, on, on ? tone : undefined)) {
+            await this.setStateAsync(`satellites.${satId}.dialog`, { val: on, ack: true });
+            return;
+        }
+        this.log.warn(`Cannot switch the dialog mode of ${device}: it is not a connected ESPHome satellite.`);
+        await this.setStateAsync(`satellites.${satId}.dialog`, { val: !!this.esphome?.dialog(device), ack: true });
+    }
+
+    /**
+     * "Dialogmodus an/aus" said to a satellite — or, in dialog mode, a bare "stop". The reply to "on" is the first turn
+     * of the dialog already: the satellite listens again after it. null when the request is no such command.
+     */
+    private switchDialog(question: string, source: string): string | null {
+        let wanted = dialogCommand(question);
+        const inDialog = !!this.esphome?.dialog(source);
+        if (!wanted && inDialog && isStopCommand(question) && question.trim().split(/\s+/).length <= 2) {
+            wanted = 'off';
+        }
+        if (!wanted) {
+            return null;
+        }
+        const on = wanted === 'on';
+        const lang = this.answerLanguage();
+        const pick = (ru: string, de: string, en: string): string => (lang === 'ru' ? ru : lang === 'de' ? de : en);
+        let text: string;
+        let done = false;
+        if (this.esphome?.setDialog(source, on)) {
+            done = true;
+            text = on
+                ? pick(
+                      'Режим диалога включён. Говорите без слова активации, «выключи режим диалога» его завершит.',
+                      'Dialogmodus an. Sprich einfach weiter, „Dialogmodus aus“ beendet ihn.',
+                      'Dialog mode on. Just keep talking; "dialog mode off" ends it.',
+                  )
+                : pick('Режим диалога выключен.', 'Dialogmodus aus.', 'Dialog mode off.');
+        } else if (source === 'chat') {
+            text = pick(
+                'В чате для этого есть кнопка «Диалог» слева от поля ввода.',
+                'Im Chat gibt es dafür den Dialog-Knopf links neben dem Eingabefeld.',
+                'In the chat, use the dialog button left of the input field.',
+            );
+        } else {
+            text = pick(
+                'Режим диалога есть только у спутников ESPHome.',
+                'Den Dialogmodus gibt es nur an ESPHome-Satelliten.',
+                'The dialog mode is only available on ESPHome satellites.',
+            );
+        }
+        this.journal?.note({ tier: 'nlu', detail: `dialog ${wanted}` });
+        this.journal?.step({
+            stage: 'nlu',
+            title: done ? `Dialog mode ${wanted} for ${source}` : `Dialog mode ${wanted}: not possible for ${source}`,
+        });
+        return text;
+    }
+
+    /**
      * Record which ioBroker host a satellite runs on, resolved from the sender instance object
      * (`system.adapter.<from>.common.host`). Only meaningful for ioBroker-native satellites; UDP/ESP ones
      * have no instance, so their host stays empty.
@@ -2769,6 +2853,13 @@ class Assistant extends Adapter {
         const satTts = id.match(/\.satellites\.([^.]+)\.tts$/);
         if (satTts) {
             await this.announceToSatellites(String(state.val ?? ''), satTts[1]); // satTts[1] = satellite state id
+            return;
+        }
+
+        // Dialog mode of an ESPHome satellite: it listens again after every answer, without the wake word.
+        const satDialog = id.match(/\.satellites\.([^.]+)\.dialog$/);
+        if (satDialog) {
+            await this.setSatelliteDialog(satDialog[1], !!state.val);
             return;
         }
 
@@ -4328,6 +4419,11 @@ class Assistant extends Adapter {
                 });
                 return '';
             }
+        }
+        // "Dialogmodus an/aus": before the tiers, which would take it for a device ("Modus") or ask the cloud model
+        const dialog = this.switchDialog(question, source);
+        if (dialog !== null) {
+            return dialog;
         }
         if (images.length && !this.agent && !this.piAgent) {
             this.log.info(`Pictures from '${source}' not looked at: no cloud model is configured.`);
@@ -6272,6 +6368,9 @@ class Assistant extends Adapter {
      * because a confirmation nobody hears is worse than one that costs a TTS call.
      */
     private async playConfirmationTone(source: string): Promise<boolean> {
+        if (this.esphome?.dialog(source)) {
+            return true; // in dialog mode the satellite plays it as the reply and listens again after it
+        }
         const target = this.announceTargetForSource(source);
         if (!target) {
             return false; // chat/telegram/unknown origin: there is no speaker to beep on

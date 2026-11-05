@@ -498,6 +498,27 @@ Zwei Dinge laufen hier anders:
   Minuten lang ausliefert. Er muss **vom Gerät aus** erreichbar sein; die Adresse wird automatisch aus der
   jeweiligen Geräteverbindung genommen und muss nur hinter NAT, Docker oder VLAN von Hand gesetzt werden.
 
+#### Dialogmodus
+
+„ioBroker, Dialogmodus an“ — danach hört der Satellit nach jeder Antwort von selbst wieder zu, ohne Wake-Word:
+einfach weitersprechen. „Dialogmodus aus“ (oder ein bloßes „Stopp“) schaltet zurück auf normal. Verstanden wird
+auch „Dialog-Modus ein“, „Gesprächsmodus beenden“, „turn on dialog mode“, „выключи режим диалога“; eine Frage
+dazu („Wie schalte ich den Dialogmodus an?“) schaltet nichts.
+
+- **Pausen sind erlaubt.** Solange niemand spricht, bleibt das Mikrofon offen; eine Anfrage darf bis 20 Sekunden
+  lang sein.
+- **Nichts verstanden** (Husten, Fernseher, leere Spracherkennung): keine Antwort, keine Fehlermeldung — der
+  Satellit hört einfach weiter zu. Ein Befehl, der sonst nur mit dem Bestätigungston quittiert wird, spielt den
+  Ton und hört danach weiter zu.
+- **Ende von selbst** nach 5 Minuten ohne verstandene Anfrage, wenn das Gerät gestoppt wird (Stopp-Knopf,
+  Wake-Word während der Antwort), wenn es offline geht oder die Sprachverarbeitung fehlschlägt.
+- **State `satellites.<id>.dialog`** zeigt den Modus und schaltet ihn auch (Skript, VIS): `true` an einem
+  wartenden Satelliten spielt den Bestätigungston und öffnet danach das Mikrofon.
+- Das Mikrofon ist die ganze Zeit offen: alles, was im Raum als Sprache erkannt wird, geht an die
+  Spracherkennung (bei Cloud-STT: Kosten) und als Anfrage an den Assistenten.
+- Nur für ESPHome-Satelliten — dort öffnet die Antwort per `continue_conversation` das Mikrofon. Im Chat-Reiter
+  gibt es dafür den Dialog-Knopf.
+
 #### Wake-Words
 
 Das Wake-Word läuft **auf dem Gerät**, welche seiner eingebauten Modelle lauschen, lässt sich aber von hier
@@ -1122,6 +1143,7 @@ sie also auf Dinge, die zählen, statt auf ein Tagebuch.
 | `text.querySource`                                         | Herkunft der letzten Anfrage (`''`, `chat` oder ein Satelliten-Name)  |
 | `tts.text`                                                 | Durchsage an **alle** Satelliten (Text oder Audio-Pfad)               |
 | `satellites.<id>.{status,room,alive,lastSeen,tts}`         | Zustand pro Satellit + Durchsage                                      |
+| `satellites.<id>.dialog`                                   | Dialogmodus eines ESPHome-Satelliten (hört ohne Wake-Word weiter, §6) |
 | `triggers.enabled` / `triggers.count` / `triggers.list`    | proaktive Trigger: Hauptschalter, Anzahl, Live-Status (JSON)          |
 | `triggers.items.<id>.{enabled,fire,lastFired,nextFireAt}`  | Schalter, Test-Knopf und Zeiten pro Trigger                           |
 | `notify.text` / `notify.alert` / `notify.last`             | Systemmeldung sprechen / dringend / was gesprochen wurde              |

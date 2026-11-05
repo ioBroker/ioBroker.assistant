@@ -479,6 +479,26 @@ Two things work differently here:
   reachable **from the device**; the address is taken from each device connection automatically and only
   needs setting by hand behind NAT, Docker or a VLAN.
 
+#### Dialog mode
+
+"ioBroker, dialog mode on" — from then on the satellite listens again by itself after every answer, without the
+wake word: just keep talking. "Dialog mode off" (or a bare "stop") switches back to normal. Also understood:
+"conversation mode on", "exit dialogue mode", "Dialogmodus an", "включи режим диалога"; a question about it ("is
+dialog mode on?") switches nothing.
+
+- **Pauses are fine.** As long as nobody speaks the microphone stays open; a request may take up to 20 seconds.
+- **Nothing understood** (a cough, the TV, an empty transcription): no answer, no error — the satellite just keeps
+  listening. A command that is otherwise only confirmed with the confirmation tone plays the tone and then keeps
+  listening.
+- **It ends by itself** after 5 minutes without an understood request, when the device is stopped (stop button,
+  wake word during the answer), when it goes offline or when the voice pipeline fails.
+- **The state `satellites.<id>.dialog`** shows the mode and switches it too (script, VIS): `true` on an idle
+  satellite plays the confirmation tone and opens the microphone after it.
+- The microphone is open all the time: everything in the room that is detected as speech goes to the speech
+  recognition (costs with a cloud STT) and to the assistant as a request.
+- ESPHome satellites only — there the answer opens the microphone via `continue_conversation`. The Chat tab has
+  the dialog button for the same.
+
 #### Wake words
 
 The wake word runs **on the device**, but which of its built-in models listen can be set from here. Each
@@ -1087,6 +1107,7 @@ things that matter, not a diary.
 | `text.querySource`                                 | origin of the last request (`''`, `chat`, or a satellite name) |
 | `tts.text`                                         | announce to **all** satellites (text or audio path)            |
 | `satellites.<id>.{status,room,alive,lastSeen,tts}` | per-satellite state + announce                                 |
+| `satellites.<id>.dialog`                           | dialog mode of an ESPHome satellite (listens on without wake word, §6) |
 | `triggers.enabled` / `triggers.count` / `triggers.list` | proactive triggers: master switch, number loaded, live status (JSON) |
 | `triggers.items.<id>.{enabled,fire,lastFired,nextFireAt}` | per-trigger switch, test button and timing |
 | `notify.text` / `notify.alert` / `notify.last` | speak a system notification / an urgent one / what was spoken |

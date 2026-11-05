@@ -235,6 +235,16 @@ export class SpeechDetector {
         return this.speechSeen;
     }
 
+    /** Something is being heard right now: speech, or a sound that may become speech. */
+    get hearing(): boolean {
+        return this.speechSeen || this.candidateMs >= 0;
+    }
+
+    /** Milliseconds of audio analysed so far (the skipped start included). */
+    get analysedMs(): number {
+        return this.elapsedMs;
+    }
+
     /** Tracked room level (adaptive mode), for logging. 0 before the first analysed frame. */
     get noiseFloor(): number {
         return this.floor ?? 0;
