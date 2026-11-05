@@ -51,7 +51,7 @@ export interface AdapterConfig {
      * quota). Typically a local engine behind a cloud one: `vosk` for speech-to-text, `piper` for
      * text-to-speech. Empty = no fallback.
      */
-    sttFallback: '' | 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk';
+    sttFallback: '' | 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk' | 'parakeet';
     ttsFallback: '' | 'openai' | 'openrouter' | 'azure' | 'aws' | 'piper';
     /**
      * Longest text a satellite speaks, in characters (400 ≈ 25–30 s); a longer answer is cut at the last sentence
@@ -211,7 +211,9 @@ export interface AdapterConfig {
     ttsModel: string;
 
     /** Speech provider for recognition / synthesis (independently selectable). Vosk/Piper run locally. */
-    sttProvider: 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk';
+    sttProvider: 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk' | 'parakeet';
+    /** Instance of ioBroker.ai-parakeet for the STT provider (or fallback) `parakeet`, e.g. 'ai-parakeet.0'. */
+    parakeetInstance: string;
     ttsProvider: 'openai' | 'openrouter' | 'azure' | 'aws' | 'piper';
     /**
      * OpenRouter speech: key (empty → the key of the LLM, if that is OpenRouter), models ('' → defaults of

@@ -231,5 +231,16 @@
   "Empty = the downloaded ffmpeg, otherwise ffmpeg from the search path. Needed for timer/alarm sounds, Telegram voice messages and MP3/Opus replies. Example: /usr/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe": "Empty = the downloaded ffmpeg, otherwise ffmpeg from the search path. Needed for timer/alarm sounds, Telegram voice messages and MP3/Opus replies. Example: /usr/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe",
   "Check ffmpeg": "Check ffmpeg",
   "Download ffmpeg": "Download ffmpeg",
-  "Downloads a static ffmpeg (ffmpeg-static, 20-30 MB) into the data directory of the instance. It is used when no path is entered.": "Downloads a static ffmpeg (ffmpeg-static, 20-30 MB) into the data directory of the instance. It is used when no path is entered."
+  "Downloads a static ffmpeg (ffmpeg-static, 20-30 MB) into the data directory of the instance. It is used when no path is entered.": "Downloads a static ffmpeg (ffmpeg-static, 20-30 MB) into the data directory of the instance. It is used when no path is entered.",
+  "ai-parakeet (local adapter)": "ai-parakeet (local adapter)",
+  "ai-parakeet instance": "ai-parakeet instance",
+  "Install ai-parakeet": "Install ai-parakeet",
+  "Install pi-agent": "Install pi-agent",
+  "This installs the adapter pi-agent on the host of this instance and creates an instance of it. It takes a few minutes. Afterwards choose its model in its settings, or use the system-wide AI settings of admin.": "This installs the adapter pi-agent on the host of this instance and creates an instance of it. It takes a few minutes. Afterwards choose its model in its settings, or use the system-wide AI settings of admin.",
+  "This installs the adapter ai-parakeet on the host of this instance and creates an instance of it. It takes a few minutes. On its first start it downloads the speech model (about 670 MB); it then needs about 1.1 GB of memory.": "This installs the adapter ai-parakeet on the host of this instance and creates an instance of it. It takes a few minutes. On its first start it downloads the speech model (about 670 MB); it then needs about 1.1 GB of memory.",
+  "Install": "Install",
+  "Cancel": "Cancel",
+  "%s was installed and selected. Save the settings to use it.": "%s was installed and selected. Save the settings to use it.",
+  "%s is already installed and is now selected. Save the settings to use it.": "%s is already installed and is now selected. Save the settings to use it.",
+  "The adapter ai-parakeet recognises speech offline on the CPU of its host, in 25 European languages that the model detects itself. The audio goes to it over the ioBroker message bus, so the instance may also run on another host.": "The adapter ai-parakeet recognises speech offline on the CPU of its host, in 25 European languages that the model detects itself. The audio goes to it over the ioBroker message bus, so the instance may also run on another host."
 }

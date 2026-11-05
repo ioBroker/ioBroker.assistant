@@ -91,6 +91,9 @@ the rule-based commands. Separate conversations need pi-agent with `conversation
 model answers, if enabled. A request from a satellite also carries `satellite` (its id under
 `assistant.0.satellites.*`) and `tts` (the full id of its `tts` state): pi-agent can keep them with a reminder or a
 background task and speak there later by writing the text to that state. Chat and Telegram requests carry neither.
+Without pi-agent yet, **Install pi-agent** next to the instance field installs it on the host of this instance
+(from the repository the system uses, else the newest version from npm), creates an instance and selects it; then
+save the settings. It takes a few minutes, the log shows the steps.
 
 ### Satellites (voice)
 
@@ -114,8 +117,8 @@ satellites stay simple. See §7.
 
 **Additionally for voice / satellites:**
 
-- A **speech provider**: OpenAI, OpenRouter, Azure or AWS (cloud), **or** local **Vosk** (STT) + **Piper** (TTS),
-  which install on demand — no cloud.
+- A **speech provider**: OpenAI, OpenRouter, Azure or AWS (cloud), **or** local **Vosk** or the adapter
+  **ai-parakeet** (STT) + **Piper** (TTS) — no cloud.
 - One or more **satellite devices** with a microphone and speaker (e.g. a Raspberry Pi with a USB
   speakerphone). **ffmpeg** is required on the satellite host (Windows and Linux).
 - **Node.js ≥ 22** on the satellite device.
@@ -361,7 +364,8 @@ Voice is optional and off by default. Turn on **Enable voice (STT/TTS)** on the 
 speech recognition/synthesis available; **it does not open any network port**. Then choose:
 
 - **Voice language** — used for STT and the spoken reply.
-- **Speech-to-text provider** — OpenAI, OpenRouter, Azure, AWS, or **Vosk** (local, offline).
+- **Speech-to-text provider** — OpenAI, OpenRouter, Azure, AWS, **Vosk** (local, offline) or **ai-parakeet**
+  (local, offline, an adapter of its own).
 - **Text-to-speech provider** — OpenAI, OpenRouter, Azure, AWS, or **Piper** (local, offline).
 - Provider keys (separate from the LLM key; a *Speech credential mode* mirrors manual/manager). Voices and
   local models load into dropdowns.
@@ -382,6 +386,14 @@ e.g. `http://192.168.1.10:8000/v1`. Any server with the OpenAI endpoint `/v1/aud
 **OpenAI STT model** as the server names it (speaches: `Systran/faster-whisper-large-v3-turbo`). No OpenAI key is
 needed for it, and the OpenAI key is never sent there; if the server wants a key of its own, it goes into
 **Key of the speech recognition server**. Vocabulary hints (room and device names) are passed as with OpenAI.
+
+**ai-parakeet** (local recognition with NVIDIA Parakeet TDT 0.6B v3 on the CPU, 25 European languages that the
+model detects itself): choose *ai-parakeet (local adapter)* as speech-to-text provider or fallback, and its
+instance. Without one, **Install ai-parakeet** installs the adapter on the host of this instance and creates an
+instance; on its first start it downloads the model (about 670 MB), and it then needs about 1.1 GB of memory. The
+audio goes to it over the ioBroker message bus, so the instance may run on another host and needs no address or
+key here. Room and device names go along as its prompt. If the instance is not running, the fallback engine takes
+over. On a Raspberry Pi 5 a spoken command takes 0.5–1 s, and it recognises much better than Vosk.
 
 **Test voice and recognition** (at the bottom of the Voice tab, with the settings as they are in the form —
 also unsaved): *Speech output* speaks a test sentence in the browser and shows sample rate, length and
@@ -673,7 +685,7 @@ Text is synthesised with the configured TTS engine; an audio file is decoded and
 Four settings that mostly pay for themselves:
 
 - **Speech-to-text / text-to-speech fallback** (Voice tab) — a second engine, used when the first one
-  fails: an outage, an expired key, an empty quota. With `Vosk (local)` and `Piper (local)` behind a cloud
+  fails: an outage, an expired key, an empty quota. With `ai-parakeet` or `Vosk (local)` and `Piper (local)` behind a cloud
   provider, the house keeps listening and answering without the internet. The speech-to-text fallback also
   steps in when the first engine returns no text for something the satellite took for speech — models
   differ a lot on quiet or short answers. The hand-over is in the log.

@@ -8,6 +8,7 @@ import { OpenAiTts, type OpenAiVoice, type TtsEngine } from './tts';
 import { AzureStt, AzureTts, listAzureVoices } from './azure';
 import { AwsStt, AwsTts, listPollyVoices, type AwsCreds } from './aws';
 import { VoskStt, listVoskModels } from './vosk';
+import { ParakeetStt, type MessageSender } from './parakeet';
 import { PiperTts, listPiperVoices } from './piper';
 import {
     OpenRouterStt,
@@ -24,7 +25,7 @@ import { FallbackStt, FallbackTts, type NamedEngine } from './fallback';
 import { isoToLocale } from './lang';
 import type { VoiceLogger } from './download';
 
-export type SpeechProvider = 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk' | 'piper';
+export type SpeechProvider = 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk' | 'parakeet' | 'piper';
 
 /** All speech credentials, resolved from config (or the central credential store). */
 export interface VoiceCredentials {
@@ -74,6 +75,10 @@ export interface EngineContext {
     decodeAudio?: AudioDecoder;
     /** Longest text that is spoken, in characters; longer ones are cut at a sentence end. 0 = no limit, absent = 400. */
     ttsMaxChars?: number;
+    /** Instance of ioBroker.ai-parakeet for the provider `parakeet`, e.g. 'ai-parakeet.0'. */
+    parakeetInstance?: string;
+    /** Message bus to other instances (ai-parakeet); absent → `parakeet` cannot be used. */
+    sendMessage?: MessageSender;
 }
 
 function requireAzure(creds: VoiceCredentials): void {
@@ -124,6 +129,11 @@ function buildSttEngine(provider: SpeechProvider, ctx: EngineContext): SttEngine
             return new AwsStt(ctx.creds.aws);
         case 'vosk':
             return new VoskStt(ctx.dataDir, ctx.voskModel, ctx.log);
+        case 'parakeet':
+            if (!ctx.sendMessage) {
+                throw new Error('Parakeet speech recognition is not available here');
+            }
+            return new ParakeetStt((ctx.parakeetInstance || '').trim(), ctx.sendMessage);
         case 'openrouter':
             requireOpenRouter(ctx.creds);
             return new OpenRouterStt(ctx.creds.openrouterKey, ctx.openrouterSttModel);
@@ -186,6 +196,8 @@ function buildTtsEngine(provider: SpeechProvider, ctx: EngineContext): TtsEngine
             return new PiperTts(ctx.dataDir, ctx.voices.piper, ctx.log);
         case 'vosk':
             throw new Error('Vosk is a speech-to-text engine, not text-to-speech');
+        case 'parakeet':
+            throw new Error('Parakeet is a speech-to-text engine, not text-to-speech');
         case 'openrouter':
             requireOpenRouter(ctx.creds);
             return new OpenRouterTts(

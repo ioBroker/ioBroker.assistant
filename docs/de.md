@@ -95,7 +95,9 @@ alles in einer Unterhaltung. Läuft pi-agent nicht oder schlägt fehl, antwortet
 Eine Anfrage von einem Satelliten trägt zusätzlich `satellite` (seine Id unter `assistant.0.satellites.*`) und `tts`
 (die volle Id seines `tts`-States): pi-agent kann sie mit einer Erinnerung oder einer Hintergrundaufgabe aufheben
 und später dort sprechen, indem es den Text in diesen State schreibt. Anfragen aus Chat und Telegram tragen beides
-nicht.
+nicht. Gibt es pi-agent noch nicht, installiert **pi-agent installieren** neben dem Instanz-Feld ihn auf dem Host
+dieser Instanz (aus dem Repository des Systems, sonst die neueste Version von npm), legt eine Instanz an und wählt
+sie aus; danach die Einstellungen speichern. Das dauert ein paar Minuten, das Log zeigt die Schritte.
 
 ### Satelliten (Sprache)
 
@@ -119,8 +121,8 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
 
 **Zusätzlich für Sprache / Satelliten:**
 
-- Einen **Sprach-Anbieter**: OpenAI, OpenRouter, Azure oder AWS (Cloud), **oder** lokal **Vosk** (STT) + **Piper**
-  (TTS), die bei Bedarf installiert werden — ohne Cloud.
+- Einen **Sprach-Anbieter**: OpenAI, OpenRouter, Azure oder AWS (Cloud), **oder** lokal **Vosk** oder den Adapter
+  **ai-parakeet** (STT) + **Piper** (TTS) — ohne Cloud.
 - Einen oder mehrere **Satelliten** mit Mikrofon und Lautsprecher (z. B. ein Raspberry Pi mit USB-
   Speakerphone). **ffmpeg** wird auf dem Satelliten-Host benötigt (Windows und Linux).
 - **Node.js ≥ 22** auf dem Satelliten-Gerät.
@@ -376,7 +378,8 @@ Sprache ist optional und standardmäßig aus. Aktiviere **Sprache aktivieren (ST
 wähle:
 
 - **Voice-Sprache** — für STT und die vorgelesene Antwort.
-- **Spracherkennungs-Anbieter** — OpenAI, OpenRouter, Azure, AWS oder **Vosk** (lokal, offline).
+- **Spracherkennungs-Anbieter** — OpenAI, OpenRouter, Azure, AWS, **Vosk** (lokal, offline) oder **ai-parakeet**
+  (lokal, offline, ein eigener Adapter).
 - **Sprachausgabe-Anbieter** — OpenAI, OpenRouter, Azure, AWS oder **Piper** (lokal, offline).
 - Anbieter-Schlüssel (getrennt vom LLM-Schlüssel; eine *Sprach-Schlüssel-Quelle* spiegelt manual/manager).
   Stimmen und lokale Modelle laden in Dropdowns.
@@ -400,6 +403,15 @@ Adresse ohne Pfad bekommt `/v1`. Ins Feld **OpenAI-STT-Modell** gehört das Mode
 (speaches: `Systran/faster-whisper-large-v3-turbo`). Ein OpenAI-Schlüssel ist dafür nicht nötig und wird auch
 nie dorthin geschickt; verlangt der Server einen eigenen, kommt er in **Schlüssel des
 Spracherkennungs-Servers**. Vokabel-Hinweise (Raum- und Gerätenamen) gehen mit wie bei OpenAI.
+
+**ai-parakeet** (lokale Erkennung mit NVIDIA Parakeet TDT 0.6B v3 auf der CPU, 25 europäische Sprachen, die das
+Modell selbst erkennt): *ai-parakeet (lokaler Adapter)* als Spracherkennungs-Anbieter oder Reserve wählen und
+seine Instanz. Gibt es keine, installiert **ai-parakeet installieren** den Adapter auf dem Host dieser Instanz und
+legt eine Instanz an; beim ersten Start lädt er das Modell herunter (etwa 670 MB) und braucht dann etwa 1,1 GB
+Arbeitsspeicher. Das Audio geht über den ioBroker-Nachrichtenbus an ihn, die Instanz kann also auf einem anderen
+Host laufen und braucht hier weder Adresse noch Schlüssel. Raum- und Gerätenamen gehen als Prompt mit. Läuft die
+Instanz nicht, übernimmt die Reserve-Engine. Auf einem Raspberry Pi 5 braucht ein gesprochener Befehl 0,5–1 s, und
+er erkennt deutlich besser als Vosk.
 
 **Stimme und Erkennung testen** (unten im Reiter Voice, mit den Einstellungen so, wie sie im Formular
 stehen — auch ungespeichert): *Sprachausgabe* spricht einen Testsatz im Browser und zeigt Abtastrate,
@@ -696,7 +708,7 @@ abgespielt.
 Vier Einstellungen, die sich meist selbst bezahlen:
 
 - **Speech-to-Text-/Text-to-Speech-Reserve** (Tab Voice) — eine zweite Engine, die einspringt, wenn die
-  erste ausfällt: Störung, abgelaufener Key, leeres Guthaben. Mit `Vosk (lokal)` und `Piper (lokal)`
+  erste ausfällt: Störung, abgelaufener Key, leeres Guthaben. Mit `ai-parakeet` oder `Vosk (lokal)` und `Piper (lokal)`
   hinter einem Cloud-Anbieter hört und antwortet das Haus auch ohne Internet weiter. Die Reserve für die
   Spracherkennung springt auch ein, wenn die erste Engine für etwas, das der Satellit für Sprache hielt,
   keinen Text liefert — bei leisen oder kurzen Antworten unterscheiden sich die Modelle stark. Die Übergabe

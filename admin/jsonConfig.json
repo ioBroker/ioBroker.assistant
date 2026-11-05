@@ -154,6 +154,31 @@
                     "lg": 2,
                     "xl": 2
                 },
+                "_installPiAgent": {
+                    "type": "sendTo",
+                    "label": "Install pi-agent",
+                    "command": "installAdapter",
+                    "jsonData": "{\"adapter\":\"pi-agent\"}",
+                    "useNative": true,
+                    "showProcess": true,
+                    "variant": "outlined",
+                    "confirm": {
+                        "title": "Install pi-agent",
+                        "text": "This installs the adapter pi-agent on the host of this instance and creates an instance of it. It takes a few minutes. Afterwards choose its model in its settings, or use the system-wide AI settings of admin.",
+                        "ok": "Install",
+                        "cancel": "Cancel"
+                    },
+                    "result": {
+                        "installed": "%s was installed and selected. Save the settings to use it.",
+                        "existing": "%s is already installed and is now selected. Save the settings to use it."
+                    },
+                    "hidden": "data.provider !== 'pi-agent' || !!data.piAgentInstance",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
                 "_piAgentInfo": {
                     "newLine": true,
                     "type": "staticText",
@@ -1028,7 +1053,8 @@
                         { "label": "OpenRouter", "value": "openrouter" },
                         { "label": "Azure Speech", "value": "azure" },
                         { "label": "AWS Transcribe", "value": "aws" },
-                        { "label": "Vosk (local)", "value": "vosk" }
+                        { "label": "Vosk (local)", "value": "vosk" },
+                        { "label": "ai-parakeet (local adapter)", "value": "parakeet" }
                     ],
                     "default": "openai",
                     "hidden": "!data.voiceEnabled",
@@ -1067,7 +1093,8 @@
                         { "label": "OpenRouter", "value": "openrouter" },
                         { "label": "Azure Speech", "value": "azure" },
                         { "label": "AWS Transcribe", "value": "aws" },
-                        { "label": "Vosk (local)", "value": "vosk" }
+                        { "label": "Vosk (local)", "value": "vosk" },
+                        { "label": "ai-parakeet (local adapter)", "value": "parakeet" }
                     ],
                     "default": "",
                     "hidden": "!data.voiceEnabled",
@@ -1111,6 +1138,54 @@
                     "lg": 3,
                     "xl": 3
                 },
+                "parakeetInstance": {
+                    "newLine": true,
+                    "type": "instance",
+                    "adapter": "ai-parakeet",
+                    "label": "ai-parakeet instance",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'parakeet' && data.sttFallback !== 'parakeet')",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "_installParakeet": {
+                    "type": "sendTo",
+                    "label": "Install ai-parakeet",
+                    "command": "installAdapter",
+                    "jsonData": "{\"adapter\":\"ai-parakeet\"}",
+                    "useNative": true,
+                    "showProcess": true,
+                    "variant": "outlined",
+                    "confirm": {
+                        "title": "Install ai-parakeet",
+                        "text": "This installs the adapter ai-parakeet on the host of this instance and creates an instance of it. It takes a few minutes. On its first start it downloads the speech model (about 670 MB); it then needs about 1.1 GB of memory.",
+                        "ok": "Install",
+                        "cancel": "Cancel"
+                    },
+                    "result": {
+                        "installed": "%s was installed and selected. Save the settings to use it.",
+                        "existing": "%s is already installed and is now selected. Save the settings to use it."
+                    },
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'parakeet' && data.sttFallback !== 'parakeet') || !!data.parakeetInstance",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "_parakeetInfo": {
+                    "newLine": true,
+                    "type": "staticText",
+                    "text": "The adapter ai-parakeet recognises speech offline on the CPU of its host, in 25 European languages that the model detects itself. The audio goes to it over the ioBroker message bus, so the instance may also run on another host.",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'parakeet' && data.sttFallback !== 'parakeet')",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                },
                 "voiceCredentialType": {
                     "newLine": true,
                     "type": "select",
@@ -1120,7 +1195,7 @@
                         { "label": "Central credential store", "value": "manager" }
                     ],
                     "default": "manual",
-                    "hidden": "!data.voiceEnabled || (data.sttProvider === 'vosk' && data.ttsProvider === 'piper')",
+                    "hidden": "!data.voiceEnabled || ((data.sttProvider === 'vosk' || data.sttProvider === 'parakeet') && data.ttsProvider === 'piper')",
                     "xs": 12,
                     "sm": 12,
                     "md": 4,

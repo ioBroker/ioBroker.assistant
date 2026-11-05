@@ -237,6 +237,10 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) Speech recognition with the adapter ai-parakeet (NVIDIA Parakeet on the CPU, offline, 25 European languages) as provider or fallback — the audio goes to its instance over the message bus, so it may run on another host
+* (@GermanBluefox) Settings: buttons "Install pi-agent" and "Install ai-parakeet" install the adapter on the host of this instance if needed (from the repository, else from npm), create an instance and select it
+
 ### 1.4.10 (2026-11-05)
 * (@GermanBluefox) ESPHome satellites: internet radio and music from a URL — `controls.<media player>.url` plays it as media (replies and announcements only duck it, play/pause/stop/volume act on it), empty or `stop` stops. Playlists (.pls/.m3u) are resolved; a stream the device cannot decode (AAC, HLS, …) runs through ffmpeg and is served to it as FLAC; `transcode` forces that
 

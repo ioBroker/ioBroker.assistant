@@ -257,6 +257,7 @@
     "awsRegion": "",
     "awsVoice": "",
     "voskModel": "",
+    "parakeetInstance": "",
     "piperVoice": "",
     "voiceCredentialType": "manual",
     "voiceCredentialId": "",

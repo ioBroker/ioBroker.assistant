@@ -19,6 +19,20 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **ai-parakeet als STT + Installations-Knöpfe für pi-agent/ai-parakeet** (Nutzerwunsch 2026-11-05). Anbieter
+  `parakeet` (auch als Reserve): `src/lib/voice/parakeet.ts` `ParakeetStt` → `sendTo(<inst>,'transcribe',{pcm base64,
+  sampleRate, prompt})` (Buffer würde als JSON-Zahlenarray serialisiert; Sprache geht nicht mit, das Modell erkennt
+  sie), Antwort `{text}`/`{error}`. Über den Nachrichtenbus statt HTTP: geht auf jedem Host, API-Key von ai-parakeet
+  egal. `EngineContext.parakeetInstance`/`sendMessage`; `main.askInstance()` prüft `alive`, Timeout
+  `PARAKEET_TIMEOUT_MS` 60 s. Config `parakeetInstance` (jsonConfig `type:"instance"`). **Knöpfe** (`sendTo`
+  `installAdapter {adapter}`, `useNative` + `result`/`args` → Instanz landet im Formular, sichtbar nur ohne gewählte
+  Instanz): `src/lib/installer.ts` `AdapterInstaller` schickt dem eigenen Host `cmdExec` (`add <name>`; nicht im
+  Repository → `url iobroker.<name>` von npm → `add`), die Antworten `cmdStdout`/`cmdStderr`/`cmdExit` (letzteres
+  doppelt) fängt `onMessage` als Erstes ab. Ein Befehl im Timeout (15 min) beendet den Ablauf (sonst liefe npm
+  parallel zu `add`). Nur `pi-agent`/`ai-parakeet` (`HELPER_ADAPTERS`). Test: `parakeet.test.js` (Fake-Host wie
+  js-controller), main per Wegwerf-Harness. ⚠️ ai-parakeet ist (Stand 2026-11-05) weder auf npm noch im Repository —
+  der Knopf meldet das, bis es veröffentlicht ist; pi-agent nur in „latest“ → bei stable kommt es von npm. Nicht
+  gegen einen echten Host gelaufen.
 - **Musik/Internetradio per URL auf ESPHome-Satelliten** (Wunsch des Firmware-Entwicklers, 2026-11-05, Punkte 8+9;
   Punkt 10 „Titel“ = die `text`-Entity der Firmware, nichts im Assistant). State `controls.<player>.url` →
   `playMediaUrl()`: `MediaPlayerCommandRequest{has_media_url, media_url, has_announcement:true, announcement:false}`

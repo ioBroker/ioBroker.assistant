@@ -131,6 +131,7 @@ import { MAX_TTS_CHARS, parseTtsMaxChars, spokenLengthHint } from './lib/voice/t
 import { CaptureStore, type DiscardedCapture } from './lib/voice/captures';
 import { downloadFfmpegStatic, ffmpegStaticPath } from './lib/voice/ffmpegStatic';
 import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
+import { AdapterInstaller, type InstallerAdapter } from './lib/installer';
 import {
     attachmentNote,
     historyText,
@@ -240,6 +241,7 @@ const VOICE_FORM_FIELDS = [
     'sttServerKey',
     'openrouterSttModel',
     'voskModel',
+    'parakeetInstance',
     'ttsProvider',
     'ttsVoice',
     'ttsModel',
@@ -269,6 +271,15 @@ const VOICE_FORM_SECRETS = [
     'awsSecretAccessKey',
     'sttServerKey',
 ];
+
+/** How long ai-parakeet may take for one recognition (queue, loading an unloaded model, a slow host). */
+const PARAKEET_TIMEOUT_MS = 60_000;
+
+/** Adapters a button in the settings installs, and the setting that gets their instance. */
+const HELPER_ADAPTERS = new Map<string, 'piAgentInstance' | 'parakeetInstance'>([
+    ['pi-agent', 'piAgentInstance'],
+    ['ai-parakeet', 'parakeetInstance'],
+]);
 
 /** An empty `ask` from the same caller is reported at most this often. */
 const EMPTY_ASK_REPORT_MS = 60_000;
@@ -462,6 +473,8 @@ class Assistant extends Adapter {
     private agent: LlmAgent | null = null;
     /** Provider "pi-agent": the cloud tier is a pi-agent instance instead of {@link agent}. */
     private piAgent: PiAgentHarness | null = null;
+    /** Installs pi-agent / ai-parakeet from the settings; created on the first use. */
+    private installer: AdapterInstaller | null = null;
     /** The cloud LLM of the instance (own or system-wide settings); `null` without one. */
     private llm: ResolvedLlm | null = null;
     /** What of `system.ai` this instance depends on, while it takes the system-wide AI settings. */
@@ -941,6 +954,9 @@ class Assistant extends Adapter {
             openrouterTtsModel: (cfg.openrouterTtsModel || '').trim(),
             decodeAudio: audio => this.decodeAudioBufferToPcm(audio),
             ttsMaxChars: parseTtsMaxChars(cfg.ttsMaxChars),
+            parakeetInstance: (cfg.parakeetInstance || '').trim().replace(/^system\.adapter\./, ''),
+            sendMessage: (instance, command, message) =>
+                this.askInstance(instance, command, message, PARAKEET_TIMEOUT_MS),
         };
     }
 
@@ -2947,6 +2963,20 @@ class Assistant extends Adapter {
             return;
         }
 
+        // Output of a command the host runs for us (installing pi-agent / ai-parakeet).
+        if (this.installer?.handleMessage(obj.command, obj.message)) {
+            return;
+        }
+
+        // Settings buttons "Install pi-agent" / "Install ai-parakeet".
+        if (obj.command === 'installAdapter') {
+            const result = await this.installHelperAdapter(obj.message);
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
+
         // Settings-dialog "Test connection" button.
         if (obj.command === 'testApiConnection') {
             const result = await this.testApiConnection(
@@ -4642,7 +4672,7 @@ class Assistant extends Adapter {
      * usually not open at all. Nothing to free on shutdown: the host unblocks our entries when the process exits
      * and drops them on the next start. Best effort — the registry is a hint, it must never keep a server down.
      */
-    private declarePort(type: 'tcpPort' | 'udpPort', port: number, bind: string, family?: 4): void {
+    private declarePort(type: 'tcpPort' | 'udpPort', port: number, bind: string, family?: 4 | 6): void {
         const api = this as unknown as {
             supportsFeature(feature: string): boolean;
             registerUsedResource?(
@@ -5011,6 +5041,50 @@ class Assistant extends Adapter {
      * @param command `addEvent`, `listEvents`, `deleteEvent`, …
      * @param message the parameters
      */
+    /** `sendTo` an instance that must be running; rejects when it is not or does not answer in `timeoutMs`. */
+    private async askInstance(
+        instance: string,
+        command: string,
+        message: Record<string, unknown>,
+        timeoutMs: number,
+    ): Promise<unknown> {
+        const alive = await this.getForeignStateAsync(`system.adapter.${instance}.alive`);
+        if (!alive?.val) {
+            throw new Error(`${instance} is not running`);
+        }
+        return this.sendToAsync(instance, command, message as ioBroker.MessagePayload, { timeout: timeoutMs });
+    }
+
+    /**
+     * Settings button: install pi-agent or ai-parakeet on this host if needed, create an instance if there is
+     * none, and put it into the form (`native`). Takes minutes on a Raspberry Pi; the log shows the steps.
+     */
+    private async installHelperAdapter(message: unknown): Promise<Record<string, unknown>> {
+        const adapterName = (message as { adapter?: unknown } | null)?.adapter;
+        const name = typeof adapterName === 'string' ? adapterName : '';
+        const field = HELPER_ADAPTERS.get(name);
+        if (!field) {
+            return { error: `Cannot install "${name}"` };
+        }
+        if (!this.host) {
+            return { error: 'The host of this instance is unknown' };
+        }
+        const adapter: InstallerAdapter = {
+            sendToHost: (host, command, msg) => this.sendToHost(host, command, msg),
+            getForeignObjectAsync: id => this.getForeignObjectAsync(id),
+            getObjectViewAsync: (design, search, params) => this.getObjectViewAsync(design, search, params),
+            log: this.log,
+        };
+        this.installer ??= new AdapterInstaller(adapter, this.host);
+        try {
+            const { instance, installed } = await this.installer.ensure(name);
+            return { native: { [field]: instance }, result: installed ? 'installed' : 'existing', args: [instance] };
+        } catch (e) {
+            this.log.warn(`Installing ${name}: ${(e as Error).message}`);
+            return { error: (e as Error).message };
+        }
+    }
+
     private async calendarCall<T extends object>(command: string, message: Record<string, unknown>): Promise<T> {
         const instance = (this.config.calendarInstance || '').trim().replace(/^system\.adapter\./, '');
         if (!instance) {
@@ -8307,6 +8381,7 @@ class Assistant extends Adapter {
         } catch {
             // ignore
         }
+        this.installer?.stop();
         try {
             this.timers?.dispose();
         } catch {
