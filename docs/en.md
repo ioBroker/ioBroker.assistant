@@ -88,7 +88,9 @@ along as its instructions, time, weather and presence in front of each question.
 (timers, memory, announcements, YouTube) are not available to pi-agent — timers and alarms are still handled by
 the rule-based commands. Separate conversations need pi-agent with `conversation` support in `ask` (newer than
 0.3.0); older versions answer everything in one conversation. If pi-agent is not running or fails, the local
-model answers, if enabled.
+model answers, if enabled. A request from a satellite also carries `satellite` (its id under
+`assistant.0.satellites.*`) and `tts` (the full id of its `tts` state): pi-agent can keep them with a reminder or a
+background task and speak there later by writing the text to that state. Chat and Telegram requests carry neither.
 
 ### Satellites (voice)
 
@@ -565,7 +567,7 @@ are there and ignores their absence:
 
 | Entity | Kind | What the assistant does |
 |---|---|---|
-| `confirm_answer` | event, types `yes` / `no` | While a reply waits for an answer (pi-agent's "Set the lamp to on? Say yes or no."), a press is that answer: the open microphone closes, "yes"/"no" in the voice language goes on as the reply, and the reply to it is announced on that satellite with its text. A press without an open question is ignored. |
+| `confirm_answer` | event, types `yes` / `no` | While a reply waits for an answer (pi-agent's "Set the lamp to on? Say yes or no."), a press is that answer: the open microphone closes, "yes"/"no" in the voice language goes on as the reply, and the reply to it is announced on that satellite with its text. The question stays open until the satellite's next request is answered, at most 30 s after the reply; the follow-up microphone counts as answering it even though the firmware sends the last wake word with it. A stop the firmware sends right after the press (before or after the event) does not drop the answer. A press without an open question is ignored. |
 | `display_language` | select | Set to the voice language once per connect. Options may be names ("Deutsch", "English", "Русский"), English names ("German") or codes ("de", "de-DE"). |
 | any `text` | text | Plain writable states — e.g. labels and units of the screen's pages, set from ioBroker instead of in the firmware build. |
 
@@ -925,7 +927,22 @@ From a script:
 sendTo('assistant.0', 'setTimer', { duration: '10 min', label: 'pasta', room: 'Kitchen' }, r => log(r.id));
 sendTo('assistant.0', 'setAlarm', { time: '06:30', weekdays: [1, 2, 3, 4, 5], label: 'work' });
 sendTo('assistant.0', 'listTimers', {}, r => log(JSON.stringify(r)));
+// a reminder on one satellite: shown and rung there, then the text is said there
+sendTo('assistant.0', 'setTimer', {
+    satellite: 'Gast',
+    seconds: 3600,
+    name: 'Switch the light',
+    announce: 'Reminder: switch the light today',
+}, r => log(r.id || r.error));
+sendTo('assistant.0', 'listTimers', { satellite: 'Gast' }, r => log(JSON.stringify(r.timers)));
+sendTo('assistant.0', 'cancelTimer', { satellite: 'Gast', id: 'tm…' });
 ```
+
+`satellite` is the id under `assistant.0.satellites.*` (or the satellite's device name); the timer then belongs
+to that satellite like one set there by voice. `announce` is said word for word when it fires — also when timer
+announcements are switched off; without it the usual "Timer finished: <name>." `seconds` count in seconds, a
+`duration` can also be a phrase like `'10 min'`. `listTimers`/`cancelTimer` with `satellite` only see that
+satellite's timers (`cancelTimer` without `id` = all of them).
 
 A timer set by voice announces on the satellite it was set from; one from the chat, Telegram or a script
 announces everywhere. On a satellite that reports the ESPHome *timers* feature, running timers also appear
@@ -1043,7 +1060,7 @@ Everything the assistant can do is reachable from a script. The reply always arr
 | `tts` / `ttsAvailable` | `{ text, language? }` / `{}` | a WAV as base64 / whether an engine is configured |
 | `playSound` | `{ sound, room?/target? }` | play a file from `sounds/` |
 | `stopRinging` | `{}` | silence a ringing timer or alarm |
-| `setTimer` / `cancelTimer` / `listTimers` | `{ duration, label?, room? }` / `{ id? }` / `{}` | §11 |
+| `setTimer` / `cancelTimer` / `listTimers` | `{ duration or seconds, label?/name?, room?, satellite?, announce? }` / `{ id?, satellite? }` / `{ satellite? }` | §11 |
 | `setAlarm` / `cancelAlarm` / `listAlarms` | `{ time or hour+minute, weekdays?, label?, room? }` / `{ id? }` / `{}` | §11 |
 | `saveMemory` / `forgetMemory` / `listMemories` | `{ text, key? }` / `{ id? or text? }` / `{}` | §11 |
 | `listTriggers` / `fireTrigger` / `setTriggerEnabled` | `{}` / `{ id }` / `{ id, enabled }` | §10 |

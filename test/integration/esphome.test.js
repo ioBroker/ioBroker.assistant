@@ -540,11 +540,12 @@ function fakeDevice({
             send(m);
         };
         /**
-         * Start a pipeline: with a wake phrase like a wake word, without one like the firmware does after a reply with
-         * continue_conversation. The microphone then hears only the room.
+         * Start a pipeline. ESPHome sends the phrase of the last wake word with every request — the follow-up
+         * microphone after a reply with continue_conversation too. The microphone hears only the room, or with
+         * `speech` the chirp and speech like after a wake word.
          */
-        state.startPipeline = (phrase = '') => {
-            elapsed = chirpMs + speechMs;
+        state.startPipeline = (phrase = '', speech = false) => {
+            elapsed = speech ? 0 : chirpMs + speechMs;
             const m = new pb.VoiceAssistantRequest();
             m.setStart(true);
             m.setWakeWordPhrase(phrase);
@@ -1383,10 +1384,14 @@ test('a yes button answers the open question: the mic closes, the reply is annou
     const { device, asked } = await screenSatellite(t);
     assert.equal(device.events.find(e => e.type === 6).data.continue_conversation, '1', 'the question continues');
 
-    // The device re-opens the mic for the answer; the user touches "yes" instead of speaking.
-    device.startPipeline('');
+    // The device re-opens the mic for the answer — with the phrase of the last wake word, as ESPHome never clears it
+    // (field report 2026-11-05: the press was ignored as "without an open question"); the user touches "yes" instead
+    // of speaking.
+    const opened = device.events.length;
+    device.startPipeline('okay nabu');
     await waitFor(() => device.responses === 2, 'the follow-up pipeline');
     await sleep(150);
+    assert.ok(!device.events.slice(opened).some(e => e.type === 10), 'no WAKE_WORD_END for the follow-up');
     const before = device.events.length;
     device.press('yes');
     await waitFor(() => device.announces.length === 1, 'the announced reply');
@@ -1422,7 +1427,7 @@ test('a button pressed before the mic opened answers too, and that mic is closed
 
     // The firmware still opens the mic for the question (its continue flag): it is closed without a pipeline.
     const before = device.events.length;
-    device.startPipeline('');
+    device.startPipeline('okay nabu');
     await waitFor(() => device.events.length > before, 'the answer to the follow-up request');
     await sleep(200);
     assert.deepEqual(
@@ -1437,13 +1442,50 @@ test('a button pressed before the mic opened answers too, and that mic is closed
     await waitFor(() => device.responses === 2, 'the next pipeline');
 });
 
-test('a button after the user started over with the wake word is not an answer', async t => {
+test('the device stops its conversation right after the press: the answer still goes through', async t => {
     const { device, asked } = await screenSatellite(t);
     device.startPipeline('okay nabu');
-    await waitFor(() => device.responses === 2, 'the new pipeline');
+    await waitFor(() => device.responses === 2, 'the follow-up pipeline');
+    await sleep(100);
+    const before = device.events.length;
+    // Like the screen firmware: the event, then voice_assistant.stop at once
+    device.press('yes');
+    device.sendStop();
+    await waitFor(() => device.announces.length === 1, 'the announced reply');
+    assert.equal(asked[1].question, 'Ja');
+    assert.deepEqual(
+        device.events.slice(before).map(e => e.type),
+        [2],
+        'one RUN_END: the stop after the button ends nothing more',
+    );
+    // That stop dropped the device's continue flag, so a wake word right after is a new request, not a stale mic.
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 3, 'the next pipeline');
+});
+
+test('the stop arrives before the press: the question waits for the report', async t => {
+    const { device, asked } = await screenSatellite(t);
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 2, 'the follow-up pipeline');
+    await sleep(100);
+    // State messages may be batched by the firmware, the stop is not: it can overtake the event.
+    device.sendStop();
+    await waitFor(() => device.events.at(-1).type === 2, 'the end of the follow-up run');
+    device.press('no');
+    await waitFor(() => device.announces.length === 1, 'the announced reply');
+    assert.equal(asked[1].question, 'Nein');
+    assert.equal(asked[1].ctx.button, 'no');
+});
+
+test('a spoken answer closes the question: a button afterwards is no answer', async t => {
+    const { device, asked } = await screenSatellite(t);
+    device.startPipeline('okay nabu', true);
+    await waitFor(() => asked.length === 2, 'the spoken answer');
+    assert.equal(asked[1].ctx.wakeWord, '', 'answered in the follow-up, not after a wake word');
+    await waitFor(() => device.events.filter(e => e.type === 2).length === 2, 'the end of the answer');
     device.press('yes');
     await sleep(400);
-    assert.equal(asked.length, 1, 'the press was ignored');
+    assert.equal(asked.length, 2, 'the press was ignored');
     assert.equal(device.announces.length, 0);
 });
 

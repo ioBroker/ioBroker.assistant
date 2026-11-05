@@ -237,6 +237,11 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) ESPHome satellites with a screen: the yes/no button did not answer pi-agent's question — the follow-up microphone carries the last wake word (ESPHome never clears it) and was taken for a new request. A follow-up is now recognised by the open question (until the next answered request, at most 30 s after the reply), and a stop the firmware sends right after the press no longer drops the answer
+* (@GermanBluefox) pi-agent: a request from a satellite also carries `satellite` (its id under `satellites.*`) and `tts` (its `tts` state), so pi-agent can speak there later (reminders, background tasks)
+* (@GermanBluefox) Timers of a satellite: `setTimer` takes `satellite`, `seconds`, `name` and `announce` (said word for word when it fires); `listTimers`/`cancelTimer` take `satellite`. An ESPHome satellite shows and rings such a timer like one set there by voice
+
 ### 1.4.8 (2026-11-05)
 * (@GermanBluefox) ESPHome satellites: a firmware update entity gets a "check" button (`controls.<update>.check`) that makes the device look for a new version now, instead of at its next boot or its 6-hour check
 * (@GermanBluefox) ESPHome satellites: `text` entities are mirrored as writable states (labels and units of a satellite with a screen can be set from ioBroker). Values outside the device's length or pattern are refused with a warning; a password text is not mirrored

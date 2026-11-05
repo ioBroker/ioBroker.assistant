@@ -51,6 +51,24 @@ test('ask: the language goes along, so pi-agent asks its confirmation questions 
     assert.equal(host.sent[0].message.language, 'ru');
 });
 
+test('ask: a satellite request names the satellite and its tts state, others do not', async () => {
+    // pi-agent keeps them with a reminder and speaks there later by writing the tts state
+    const host = fakeHost(() => ({ answer: 'Ich erinnere dich in einer Stunde.' }));
+    const harness = new PiAgentHarness(host, 'pi-agent.0');
+    await harness.ask({
+        text: 'Erinnere mich in einer Stunde ans Licht',
+        conversation: 'waveshare-va-eb1614',
+        instructions: '',
+        satellite: 'Gast',
+        tts: 'assistant.0.satellites.Gast.tts',
+    });
+    await harness.ask({ text: 'Hallo', conversation: 'telegram:Max', instructions: '', satellite: '', tts: '' });
+    assert.equal(host.sent[0].message.satellite, 'Gast');
+    assert.equal(host.sent[0].message.tts, 'assistant.0.satellites.Gast.tts');
+    assert.equal('satellite' in host.sent[1].message, false, 'no satellite, no field');
+    assert.equal('tts' in host.sent[1].message, false);
+});
+
 test('ask: an instance that is not running fails at once, without waiting for the timeout', async () => {
     const host = fakeHost(() => ({ answer: 'never' }), false);
     const harness = new PiAgentHarness(host, 'pi-agent.0');

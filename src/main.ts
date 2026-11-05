@@ -544,6 +544,8 @@ class Assistant extends Adapter {
         source: string;
         room: string;
         voice: boolean;
+        /** Id of the satellite under `satellites.*` a voice request came from; '' for chat, Telegram, scripts. */
+        satellite: string;
         attachments: Attachments;
     }>();
     /** Who is at home (roadmap B1); mirrored into `presence.*`. Null until onReady. */
@@ -1248,6 +1250,12 @@ class Assistant extends Adapter {
     private satelliteStateId(device: string, room: string): string {
         const roomName = (room || '').replace(/^(enum\.rooms\.|system\.rooms\.)/, '');
         return (roomName || device).replace(/[^\w-]/g, '_') || 'unknown';
+    }
+
+    /** The id under `satellites.*` of the satellite a request came from, or '' when it has no states there (Wyoming). */
+    private knownSatelliteId(device: string, room: string): string {
+        const id = this.satelliteStateId(device, room);
+        return this.satStatesEnsured.has(id) ? id : '';
     }
 
     /** Reflect a satellite's status into `satellites.<room>.*` states (created on first sight). */
@@ -2897,18 +2905,44 @@ class Assistant extends Adapter {
             return;
         }
 
-        // Scripts: start a countdown timer. message = { duration: seconds | "5 min", label?, room? }.
+        // Scripts: start a countdown timer. message = { duration | seconds: seconds | "5 min", label | name?, room?,
+        // satellite?, announce? }. With `satellite` (its id under satellites.*, or the device name) the timer is that
+        // satellite's like one set there by voice: an ESPHome satellite shows and rings it, and the announcement plays
+        // there. `announce` = what to say when it fires, word for word (default: "Timer finished: <name>.").
         if (obj.command === 'setTimer') {
-            const m = (obj.message || {}) as { duration?: number | string; label?: string; room?: string };
+            const m = (obj.message || {}) as {
+                duration?: number | string;
+                seconds?: number | string;
+                label?: string;
+                name?: string;
+                room?: string;
+                satellite?: string;
+                announce?: string;
+            };
+            // `seconds` are seconds also as a string; a bare number in a `duration` string stays minutes as before
             const duration =
-                typeof m.duration === 'string'
-                    ? parseDurationSeconds(m.duration, true) || 0
-                    : Math.round(Number(m.duration) || 0);
+                m.seconds !== undefined
+                    ? Math.round(Number(m.seconds) || 0) ||
+                      (typeof m.seconds === 'string' ? parseDurationSeconds(m.seconds, false) || 0 : 0)
+                    : typeof m.duration === 'string'
+                      ? parseDurationSeconds(m.duration, true) || 0
+                      : Math.round(Number(m.duration) || 0);
+            const satellite = this.timerSatellite(m.satellite);
             let result: { ok: boolean; id?: string; fireAt?: number; error?: string };
-            if (!this.timers || duration <= 0) {
-                result = { ok: false, error: this.timers ? 'duration must be > 0 seconds' : 'timers not ready' };
+            if (!this.timers) {
+                result = { ok: false, error: 'timers not ready' };
+            } else if (duration <= 0) {
+                result = { ok: false, error: 'duration must be > 0 seconds' };
+            } else if (satellite === null) {
+                result = { ok: false, error: `unknown satellite "${String(m.satellite)}"` };
             } else {
-                const info = this.timers.add({ label: m.label || '', room: m.room || '', source: '', duration });
+                const info = this.timers.add({
+                    label: String(m.name ?? m.label ?? ''),
+                    room: m.room || '',
+                    source: satellite,
+                    duration,
+                    announce: typeof m.announce === 'string' ? m.announce : '',
+                });
                 result = { ok: true, id: info.id, fireAt: info.fireAt };
             }
             if (obj.callback) {
@@ -2917,20 +2951,39 @@ class Assistant extends Adapter {
             return;
         }
 
-        // Scripts: cancel a timer by id, or all when no id is given. message = { id? }.
+        // Scripts: cancel a timer by id, or all when no id is given. message = { id?, satellite? } — with `satellite`
+        // only that satellite's timers.
         if (obj.command === 'cancelTimer') {
-            const m = (obj.message || {}) as { id?: string };
-            const cancelled = m.id ? (this.timers?.cancel(m.id) ? 1 : 0) : (this.timers?.cancelAll() ?? 0);
+            const m = (obj.message || {}) as { id?: string; satellite?: string };
+            const satellite = this.timerSatellite(m.satellite);
+            let result: { ok: boolean; cancelled: number; error?: string };
+            if (satellite === null) {
+                result = { ok: false, cancelled: 0, error: `unknown satellite "${String(m.satellite)}"` };
+            } else {
+                const mine = (this.timers?.list() || []).filter(t => !satellite || t.source === satellite);
+                const ids = m.id ? mine.filter(t => t.id === m.id).map(t => t.id) : mine.map(t => t.id);
+                const cancelled =
+                    satellite || m.id
+                        ? ids.filter(id => this.timers?.cancel(id)).length
+                        : (this.timers?.cancelAll() ?? 0);
+                result = { ok: true, cancelled };
+            }
             if (obj.callback) {
-                this.sendTo(obj.from, obj.command, { ok: true, cancelled }, obj.callback);
+                this.sendTo(obj.from, obj.command, result, obj.callback);
             }
             return;
         }
 
-        // Scripts: list the running timers.
+        // Scripts: list the running timers. message = { satellite? } — with it only that satellite's.
         if (obj.command === 'listTimers') {
+            const m = (obj.message || {}) as { satellite?: string };
+            const satellite = this.timerSatellite(m.satellite);
+            const result =
+                satellite === null
+                    ? { timers: [], error: `unknown satellite "${String(m.satellite)}"` }
+                    : { timers: (this.timers?.list() || []).filter(t => !satellite || t.source === satellite) };
             if (obj.callback) {
-                this.sendTo(obj.from, obj.command, { timers: this.timers?.list() || [] }, obj.callback);
+                this.sendTo(obj.from, obj.command, result, obj.callback);
             }
             return;
         }
@@ -3661,9 +3714,10 @@ class Assistant extends Adapter {
             return Promise.resolve('');
         }
         const voice = VOICE_TRANSPORTS.has(origin.transport || '');
+        const satellite = voice ? this.knownSatelliteId(origin.satellite || source, origin.room || '') : '';
         // The journal shows "[picture] What is in this picture?", like the conversation history
         const shown = historyText(question, attachments.images.length, !!attachments.video);
-        return this.requestOrigin.run({ source, room: origin.room || '', voice, attachments }, () =>
+        return this.requestOrigin.run({ source, room: origin.room || '', voice, satellite, attachments }, () =>
             this.journal
                 ? this.journal.run(shown, source, origin, () => {
                       this.traceSpeechInput(question, origin);
@@ -4221,7 +4275,11 @@ class Assistant extends Adapter {
             // pi-agent asks its questions to confirm a write ("… Say yes or no.") in this language, not in the system
             // language: a satellite listening in Russian does not hear a German "Ja"
             const language = String(this.config.voiceLanguage || this.language || '');
-            return await harness.ask({ text, conversation: source, instructions, language, images });
+            // From a satellite: where pi-agent can speak later on its own (a reminder, the end of a background
+            // task) — its `tts` state says it there.
+            const satellite = this.requestOrigin.getStore()?.satellite || '';
+            const tts = satellite ? `${this.namespace}.satellites.${satellite}.tts` : '';
+            return await harness.ask({ text, conversation: source, instructions, language, images, satellite, tts });
         } catch (e) {
             if (localFallback) {
                 this.log.warn(`pi-agent failed (${(e as Error).message}) — asking the local LLM instead.`);
@@ -5715,13 +5773,26 @@ class Assistant extends Adapter {
         await this.setStateAsync(`${base}.fireAt`, { val: t.fireAt, ack: true });
     }
 
+    /**
+     * The `source` a timer of a satellite gets (the device name, like a timer set there by voice), from the satellite
+     * a script named: '' when it named none, null when the name is unknown.
+     */
+    private timerSatellite(name: unknown): string | null {
+        if (typeof name !== 'string' || !name.trim()) {
+            return '';
+        }
+        const id = this.resolveSatelliteId(name);
+        return id ? this.satDeviceById.get(id) || id : null;
+    }
+
     /** A timer expired: record it, play the jingle (if any) and speak the announcement on the origin satellite. */
     private onTimerFired(t: TimerInfo): void {
         this.log.info(`Timer fired: "${t.label || '(no label)'}"${t.room ? ` (${t.room})` : ''}`);
         this.setStateAsync('timers.lastFired', { val: t.label || t.id, ack: true }).catch(() => {});
-        const announce = this.config.timerAnnounce !== false;
+        // A text a script gave for this timer (a reminder) is said even when timer announcements are off
+        const announce = !!t.announce || this.config.timerAnnounce !== false;
         const target = this.announceTargetForSource(t.source);
-        this.fireEffects(this.config.timerSound || '', announce, this.timerAnnounceMessage(t), target);
+        this.fireEffects(this.config.timerSound || '', announce, t.announce || this.timerAnnounceMessage(t), target);
     }
 
     /** Build the spoken expiry message ("Timer abgelaufen: die Nudeln.") in the interaction language. */

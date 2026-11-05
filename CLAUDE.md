@@ -122,6 +122,24 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   Passwort wird **nicht** gespiegelt. Dialog: Textfeld schreibt nur bei Änderung, Key = Wert (Echo des Geräts wird
   sichtbar). Optionale Bildschirm-Entities in `docs/{en,de}.md` dokumentiert — weitere Namens-Absprachen mit
   Firmware-Entwicklern lieber über allgemeine Entities lösen.
+  **Nach 1.4.8 (Feldbericht Waveshare `waveshare-va-eb1614`, 2026-11-05):** der Knopf ging bei pi-agent-Fragen nie —
+  ESPHome **leert `wake_word_` nie** (`voice_assistant.cpp` START_PIPELINE: `msg.wake_word_phrase = wake_word_`), das
+  Folge-Mikro kam mit „ioBroker“ und galt als neue Runde. Jetzt: Folge = **offene Frage** (`answersQuestion =
+  now < questionUntil`, Phrase egal; `QUESTION_OPEN_MS` 30 s nach der Antwortlänge, bis die nächste Anfrage
+  beantwortet ist), dann kein WAKE_WORD_END, `NO_SPEECH_FOLLOW_UP_MS`, Journal-`wakeWord` ''. Stille/leere STT
+  verkürzen das Fenster nicht mehr (`max(questionUntil, now+GRACE)`). Die Firmware schickt nach dem Event sofort
+  `voice_assistant.stop`: `onStopRequest` innerhalb `CONFIRM_GRACE_MS` nach dem Knopf (`buttonAt`) und ohne offenen
+  Lauf → nichts tun (kein `run++`, kein zweites RUN_END, `ignoreFollowUpUntil` = 0, weil `request_stop()` das
+  continue-Flag löscht); Stopp **vor** dem Event (Batching) → Frage bleibt `CONFIRM_GRACE_MS` offen.
+  `ignoreFollowUpUntil` gilt jetzt unabhängig von der Phrase, wird aber nur gesetzt, wenn beim Tippen kein Mikro offen
+  war und kein Stopp kurz davor kam. Tests: Fake-Gerät `startPipeline(phrase, speech)`.
+  **pi-agent bekommt `satellite` + `tts`** (nur Satelliten-Anfragen: `requestOrigin.satellite` aus
+  `knownSatelliteId()` = `satelliteStateId` + `satStatesEnsured`, also nicht Wyoming/Chat/Telegram), damit pi-agent
+  später dort sprechen kann (`satellites.<id>.tts`). **Timer eines Satelliten per sendTo**: `setTimer {satellite,
+  seconds, name, announce}` (`timerSatellite()` → `source` = Gerätename wie bei Sprach-Timern → `mirrorTimer` und
+  `announceTargetForSource` greifen), `TimerInfo.announce` (persistiert, wird wörtlich gesagt, auch bei
+  `timerAnnounce` aus), `listTimers`/`cancelTimer {satellite, id?}`. `seconds` als String = Sekunden, `duration`-String
+  mit bloßer Zahl bleibt Minuten. main-Routing per Wegwerf-Harness geprüft, nicht am Gerät.
 - **Skript-Anfragen nur an die Cloud** — `nlu.ts.mentionsScript()` (`SCRIPT_RE`: `skript` überall inkl.
   Komposita, `script` nur am Wortanfang bzw. `java|type`-Präfix — sonst „description"/„subscription" —,
   `скрипт` mit Flexion, `blockly`). `main.ts.cloudOnlyReason()` → `'script'`, oder `'scriptReply'`, wenn das

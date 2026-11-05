@@ -92,6 +92,10 @@ und Anwesenheit vor jeder Frage. Die Tools dieses Adapters (Timer, Gedächtnis, 
 pi-agent nicht zur Verfügung — Timer und Wecker erledigen weiterhin die regelbasierten Befehle. Getrennte
 Unterhaltungen brauchen ein pi-agent mit `conversation` in `ask` (neuer als 0.3.0); ältere Versionen beantworten
 alles in einer Unterhaltung. Läuft pi-agent nicht oder schlägt fehl, antwortet das lokale Modell, falls aktiviert.
+Eine Anfrage von einem Satelliten trägt zusätzlich `satellite` (seine Id unter `assistant.0.satellites.*`) und `tts`
+(die volle Id seines `tts`-States): pi-agent kann sie mit einer Erinnerung oder einer Hintergrundaufgabe aufheben
+und später dort sprechen, indem es den Text in diesen State schreibt. Anfragen aus Chat und Telegram tragen beides
+nicht.
 
 ### Satelliten (Sprache)
 
@@ -582,7 +586,7 @@ wenn es sie gibt, und kommt ohne sie aus:
 
 | Entity | Art | Was der Assistent tut |
 |---|---|---|
-| `confirm_answer` | Event, Typen `yes` / `no` | Solange eine Antwort auf eine Rückfrage wartet (pi-agent: „Testlampe auf true setzen? Sag ja oder nein.“), ist ein Tippen diese Antwort: das offene Mikrofon geht zu, „Ja“/„Nein“ in der Sprache des Voice-Tabs geht als Antwort weiter, und die Antwort darauf wird auf diesem Satelliten samt Text angesagt. Ein Tippen ohne offene Frage wird ignoriert. |
+| `confirm_answer` | Event, Typen `yes` / `no` | Solange eine Antwort auf eine Rückfrage wartet (pi-agent: „Testlampe auf true setzen? Sag ja oder nein.“), ist ein Tippen diese Antwort: das offene Mikrofon geht zu, „Ja“/„Nein“ in der Sprache des Voice-Tabs geht als Antwort weiter, und die Antwort darauf wird auf diesem Satelliten samt Text angesagt. Die Frage bleibt offen, bis die nächste Anfrage des Satelliten beantwortet ist, höchstens 30 s nach der Antwort; das Folge-Mikrofon zählt als Antwort darauf, auch wenn die Firmware dabei das letzte Wake-Word mitschickt. Ein Stopp, den die Firmware direkt nach dem Tippen schickt (vor oder nach dem Event), verwirft die Antwort nicht. Ein Tippen ohne offene Frage wird ignoriert. |
 | `display_language` | Select | Wird bei jeder Verbindung einmal auf die Sprache des Voice-Tabs gesetzt. Optionen dürfen Namen („Deutsch“, „English“, „Русский“), englische Namen („German“) oder Codes („de“, „de-DE“) sein. |
 | jedes `text` | Text | Normale schreibbare States — z. B. Beschriftungen und Einheiten der Bildschirmseiten, aus ioBroker gesetzt statt beim Bauen der Firmware. |
 
@@ -953,7 +957,22 @@ Aus einem Skript:
 sendTo('assistant.0', 'setTimer', { duration: '10 min', label: 'Nudeln', room: 'Küche' }, r => log(r.id));
 sendTo('assistant.0', 'setAlarm', { time: '06:30', weekdays: [1, 2, 3, 4, 5], label: 'Arbeit' });
 sendTo('assistant.0', 'listTimers', {}, r => log(JSON.stringify(r)));
+// eine Erinnerung auf einem Satelliten: dort angezeigt und geklingelt, dann wird dort der Text gesagt
+sendTo('assistant.0', 'setTimer', {
+    satellite: 'Gast',
+    seconds: 3600,
+    name: 'Licht heute schalten',
+    announce: 'Erinnerung: Licht heute schalten',
+}, r => log(r.id || r.error));
+sendTo('assistant.0', 'listTimers', { satellite: 'Gast' }, r => log(JSON.stringify(r.timers)));
+sendTo('assistant.0', 'cancelTimer', { satellite: 'Gast', id: 'tm…' });
 ```
+
+`satellite` ist die Id unter `assistant.0.satellites.*` (oder der Gerätename des Satelliten); der Timer gehört
+dann diesem Satelliten wie einer, der dort per Sprache gestellt wurde. `announce` wird beim Ablauf wörtlich
+gesagt — auch wenn Timer-Ansagen ausgeschaltet sind; ohne heißt es wie sonst „Timer abgelaufen: <Name>.“
+`seconds` zählt in Sekunden, `duration` darf auch ein Ausdruck wie `'10 min'` sein. `listTimers`/`cancelTimer` mit
+`satellite` sehen nur die Timer dieses Satelliten (`cancelTimer` ohne `id` = alle davon).
 
 Ein per Sprache gestellter Timer sagt sich auf dem Satelliten an, an dem er gestellt wurde; einer aus
 Chat, Telegram oder einem Skript überall. Auf einem Satelliten, der das ESPHome-Feature *timers* meldet,
@@ -1074,7 +1093,7 @@ Alles, was der Assistent kann, ist aus einem Skript erreichbar. Die Antwort komm
 | `tts` / `ttsAvailable`                               | `{ text, language? }` / `{}`                                             | ein WAV als base64 / ob eine Engine konfiguriert ist                         |
 | `playSound`                                          | `{ sound, room?/target? }`                                               | eine Datei aus `sounds/` abspielen                                           |
 | `stopRinging`                                        | `{}`                                                                     | klingelnden Timer oder Wecker verstummen lassen                              |
-| `setTimer` / `cancelTimer` / `listTimers`            | `{ duration, label?, room? }` / `{ id? }` / `{}`                         | §11                                                                          |
+| `setTimer` / `cancelTimer` / `listTimers`            | `{ duration oder seconds, label?/name?, room?, satellite?, announce? }` / `{ id?, satellite? }` / `{ satellite? }` | §11                                                                          |
 | `setAlarm` / `cancelAlarm` / `listAlarms`            | `{ time oder hour+minute, weekdays?, label?, room? }` / `{ id? }` / `{}` | §11                                                                          |
 | `saveMemory` / `forgetMemory` / `listMemories`       | `{ text, key? }` / `{ id? oder text? }` / `{}`                           | §11                                                                          |
 | `listTriggers` / `fireTrigger` / `setTriggerEnabled` | `{}` / `{ id }` / `{ id, enabled }`                                      | §10                                                                          |

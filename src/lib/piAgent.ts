@@ -47,6 +47,13 @@ export interface PiAgentRequest {
      * Versions of pi-agent before image support ignore them; the text then says that pictures came along.
      */
     images?: ImageInput[];
+    /**
+     * Only for a request from a voice satellite: its id under `assistant.N.satellites.*`, and the full id of its `tts`
+     * state. Writing text there speaks it on that satellite — so pi-agent can answer later where it was asked (a
+     * reminder, the end of a background task). Chat and Telegram requests have neither.
+     */
+    satellite?: string;
+    tts?: string;
 }
 
 /**
@@ -106,6 +113,8 @@ export class PiAgentHarness {
                 instructions: req.instructions,
                 ...(req.language ? { language: req.language } : {}),
                 ...(req.images?.length ? { images: req.images } : {}),
+                ...(req.satellite ? { satellite: req.satellite } : {}),
+                ...(req.tts ? { tts: req.tts } : {}),
                 requestId,
             },
             { timeout: this.timeoutMs },

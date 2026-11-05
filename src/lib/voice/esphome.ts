@@ -159,10 +159,12 @@ const CONFIRM_ENTITY = 'confirm_answer';
 /** Select entity of a satellite with a screen: the language of the date and the hints it shows. */
 const DISPLAY_LANGUAGE_ENTITY = 'display_language';
 /**
- * After a reply that asks something: how long, beyond the reply's own length, the device may take to play it and
- * open the microphone. Until then a button press answers the question.
+ * After a reply that asks something: how long, beyond the reply's own length, the question stays open — the next
+ * pipeline the device starts answers it, and so does a yes/no button press. Answering it (by voice or button) closes
+ * it earlier. The wake word phrase cannot tell a follow-up from a new request: ESPHome sends the phrase of the last
+ * wake word with every request, the follow-up microphone included (field report 2026-11-05).
  */
-const FOLLOW_UP_START_MS = 10_000;
+const QUESTION_OPEN_MS = 30_000;
 /**
  * A button press still answers the question this long after the follow-up microphone closed: the firmware may stop
  * the microphone on the press before it reports which button it was.
@@ -574,11 +576,15 @@ class EsphomeConnection {
     private loggedFormat = '';
     /**
      * The last reply asked something (`continue_conversation`, or an announcement with `start_conversation`): until
-     * when a yes/no button press answers it while no follow-up recording is open. 0 = no open question.
+     * when the next request of the device, or a yes/no button press, answers it. 0 = no open question.
      */
     private questionUntil = 0;
     /** After a button answer: until when a follow-up microphone is the stale one of the answered question. */
     private ignoreFollowUpUntil = 0;
+    /** When a yes/no button press last answered a question. */
+    private buttonAt = 0;
+    /** When the device last asked to stop (`VoiceAssistantRequest{start:false}`). */
+    private stoppedAt = 0;
     /** The display language was compared with ours since the last connect. */
     private displayLanguageChecked = false;
 
@@ -973,6 +979,10 @@ class EsphomeConnection {
             return;
         }
         this.questionUntil = 0;
+        // Pressed while the question still played: the device may open the microphone for it afterwards. Not if the
+        // microphone is open already (our RUN_END closes it for good), and not if the device just stopped its
+        // conversation itself — the firmware does that on the press, which also drops its continue flag.
+        const micStillComes = !this.capture && Date.now() - this.stoppedAt >= CONFIRM_GRACE_MS;
         if (this.capture) {
             // A RUN_END while the microphone streams stops it and puts the device back to idle — without the error
             // display an empty recognition would end with.
@@ -982,7 +992,8 @@ class EsphomeConnection {
         // Whatever is still in flight for the question stays silent; so does the follow-up microphone the device may
         // still open for it.
         const run = ++this.run;
-        this.ignoreFollowUpUntil = Date.now() + IGNORE_FOLLOW_UP_MS;
+        this.buttonAt = Date.now();
+        this.ignoreFollowUpUntil = micStillComes ? Date.now() + IGNORE_FOLLOW_UP_MS : 0;
         void this.answerButton(yes, run);
     }
 
@@ -1071,7 +1082,7 @@ class EsphomeConnection {
             return;
         }
         const phrase = request.getWakeWordPhrase();
-        if (!phrase && Date.now() < this.ignoreFollowUpUntil) {
+        if (Date.now() < this.ignoreFollowUpUntil) {
             // The microphone for the question a button already answered: close it at once. In this state the device
             // takes a RUN_END as "stop the microphone" and goes back to idle.
             this.ignoreFollowUpUntil = 0;
@@ -1085,14 +1096,15 @@ class EsphomeConnection {
             this.opts.log.debug(`ESPHome ${this.deviceName}: new wake while answering — dropping the old reply`);
         }
         this.run++;
-        // Without a wake word the device re-opened the mic for the reply that asked something; with one, the user
-        // started over and the question is gone.
-        const answersQuestion = !phrase && Date.now() < this.questionUntil;
-        if (phrase) {
-            this.questionUntil = 0;
-        }
+        // While a question is open the next request answers it. The phrase says nothing here: the follow-up
+        // microphone carries the last wake word too. Should the user really have said the wake word, the utterance
+        // is still the next one after the question — which is what pi-agent and askUser take as the answer anyway.
+        const answersQuestion = Date.now() < this.questionUntil;
+        const followUp = answersQuestion || !phrase;
 
-        this.opts.log.debug(`ESPHome ${this.deviceName}: wake "${phrase || '(follow-up)'}"`);
+        this.opts.log.debug(
+            `ESPHome ${this.deviceName}: ${answersQuestion ? 'answer to the question' : followUp ? 'follow-up' : `wake "${phrase}"`}`,
+        );
 
         const response = new pb.VoiceAssistantResponse();
         response.setPort(0); // 0 = stream the audio over this socket
@@ -1119,13 +1131,13 @@ class EsphomeConnection {
                 // travel: derive them from the room instead, once the wake chirp is out of the way.
                 skipMs: WAKE_CHIRP_MS,
                 adaptive: true,
-                startTimeoutMs: phrase ? NO_SPEECH_MS : NO_SPEECH_FOLLOW_UP_MS,
+                startTimeoutMs: followUp ? NO_SPEECH_FOLLOW_UP_MS : NO_SPEECH_MS,
                 minStartLevel: this.speechLevel || DEFAULT_SPEECH_LEVEL,
                 minEndLevel: Math.round((this.speechLevel || DEFAULT_SPEECH_LEVEL) * SILENCE_SHARE),
                 minSpeechMs: MIN_SPEECH_MS,
             }),
             conversationId: request.getConversationId(),
-            wakeWord: phrase || '',
+            wakeWord: followUp ? '' : phrase,
             answersQuestion,
             timer,
             stallCheck,
@@ -1136,7 +1148,7 @@ class EsphomeConnection {
 
         this.status('listening');
         this.event(EVENT.RUN_START);
-        if (phrase) {
+        if (!followUp) {
             this.event(EVENT.WAKE_WORD_END, { wake_word_phrase: phrase });
         }
         this.event(EVENT.STT_START);
@@ -1150,9 +1162,19 @@ class EsphomeConnection {
      * every further wake word just sends another stop (field report 2026-11-03).
      */
     private onStopRequest(): void {
+        this.stoppedAt = Date.now();
         const running = !!this.capture || this.runOpen;
-        // A device with yes/no buttons may stop its microphone on the press before it reports which button it was.
-        this.questionUntil = this.questionOpen() ? Date.now() + CONFIRM_GRACE_MS : 0;
+        if (!running && Date.now() - this.buttonAt < CONFIRM_GRACE_MS) {
+            // A device with yes/no buttons reports the press and then stops its conversation itself: the button
+            // answer ended our run already, and its reply is on the way — nothing to end, nothing to drop. With the
+            // stop the device dropped its continue flag too, so no microphone opens for the answered question.
+            this.ignoreFollowUpUntil = 0;
+            this.opts.log.debug(`ESPHome ${this.deviceName}: the device ended the conversation after the button`);
+            return;
+        }
+        // A device with yes/no buttons may also stop the microphone on the press before it reports which button it
+        // was (state messages can be batched): the question stays open a moment longer for that report.
+        this.questionUntil = this.questionOpen() ? Math.max(this.questionUntil, Date.now() + CONFIRM_GRACE_MS) : 0;
         this.abortCapture();
         if (running) {
             this.run++; // whatever is still being answered stays silent
@@ -1268,7 +1290,9 @@ class EsphomeConnection {
         if (capture.answersQuestion) {
             // Spoken: that is the answer, a button press now would be a second one. Silent: the buttons still answer
             // for a moment, as the screen may still show them.
-            this.questionUntil = capture.detector.sawSpeech ? 0 : Date.now() + CONFIRM_GRACE_MS;
+            this.questionUntil = capture.detector.sawSpeech
+                ? 0
+                : Math.max(this.questionUntil, Date.now() + CONFIRM_GRACE_MS);
         }
 
         if (!pcm.length || !capture.detector.sawSpeech) {
@@ -1331,7 +1355,7 @@ class EsphomeConnection {
                 );
                 this.discard(capture, pcm, 'empty-stt', vad);
                 if (capture.answersQuestion) {
-                    this.questionUntil = Date.now() + CONFIRM_GRACE_MS;
+                    this.questionUntil = Math.max(this.questionUntil, Date.now() + CONFIRM_GRACE_MS);
                 }
                 // No STT_END without text — like Home Assistant, which reports this case as an error only.
                 this.endWithoutRequest();
@@ -1386,9 +1410,7 @@ class EsphomeConnection {
             this.event(EVENT.TTS_END, { url });
             // linux-voice-assistant reads the flag here (ignoring "0"), ESPHome at INTENT_END
             this.event(EVENT.RUN_END, conversation);
-            this.questionUntil = followUp
-                ? Date.now() + (ttsPcm.length / 2 / sampleRate) * 1000 + FOLLOW_UP_START_MS
-                : 0;
+            this.questionUntil = followUp ? Date.now() + (ttsPcm.length / 2 / sampleRate) * 1000 + QUESTION_OPEN_MS : 0;
             this.armPlaybackTimeout();
         } catch (e) {
             const reason = (e as Error).message;
@@ -1517,7 +1539,7 @@ class EsphomeConnection {
         if (startConversation) {
             // A question: the microphone the device opens after it is wanted, and a button press answers it
             this.ignoreFollowUpUntil = 0;
-            this.questionUntil = Date.now() + (pcm.length / 2 / sampleRate) * 1000 + FOLLOW_UP_START_MS;
+            this.questionUntil = Date.now() + (pcm.length / 2 / sampleRate) * 1000 + QUESTION_OPEN_MS;
         }
         this.status('speaking');
         this.send(request);
