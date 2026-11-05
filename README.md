@@ -237,7 +237,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.4.12 (2026-11-05)
 * (@GermanBluefox) ESPHome satellites: dialog mode — "ioBroker, Dialogmodus an" and the satellite listens again after every answer without the wake word (pauses are fine, nothing understood just listens on), "Dialogmodus aus" or a stop ends it, after 5 minutes without a request it ends by itself; state `satellites.<id>.dialog` shows and switches it
 
 ### 1.4.11 (2026-11-05)
