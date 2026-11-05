@@ -557,12 +557,15 @@ geändert werden muss. Ein ThirdReality-Lautsprecher bietet zwölf:
 | `continue_conversation_delay`                                           | wie lange das Mikro für eine Nachfrage offen bleibt, 0–10 s                                        |
 | `mute`, `thinking_sound`                                                | Mikrofon stumm und der „Denk“-Ton                                                                  |
 | `<media player>.{state,volume,command,muted}`                           | `command` nimmt play, pause, stop, mute, unmute, toggle, volume_up, volume_down, turn_on, turn_off |
-| `<firmware>.{currentVersion,latestVersion,inProgress,progress,install}` | `install` ist ein Button                                                                           |
+| `<firmware>.{currentVersion,latestVersion,inProgress,progress,install,check}` | `install` und `check` sind Buttons: `check` lässt das Gerät sofort nach einer neuen Version suchen — ein `http_request`-Update schaut nur beim Start und alle 6 Stunden, bis dahin zeigt `latestVersion` die alte |
 
 Schreibvorgänge werden **nicht** optimistisch bestätigt: das Gerät meldet zurück, was es tatsächlich
 übernommen hat, und genau das steht im State. Eine Zahl außerhalb des Geräte-Bereichs wird darauf
 geklemmt statt verworfen; ein Wert, den ein `select` nicht kennt, wird mit einer Warnung samt gültiger
-Optionen abgelehnt.
+Optionen abgelehnt. Eine `text`-Entity wird ein schreibbarer String; ein Wert, der länger ist als das
+Gerät erlaubt (es zählt Bytes in UTF-8, „ü“ zählt also doppelt) oder nicht zu seinem Muster passt, wird
+genauso abgelehnt. Ein Text im Passwort-Modus wird gar nicht gespiegelt — einen State kann jedes Skript
+und jeder Admin-Nutzer lesen.
 
 ```js
 sendTo('assistant.0', 'getControls', {}, r => log(JSON.stringify(r)));
@@ -571,6 +574,17 @@ sendTo('assistant.0', 'setControl', { device: '3RSPK-…', control: 'mic_volume'
 
 Wenn dich der Assistent zu leise hört — die Log-Zeile nach jeder Äußerung nennt Spitzenpegel und
 Rauschboden —, sind `mic_volume` und `mic_gain` die beiden Stellschrauben.
+
+#### Satelliten mit Bildschirm
+
+Eine Firmware für einen Satelliten mit Display kann diese Entities anbieten; der Assistent nutzt sie,
+wenn es sie gibt, und kommt ohne sie aus:
+
+| Entity | Art | Was der Assistent tut |
+|---|---|---|
+| `confirm_answer` | Event, Typen `yes` / `no` | Solange eine Antwort auf eine Rückfrage wartet (pi-agent: „Testlampe auf true setzen? Sag ja oder nein.“), ist ein Tippen diese Antwort: das offene Mikrofon geht zu, „Ja“/„Nein“ in der Sprache des Voice-Tabs geht als Antwort weiter, und die Antwort darauf wird auf diesem Satelliten samt Text angesagt. Ein Tippen ohne offene Frage wird ignoriert. |
+| `display_language` | Select | Wird bei jeder Verbindung einmal auf die Sprache des Voice-Tabs gesetzt. Optionen dürfen Namen („Deutsch“, „English“, „Русский“), englische Namen („German“) oder Codes („de“, „de-DE“) sein. |
+| jedes `text` | Text | Normale schreibbare States — z. B. Beschriftungen und Einheiten der Bildschirmseiten, aus ioBroker gesetzt statt beim Bauen der Firmware. |
 
 #### Timer auf dem Gerät
 

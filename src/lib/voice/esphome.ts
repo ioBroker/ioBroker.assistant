@@ -1030,7 +1030,11 @@ class EsphomeConnection {
                 .list()
                 .map(e => e.objectId)
                 .join(', ');
-            const options = entity?.options ? ` (one of: ${entity.options.join(', ')})` : '';
+            const options = entity?.options
+                ? ` (one of: ${entity.options.join(', ')})`
+                : entity?.kind === 'text'
+                  ? ` (${entity.minLength || 0}–${entity.maxLength ?? '∞'} bytes${entity.pattern ? `, pattern ${entity.pattern}` : ''})`
+                  : '';
             this.opts.log.warn(
                 entity
                     ? `ESPHome ${this.deviceName}: ${JSON.stringify(value)} is not a value "${objectId}" accepts${options}`

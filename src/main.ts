@@ -1732,7 +1732,11 @@ class Assistant extends Adapter {
                 await this.ensureState(`${id}.inProgress`, 'Update running', 'boolean', 'indicator', false);
                 await this.ensureState(`${id}.progress`, 'Update progress', 'number', 'value', false);
                 await this.ensureState(`${id}.install`, 'Install the update', 'boolean', 'button', true);
+                // A device looks for a new version only now and then (an http_request update: at boot and every
+                // 6 h); until then latestVersion shows the old one and install does nothing.
+                await this.ensureState(`${id}.check`, 'Check for an update now', 'boolean', 'button', true);
                 this.subscribeStates(`${id}.install`);
+                this.subscribeStates(`${id}.check`);
             } else if (entity.kind === 'event') {
                 await this.setObjectNotExistsAsync(id, {
                     type: 'state',
@@ -1766,6 +1770,19 @@ class Assistant extends Adapter {
                           ? { name, type: 'boolean', role: 'indicator', read: true, write: false, def: false }
                           : { name, type: 'string', role: 'text', read: true, write: false, def: '' };
                 await this.setObjectNotExistsAsync(id, { type: 'state', common, native: {} });
+            } else if (entity.kind === 'text') {
+                if (entity.password) {
+                    // A secret would sit in a state every script and admin user can read.
+                    this.log.debug(`Satellite ${device}: "${name}" is a password text — not mirrored`);
+                    continue;
+                }
+                // Labels and units of a satellite with a screen, set from here instead of in the firmware build.
+                await this.setObjectNotExistsAsync(id, {
+                    type: 'state',
+                    common: { name, type: 'string', role: 'text', read: true, write: true, def: '' },
+                    native: {},
+                });
+                this.subscribeStates(id);
             } else {
                 const common: ioBroker.StateCommon =
                     entity.kind === 'switch'
@@ -1859,7 +1876,7 @@ class Assistant extends Adapter {
 
     /** Write one entity's current value into its state(s). Always acked — this is the device talking. */
     private async writeSatelliteControl(satId: string, entity: EsphomeEntity): Promise<void> {
-        if (!isControlId(entity.objectId)) {
+        if (!isControlId(entity.objectId) || (entity.kind === 'text' && entity.password)) {
             return; // never created (see buildSatelliteControls)
         }
         const base = `satellites.${satId}.controls.${entity.objectId}`;
@@ -1903,11 +1920,11 @@ class Assistant extends Adapter {
         // Compound entities address a leaf: `<objectId>.volume`, `<objectId>.install`, …
         const [objectId, leaf] = path.split('.');
         let payload: unknown = value;
-        if (leaf === 'install') {
+        if (leaf === 'install' || leaf === 'check') {
             if (!value) {
                 return; // button released
             }
-            payload = 'install';
+            payload = leaf; // UpdateCommandRequest: install = UPDATE, check = CHECK
         } else if (leaf === 'volume' || leaf === 'command') {
             payload = value;
         } else if (leaf) {

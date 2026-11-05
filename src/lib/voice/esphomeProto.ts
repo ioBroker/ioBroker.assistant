@@ -90,6 +90,10 @@ export interface SelectCommandRequest extends PbMessage {
     setKey(value: number): void;
     setState(value: string): void;
 }
+export interface TextCommandRequest extends PbMessage {
+    setKey(value: number): void;
+    setState(value: string): void;
+}
 export interface UpdateCommandRequest extends PbMessage {
     setKey(value: number): void;
     setCommand(value: number): void;
@@ -170,6 +174,7 @@ interface ApiPb {
     SwitchCommandRequest: Ctor<SwitchCommandRequest>;
     NumberCommandRequest: Ctor<NumberCommandRequest>;
     SelectCommandRequest: Ctor<SelectCommandRequest>;
+    TextCommandRequest: Ctor<TextCommandRequest>;
     UpdateCommandRequest: Ctor<UpdateCommandRequest>;
     MediaPlayerCommandRequest: Ctor<MediaPlayerCommandRequest>;
     VoiceAssistantResponse: Ctor<VoiceAssistantResponseMsg>;

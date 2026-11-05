@@ -114,6 +114,14 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   ersten gemeldeten Zustand abgleichen (`displayLanguageOption`: Name in der Sprache, englischer Name oder Code,
   `Intl.DisplayNames` + Tabelle); Sprachwechsel = Adapter-Neustart = neuer Abgleich. Tests: `esphome.test.js`
   (Fake-Gerät `screen:true`, `startPipeline()`, `press()`; gegen den alten Code scheitern 5 von 6), `ask.test.js`.
+  Released als 1.4.7. **1.4.8:** (4) Update-Entity bekommt `controls.<update>.check` (Button → `UpdateCommandRequest`
+  CHECK=2; die Lib kannte `check` schon, es fehlten State + Leaf in `setSatelliteControl`), Dialog zeigt „check“ außer
+  während eines Updates. (5) Entity-Art **`text`** (`ListEntitiesTextResponse`/`TextStateResponse`/
+  `TextCommandRequest`): schreibbarer String-State; Länge in **UTF-8-Bytes** geprüft (die Firmware zählt
+  `std::string::length()`), `pattern` als ganzer Treffer (`matchesPattern`, nicht kompilierbar = erlaubt), Modus
+  Passwort wird **nicht** gespiegelt. Dialog: Textfeld schreibt nur bei Änderung, Key = Wert (Echo des Geräts wird
+  sichtbar). Optionale Bildschirm-Entities in `docs/{en,de}.md` dokumentiert — weitere Namens-Absprachen mit
+  Firmware-Entwicklern lieber über allgemeine Entities lösen.
 - **Skript-Anfragen nur an die Cloud** — `nlu.ts.mentionsScript()` (`SCRIPT_RE`: `skript` überall inkl.
   Komposita, `script` nur am Wortanfang bzw. `java|type`-Präfix — sonst „description"/„subscription" —,
   `скрипт` mit Flexion, `blockly`). `main.ts.cloudOnlyReason()` → `'script'`, oder `'scriptReply'`, wenn das

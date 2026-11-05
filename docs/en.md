@@ -541,11 +541,14 @@ speaker offers twelve:
 | `continue_conversation_delay` | how long the mic stays open for a follow-up, 0–10 s |
 | `mute`, `thinking_sound` | microphone mute and the "thinking" sound |
 | `<media player>.{state,volume,command,muted}` | `command` takes play, pause, stop, mute, unmute, toggle, volume_up, volume_down, turn_on, turn_off |
-| `<firmware>.{currentVersion,latestVersion,inProgress,progress,install}` | `install` is a button |
+| `<firmware>.{currentVersion,latestVersion,inProgress,progress,install,check}` | `install` and `check` are buttons: `check` makes the device look for a new version now — an `http_request` update looks only at boot and every 6 hours, and until then `latestVersion` shows the old one |
 
 Writes are not acknowledged optimistically: the device reports back what it actually took, and that is
 what the state shows. A number outside the device's range is clamped to it rather than rejected, and a
-value a `select` does not offer is refused with a warning naming the valid options.
+value a `select` does not offer is refused with a warning naming the valid options. A `text` entity
+becomes a writable string; a value longer than the device allows (it counts bytes of UTF-8, so "ü" counts
+twice) or not matching its pattern is refused the same way. A text in password mode is not mirrored at
+all — a state can be read by every script and every admin user.
 
 ```js
 sendTo('assistant.0', 'getControls', {}, r => log(JSON.stringify(r)));
@@ -554,6 +557,17 @@ sendTo('assistant.0', 'setControl', { device: '3RSPK-…', control: 'mic_volume'
 
 If the assistant hears you too quietly — the log line after each utterance prints the peak level and the
 noise floor — `mic_volume` and `mic_gain` are the two to raise.
+
+#### Satellites with a screen
+
+A firmware for a satellite with a display can offer these entities; the assistant uses them when they
+are there and ignores their absence:
+
+| Entity | Kind | What the assistant does |
+|---|---|---|
+| `confirm_answer` | event, types `yes` / `no` | While a reply waits for an answer (pi-agent's "Set the lamp to on? Say yes or no."), a press is that answer: the open microphone closes, "yes"/"no" in the voice language goes on as the reply, and the reply to it is announced on that satellite with its text. A press without an open question is ignored. |
+| `display_language` | select | Set to the voice language once per connect. Options may be names ("Deutsch", "English", "Русский"), English names ("German") or codes ("de", "de-DE"). |
+| any `text` | text | Plain writable states — e.g. labels and units of the screen's pages, set from ioBroker instead of in the firmware build. |
 
 #### Timers on the device
 

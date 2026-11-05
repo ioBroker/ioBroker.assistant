@@ -17,7 +17,16 @@ import type { MediaFormat } from './replyFormat';
 
 /** Entity kinds we understand. */
 export type EntityKind =
-    'switch' | 'number' | 'select' | 'event' | 'update' | 'mediaPlayer' | 'sensor' | 'binarySensor' | 'textSensor';
+    | 'switch'
+    | 'number'
+    | 'select'
+    | 'text'
+    | 'event'
+    | 'update'
+    | 'mediaPlayer'
+    | 'sensor'
+    | 'binarySensor'
+    | 'textSensor';
 
 /** `EntityCategory` in api.proto — config/diagnostic entities are settings, not primary controls. */
 export type EntityCategory = 'none' | 'config' | 'diagnostic';
@@ -45,6 +54,12 @@ export interface EsphomeEntity {
     decimals?: number;
     /** select: allowed values. */
     options?: string[];
+    /** text: length limits in bytes of UTF-8 (the firmware counts bytes), and a pattern for its frontend. */
+    minLength?: number;
+    maxLength?: number;
+    pattern?: string;
+    /** text: `mode: password` — the value is a secret. */
+    password?: boolean;
     /** event: the types the device can fire. */
     eventTypes?: string[];
     /** mediaPlayer: whether it accepts a pause command. */
@@ -128,6 +143,18 @@ interface KindSpec {
  */
 export function float32(value: number): number {
     return Number.isFinite(value) ? Number(value.toPrecision(7)) : value;
+}
+
+/**
+ * Whether `text` matches a text entity's pattern, the way an HTML `pattern` attribute does (the whole value). A pattern
+ * JavaScript cannot compile is not held against the value — the device does not check it either.
+ */
+export function matchesPattern(text: string, pattern: string): boolean {
+    try {
+        return new RegExp(`^(?:${pattern})$`, 'u').test(text);
+    } catch {
+        return true;
+    }
 }
 
 /** Clamp to the device's own range — it ignores anything outside and we would never notice. */
@@ -250,6 +277,45 @@ const KINDS: KindSpec[] = [
             const message = new pb.SelectCommandRequest();
             message.setKey(entity.key);
             message.setState(option);
+            return message;
+        },
+    },
+    {
+        // Free text on the device: labels and units a satellite with a screen shows, so they can be set from
+        // ioBroker instead of being fixed when the firmware is built.
+        kind: 'text',
+        listMessage: 'ListEntitiesTextResponse',
+        stateMessage: 'TextStateResponse',
+        writable: true,
+        describe: m => {
+            const t = m as { getMinLength(): number; getMaxLength(): number; getPattern(): string; getMode(): number };
+            return {
+                minLength: t.getMinLength() || undefined,
+                maxLength: t.getMaxLength() || undefined,
+                pattern: t.getPattern() || undefined,
+                password: t.getMode() === 1, // TEXT_MODE_PASSWORD
+            };
+        },
+        readState: m => {
+            const s = m as { getState(): string; getMissingState(): boolean };
+            return s.getMissingState() ? undefined : s.getState();
+        },
+        command: (entity, value) => {
+            if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+                return null;
+            }
+            const text = String(value);
+            // The firmware drops a value outside the limits with a log line of its own; we would never notice.
+            const bytes = Buffer.byteLength(text, 'utf8');
+            if ((entity.minLength && bytes < entity.minLength) || (entity.maxLength && bytes > entity.maxLength)) {
+                return null;
+            }
+            if (entity.pattern && !matchesPattern(text, entity.pattern)) {
+                return null;
+            }
+            const message = new pb.TextCommandRequest();
+            message.setKey(entity.key);
+            message.setState(text);
             return message;
         },
     },

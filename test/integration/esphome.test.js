@@ -733,6 +733,27 @@ function fakeDevice({
                 language.setEntityCategory(1);
                 language.setOptionsList(['Deutsch', 'English', 'Русский']);
                 send(language);
+                // Labels of the screen's pages, and a secret the adapter must not mirror
+                for (const [key, objectId, name, max, pattern, mode] of [
+                    [52, 'value_1_label', 'Value 1 label', 20, '', 0],
+                    [53, 'value_1_unit', 'Value 1 unit', 8, '[^0-9]*', 0],
+                    [54, 'pin', 'PIN', 8, '', 1],
+                ]) {
+                    const text = new pb.ListEntitiesTextResponse();
+                    text.setObjectId(objectId);
+                    text.setKey(key);
+                    text.setName(name);
+                    text.setMinLength(0);
+                    text.setMaxLength(max);
+                    text.setPattern(pattern);
+                    text.setMode(mode);
+                    send(text);
+                }
+                const firmware = new pb.ListEntitiesUpdateResponse();
+                firmware.setObjectId('firmware');
+                firmware.setKey(60);
+                firmware.setName('Firmware');
+                send(firmware);
             }
             send(new pb.ListEntitiesDoneResponse());
             // Like the real device: the current values follow the announcements.
@@ -742,7 +763,28 @@ function fakeDevice({
             sendSensorStates();
             if (screen) {
                 sendSelectState(51, 'English');
+                sendTextState(52, 'Wert 1');
+                sendTextState(53, '');
+                sendTextState(54, '1234');
+                sendUpdateState('1.0.0');
             }
+        };
+        const sendTextState = (key, value) => {
+            const m = new pb.TextStateResponse();
+            m.setKey(key);
+            m.setState(value);
+            m.setMissingState(false);
+            send(m);
+        };
+        /** The firmware entity: what is installed, and what the last check found */
+        const sendUpdateState = latest => {
+            const m = new pb.UpdateStateResponse();
+            m.setKey(60);
+            m.setMissingState(false);
+            m.setCurrentVersion('1.0.0');
+            m.setLatestVersion(latest);
+            m.setTitle('Firmware');
+            send(m);
         };
 
         const handle = (name, message) => {
@@ -781,6 +823,14 @@ function fakeDevice({
             } else if (name === 'SelectCommandRequest') {
                 state.commands.push({ kind: 'select', key: message.getKey(), value: message.getState() });
                 sendSelectState(message.getKey(), message.getState());
+            } else if (name === 'TextCommandRequest') {
+                state.commands.push({ kind: 'text', key: message.getKey(), value: message.getState() });
+                sendTextState(message.getKey(), message.getState());
+            } else if (name === 'UpdateCommandRequest') {
+                state.commands.push({ kind: 'update', key: message.getKey(), value: message.getCommand() });
+                if (message.getCommand() === 2) {
+                    sendUpdateState('1.1.0'); // the check found a release
+                }
             } else if (name === 'VoiceAssistantTimerEventResponse') {
                 state.timerEvents.push({
                     type: message.getEventType(),
@@ -1707,6 +1757,59 @@ test('a select takes its own options in any case and rejects anything else', asy
 
     assert.equal(device.commands.length, 1, 'only the valid write may reach the device');
     assert.equal(device.commands[0].value, 'High', 'and it must be sent with the device spelling');
+});
+
+test('text entities are read and written within their limits', async t => {
+    const { device, satellites, name } = await connectedSatellite(t, { screen: true });
+    const entity = id => satellites.entities(name).find(e => e.objectId === id);
+
+    const label = entity('value_1_label');
+    assert.equal(label.kind, 'text');
+    assert.equal(label.writable, true);
+    assert.equal(label.maxLength, 20);
+    assert.equal(label.value, 'Wert 1');
+    assert.equal(entity('pin').password, true, 'the adapter keeps a password text out of the states');
+    assert.equal(label.password, false);
+
+    assert.equal(satellites.setEntity(name, 'value_1_label', 'Licht Büro'), true);
+    assert.equal(satellites.setEntity(name, 'value_1_unit', '°C'), true);
+    // 20 characters, but 21 bytes: the firmware counts bytes
+    assert.equal(satellites.setEntity(name, 'value_1_label', 'Lüftung Badezimmer 1'), false);
+    assert.equal(satellites.setEntity(name, 'value_1_unit', 'm3/h'), false, 'the pattern allows no digits');
+    assert.equal(satellites.setEntity(name, 'value_1_label', { text: 'x' }), false);
+    await sleep(300);
+
+    assert.deepEqual(
+        device.commands.filter(c => c.kind === 'text').map(c => [c.key, c.value]),
+        [
+            [52, 'Licht Büro'],
+            [53, '°C'],
+        ],
+    );
+    assert.equal(entity('value_1_label').value, 'Licht Büro', 'the device echoes what it took');
+});
+
+test('a firmware update entity can be asked to check for a new version now', async t => {
+    const { device, satellites, name } = await connectedSatellite(t, { screen: true });
+    const latest = () => satellites.entities(name).find(e => e.objectId === 'firmware').value.latestVersion;
+    assert.equal(latest(), '1.0.0');
+
+    assert.equal(satellites.setEntity(name, 'firmware', 'check'), true);
+    await sleep(300);
+    assert.deepEqual(
+        device.commands.filter(c => c.kind === 'update').map(c => c.value),
+        [2],
+        'UpdateCommandRequest with UPDATE_COMMAND_CHECK',
+    );
+    assert.equal(latest(), '1.1.0', 'the device reports what the check found');
+});
+
+test('a text pattern is matched against the whole value', () => {
+    const { matchesPattern } = require('../../build/lib/voice/esphomeEntities.js');
+    assert.equal(matchesPattern('°C', '[^0-9]*'), true);
+    assert.equal(matchesPattern('m3', '[^0-9]*'), false);
+    assert.equal(matchesPattern('abc', 'b'), false, 'like an HTML pattern: the whole value');
+    assert.equal(matchesPattern('abc', '(unclosed'), true, 'a pattern JavaScript cannot read is not held against it');
 });
 
 test('timers are mirrored to the satellite as started / updated / cancelled', async t => {

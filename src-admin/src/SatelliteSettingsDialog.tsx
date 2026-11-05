@@ -107,8 +107,8 @@ function leafOf(prop: string): string {
     return dot < 0 ? '' : rest.slice(dot + 1);
 }
 
-/** Order of a firmware update's rows: what is installed, what is available, the button, the progress. */
-const UPDATE_ORDER = ['currentVersion', 'latestVersion', 'install', 'progress'];
+/** Order of a firmware update's rows: what is installed, what is available, the buttons, the progress. */
+const UPDATE_ORDER = ['currentVersion', 'latestVersion', 'check', 'install', 'progress'];
 
 /** A firmware update entity: the channel the adapter builds with the versions, the progress and the button. */
 function isUpdateGroup(propsInGroup: string[]): boolean {
@@ -263,6 +263,10 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
                 }
                 if (leaf === 'install') {
                     return latest && latest !== current && !running ? renderControl(prop) : null;
+                }
+                if (leaf === 'check') {
+                    // The device looks for a new version only now and then; this asks it to look now.
+                    return running ? null : renderControl(prop);
                 }
                 if (leaf === 'progress') {
                     if (!running) {
@@ -421,17 +425,25 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
             );
         }
 
+        // Free text (a label on the device's screen). Keyed by the value, so the field shows what the device took
+        // once it reports back; written only when it changed, so leaving the field sends nothing.
+        const shown = value === undefined || value === null ? '' : String(value);
+        const write = (text: string): void => {
+            if (text !== shown) {
+                onWrite(prop, text);
+            }
+        };
         return (
             <TextField
-                key={prop}
+                key={`${prop}\n${shown}`}
                 size="small"
                 fullWidth
                 label={label}
-                defaultValue={value === undefined || value === null ? '' : String(value)}
-                onBlur={e => onWrite(prop, e.target.value)}
+                defaultValue={shown}
+                onBlur={e => write(e.target.value)}
                 onKeyDown={e => {
                     if (e.key === 'Enter') {
-                        onWrite(prop, (e.target as HTMLInputElement).value);
+                        write((e.target as HTMLInputElement).value);
                     }
                 }}
             />
