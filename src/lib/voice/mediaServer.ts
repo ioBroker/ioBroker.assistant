@@ -12,6 +12,9 @@
  * Besides the clips it serves a few **fixed files** under a path the caller picks — the custom wake-word
  * models, which a device may fetch at any time after it was offered one. Only paths registered with
  * {@link MediaServer.serve} answer, so nothing beyond what was put there is reachable.
+ *
+ * And **live streams** ({@link MediaServer.serveStream}): music from a URL the device cannot decode itself, which
+ * ffmpeg turns into a codec it can while the device listens.
  */
 import * as http from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -20,6 +23,19 @@ interface Clip {
     body: Buffer;
     contentType: string;
     expiresAt: number;
+}
+
+/**
+ * Starts the source of a live stream for one listener and writes it into `res` (ffmpeg's stdout piped in). Returns
+ * what stops it; that runs when the listener goes away or the stream is removed.
+ */
+export type StreamSource = (res: http.ServerResponse) => () => void;
+
+interface LiveStream {
+    contentType: string;
+    open: StreamSource;
+    /** One per listener currently connected: ends that listener's source and connection. */
+    listeners: Set<() => void>;
 }
 
 export interface MediaServerOptions {
@@ -39,6 +55,8 @@ export class MediaServer {
     private readonly clips = new Map<string, Clip>();
     /** Fixed files by exact path (`/wakeword/<id>.tflite`), served until removed. */
     private readonly files = new Map<string, { body: Buffer; contentType: string }>();
+    /** Live streams by exact path (`/stream/<token>.flac`), served until removed. */
+    private readonly streams = new Map<string, LiveStream>();
     private sweepTimer: NodeJS.Timeout | null = null;
     /** Port the OS actually handed out — differs from the configured one when that is 0. */
     private boundPort = 0;
@@ -80,6 +98,9 @@ export class MediaServer {
             this.sweepTimer = null;
         }
         this.clips.clear();
+        for (const path of [...this.streams.keys()]) {
+            this.unserve(path);
+        }
         const server = this.server;
         this.server = null;
         if (server) {
@@ -123,12 +144,75 @@ export class MediaServer {
         this.files.set(urlPath, { body, contentType });
     }
 
+    /**
+     * Serve a live stream at exactly `urlPath`: every GET starts its own source with `open`, which runs until the
+     * listener disconnects or {@link unserve} removes the path. Replaces (and ends) whatever was there.
+     */
+    serveStream(urlPath: string, contentType: string, open: StreamSource): void {
+        this.unserve(urlPath);
+        this.streams.set(urlPath, { contentType, open, listeners: new Set() });
+    }
+
+    /** Remove a fixed file or a live stream; a stream's listeners are cut off. */
     unserve(urlPath: string): void {
         this.files.delete(urlPath);
+        const stream = this.streams.get(urlPath);
+        if (stream) {
+            this.streams.delete(urlPath);
+            for (const end of [...stream.listeners]) {
+                end();
+            }
+        }
+    }
+
+    /** Number of listeners connected to live streams (for tests and the log). */
+    get streamListeners(): number {
+        let n = 0;
+        for (const stream of this.streams.values()) {
+            n += stream.listeners.size;
+        }
+        return n;
+    }
+
+    private onStream(req: http.IncomingMessage, res: http.ServerResponse, urlPath: string, stream: LiveStream): void {
+        res.writeHead(200, {
+            'Content-Type': stream.contentType,
+            'Cache-Control': 'no-store',
+            'Accept-Ranges': 'none',
+        });
+        if (req.method === 'HEAD') {
+            res.end();
+            return;
+        }
+        // Node sends the headers with the first data, and ffmpeg needs a moment to look at the source before it
+        // writes anything — the device's HTTP client should not sit there without even an answer meanwhile.
+        res.flushHeaders();
+        this.opts.log.debug(`media: ${req.method} ${urlPath} → live stream`);
+        let stopSource: (() => void) | null = null;
+        const end = (): void => {
+            if (!stream.listeners.delete(end)) {
+                return; // already ended
+            }
+            stopSource?.();
+            res.destroy();
+        };
+        stream.listeners.add(end);
+        res.on('close', end);
+        try {
+            stopSource = stream.open(res);
+        } catch (e) {
+            this.opts.log.warn(`media: stream ${urlPath} did not start: ${(e as Error).message}`);
+            end();
+        }
     }
 
     private onRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
         const urlPath = (req.url || '').split('?')[0];
+        const stream = this.streams.get(urlPath);
+        if (stream) {
+            this.onStream(req, res, urlPath, stream);
+            return;
+        }
         const file = this.files.get(urlPath);
         if (file) {
             this.opts.log.debug(`media: ${req.method} ${urlPath} → ${file.body.length} bytes`);

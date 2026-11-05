@@ -104,6 +104,10 @@ export interface MediaPlayerCommandRequest extends PbMessage {
     setCommand(value: number): void;
     setHasVolume(value: boolean): void;
     setVolume(value: number): void;
+    setHasMediaUrl(value: boolean): void;
+    setMediaUrl(value: string): void;
+    setHasAnnouncement(value: boolean): void;
+    setAnnouncement(value: boolean): void;
 }
 /** Mirrors an assistant timer onto the device, which drives its own LED ring and gong. */
 export interface VoiceAssistantTimerEventResponse extends PbMessage {

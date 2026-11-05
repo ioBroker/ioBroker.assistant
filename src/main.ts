@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import { execFile, spawn } from 'node:child_process';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { promisify } from 'node:util';
+import { randomBytes } from 'node:crypto';
 
 import {
     Adapter,
@@ -94,7 +95,17 @@ import {
     type MediaPlayerValue,
     type UpdateInfo,
 } from './lib/voice/esphomeEntities';
-import { MediaServer } from './lib/voice/mediaServer';
+import { MediaServer, type StreamSource } from './lib/voice/mediaServer';
+import {
+    STREAM_CONTENT_TYPES,
+    STREAM_EXTENSIONS,
+    deviceCodecs,
+    planStream,
+    probeStream,
+    transcodeArgs,
+    transcodeTarget,
+    type TranscodeTarget,
+} from './lib/voice/mediaStream';
 import {
     WAKE_WORD_DIR,
     WAKE_WORD_ID_RE,
@@ -504,6 +515,12 @@ class Assistant extends Adapter {
     private mirroredTimers = new Map<string, TimerInfo>();
     /** Per satellite: resolves once its control objects exist, so state writes can wait for them. */
     private readonly satControlsReady = new Map<string, Promise<void>>();
+    /** Per media player (`<satId>.<objectId>`): the newest URL write, so a slow look at an older one cannot win. */
+    private readonly mediaPlays = new Map<string, number>();
+    /** Per media player: the path of its live stream through ffmpeg on the media server, while there is one. */
+    private readonly mediaStreamPaths = new Map<string, string>();
+    /** Whether ffmpeg starts, per binary, looked up at most once a minute (playing a URL asks every time). */
+    private ffmpegCheck: { bin: string; ok: boolean; at: number } | null = null;
     /** Satellites whose `volume` state exists and is subscribed (see updateSatelliteVolume). */
     private readonly satVolumeEnsured = new Set<string>();
     /** ESPHome satellite id → the table address already written to its object (see markEsphomeSatellite). */
@@ -1731,8 +1748,30 @@ class Assistant extends Adapter {
                     true,
                 );
                 await this.ensureState(`${id}.muted`, 'Muted', 'boolean', 'media.mute', false);
+                // Music from a URL (internet radio): the device plays it as media, not as an announcement
+                await this.ensureState(
+                    `${id}.url`,
+                    'Play a URL (radio, MP3/FLAC/WAV; others through ffmpeg); empty or "stop" = stop',
+                    'string',
+                    'media.url',
+                    true,
+                );
+                await this.setObjectNotExistsAsync(`${id}.transcode`, {
+                    type: 'state',
+                    common: {
+                        name: 'Always play URLs through ffmpeg (else only when the device cannot decode them)',
+                        type: 'boolean',
+                        role: 'switch',
+                        read: true,
+                        write: true,
+                        def: false,
+                    },
+                    native: {},
+                });
                 this.subscribeStates(`${id}.volume`);
                 this.subscribeStates(`${id}.command`);
+                this.subscribeStates(`${id}.url`);
+                this.subscribeStates(`${id}.transcode`);
             } else if (entity.kind === 'update') {
                 await this.setObjectNotExistsAsync(id, { type: 'channel', common: { name }, native: {} });
                 await this.ensureState(`${id}.currentVersion`, 'Installed version', 'string', 'text', false);
@@ -1935,12 +1974,173 @@ class Assistant extends Adapter {
             payload = leaf; // UpdateCommandRequest: install = UPDATE, check = CHECK
         } else if (leaf === 'volume' || leaf === 'command') {
             payload = value;
+        } else if (leaf === 'url') {
+            this.playMediaUrl(satId, device, objectId, value).catch(e =>
+                this.log.warn(`Playing ${String(value)} on ${device} failed: ${(e as Error).message}`),
+            );
+            return;
+        } else if (leaf === 'transcode') {
+            // A setting of ours, nothing for the device: taken as written
+            this.setStateAsync(`satellites.${satId}.controls.${path}`, { val: !!value, ack: true }).catch(() => {});
+            return;
         } else if (leaf) {
             return; // read-only leaf of a compound entity
         }
         if (!this.esphome.setEntity(device, objectId, payload)) {
             this.log.warn(`Writing ${objectId} on ${device} was rejected — see the warning above.`);
         }
+    }
+
+    /**
+     * A URL written to `controls.<player>.url`: play it on the satellite as music (internet radio, a file on a web
+     * server). Playlists are resolved to their first stream; a codec the device decodes goes there directly, anything
+     * else (AAC, HLS …) through ffmpeg, served by our media server — see `mediaStream.ts`. Empty or "stop" stops.
+     *
+     * Acked with the URL once the device was told: it reports no URL back, only the player state (`.state`).
+     */
+    private async playMediaUrl(
+        satId: string,
+        device: string,
+        objectId: string,
+        value: ioBroker.StateValue,
+    ): Promise<void> {
+        const esphome = this.esphome;
+        const media = this.media;
+        if (!esphome || !media) {
+            return;
+        }
+        const key = `${satId}.${objectId}`;
+        const stateId = `satellites.${satId}.controls.${objectId}.url`;
+        const seq = (this.mediaPlays.get(key) || 0) + 1;
+        this.mediaPlays.set(key, seq);
+        const raw = typeof value === 'string' ? value.trim() : '';
+        const endStream = (): void => {
+            const old = this.mediaStreamPaths.get(key);
+            if (old) {
+                this.mediaStreamPaths.delete(key);
+                media.unserve(old);
+            }
+        };
+
+        if (!raw || raw.toLowerCase() === 'stop') {
+            const sent = esphome.setEntity(device, objectId, 'stop');
+            endStream();
+            if (sent) {
+                await this.setStateAsync(stateId, { val: '', ack: true });
+            }
+            return;
+        }
+        let url: URL;
+        try {
+            url = new URL(raw);
+        } catch {
+            this.log.warn(`Satellite ${device}: "${raw}" is not a URL — nothing played.`);
+            return;
+        }
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+            this.log.warn(`Satellite ${device}: only http(s) URLs can be played, not ${url.protocol}`);
+            return;
+        }
+        const entities = esphome.entities(device);
+        if (!entities.some(e => e.kind === 'mediaPlayer' && e.objectId === objectId)) {
+            this.log.warn(
+                `Satellite ${device} is not connected or has no media player "${objectId}" — nothing played.`,
+            );
+            return;
+        }
+        // The decoders are built into the firmware for all its players together
+        const formats = entities.flatMap(e => e.formats ?? []);
+        const always = (await this.getStateAsync(`satellites.${satId}.controls.${objectId}.transcode`))?.val === true;
+        const [probe, ffmpeg] = await Promise.all([probeStream(url.href), this.ffmpegAvailable()]);
+        if (this.mediaPlays.get(key) !== seq) {
+            return; // a newer URL (or a stop) was written meanwhile
+        }
+        const plan = planStream(probe, deviceCodecs(formats), always, ffmpeg);
+        endStream();
+        let target = plan.url;
+        let how = 'directly';
+        if (plan.mode === 'transcode') {
+            const t = transcodeTarget(formats);
+            const streamPath = `/stream/${randomBytes(12).toString('hex')}.${STREAM_EXTENSIONS[t.codec]}`;
+            const absolute = esphome.mediaUrl(device, streamPath);
+            if (!absolute) {
+                this.log.warn(`Satellite ${device} went offline — nothing played.`);
+                return;
+            }
+            media.serveStream(
+                streamPath,
+                STREAM_CONTENT_TYPES[t.codec],
+                this.transcodeSource(plan.url, t, plan.kind === 'hls', device),
+            );
+            this.mediaStreamPaths.set(key, streamPath);
+            target = absolute;
+            how = `through ffmpeg as ${t.codec.toUpperCase()} ${t.sampleRate} Hz${t.channels === 2 ? ' stereo' : ''}`;
+        }
+        const resolved = plan.url !== url.href ? ` (playlist entry ${plan.url})` : '';
+        this.log.info(`Satellite ${device}: playing ${raw}${resolved} ${how} — ${plan.reason}`);
+        if (!esphome.setEntity(device, objectId, { url: target })) {
+            endStream();
+            return;
+        }
+        await this.setStateAsync(stateId, { val: raw, ack: true });
+    }
+
+    /**
+     * The source of a transcoded stream: one ffmpeg per listener, reading `url` and writing `target` into the
+     * response for as long as the device listens.
+     */
+    private transcodeSource(url: string, target: TranscodeTarget, hls: boolean, device: string): StreamSource {
+        return res => {
+            const proc = spawn(this.ffmpegBin(), transcodeArgs(url, target, hls), {
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            let stopped = false;
+            let lastError = '';
+            proc.stdout.pipe(res);
+            proc.stderr.on('data', (d: Buffer) => {
+                lastError = String(d).trim().split(/\r?\n/).pop() || lastError;
+                this.log.debug(`ffmpeg (${device}): ${String(d).trim()}`);
+            });
+            proc.on('error', e => {
+                this.log.warn(`Stream for ${device}: ffmpeg failed: ${e.message}${FFMPEG_HINT}`);
+                res.destroy();
+            });
+            proc.on('close', code => {
+                if (stopped) {
+                    return;
+                }
+                // The source ended (a file played to its end) or failed (station offline, unknown format)
+                if (code) {
+                    this.log.warn(
+                        `Stream for ${device} ended — ffmpeg exited with code ${code}${lastError ? `: ${lastError}` : ''}`,
+                    );
+                } else {
+                    this.log.debug(`Stream for ${device} ended — the source ended`);
+                }
+                res.end();
+            });
+            return () => {
+                stopped = true;
+                proc.kill();
+            };
+        };
+    }
+
+    /** Whether ffmpeg starts at all; remembered for a minute per binary. */
+    private async ffmpegAvailable(): Promise<boolean> {
+        const bin = this.ffmpegBin();
+        const now = Date.now();
+        if (this.ffmpegCheck?.bin === bin && now - this.ffmpegCheck.at < 60_000) {
+            return this.ffmpegCheck.ok;
+        }
+        let ok = true;
+        try {
+            await promisify(execFile)(bin, ['-version'], { timeout: 5_000 });
+        } catch {
+            ok = false;
+        }
+        this.ffmpegCheck = { bin, ok, at: now };
+        return ok;
     }
 
     /**

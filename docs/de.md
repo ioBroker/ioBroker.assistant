@@ -561,6 +561,7 @@ geändert werden muss. Ein ThirdReality-Lautsprecher bietet zwölf:
 | `continue_conversation_delay`                                           | wie lange das Mikro für eine Nachfrage offen bleibt, 0–10 s                                        |
 | `mute`, `thinking_sound`                                                | Mikrofon stumm und der „Denk“-Ton                                                                  |
 | `<media player>.{state,volume,command,muted}`                           | `command` nimmt play, pause, stop, mute, unmute, toggle, volume_up, volume_down, turn_on, turn_off |
+| `<media player>.{url,transcode}`                                        | `url` spielt Musik von einer URL, siehe unten                                                      |
 | `<firmware>.{currentVersion,latestVersion,inProgress,progress,install,check}` | `install` und `check` sind Buttons: `check` lässt das Gerät sofort nach einer neuen Version suchen — ein `http_request`-Update schaut nur beim Start und alle 6 Stunden, bis dahin zeigt `latestVersion` die alte |
 
 Schreibvorgänge werden **nicht** optimistisch bestätigt: das Gerät meldet zurück, was es tatsächlich
@@ -578,6 +579,36 @@ sendTo('assistant.0', 'setControl', { device: '3RSPK-…', control: 'mic_volume'
 
 Wenn dich der Assistent zu leise hört — die Log-Zeile nach jeder Äußerung nennt Spitzenpegel und
 Rauschboden —, sind `mic_volume` und `mic_gain` die beiden Stellschrauben.
+
+#### Musik von einer URL (Internetradio)
+
+Eine URL in `satellites.<id>.controls.<media player>.url` schreiben, und der Satellit spielt sie als **Musik**,
+nicht als Durchsage: Antworten und Durchsagen machen sie nur leiser, und `command` (pause, play, stop), `volume`
+und die Tasten des Geräts wirken auf sie. Ein leerer String oder `stop` hält sie an. Der State wird mit der URL
+bestätigt, sobald das Gerät sie bekommen hat; ob es spielt, zeigt `.state`.
+
+```js
+setState('assistant.0.satellites.Gast.controls.media_player.url', 'https://stream.example.com/radio.mp3');
+setState('assistant.0.satellites.Gast.controls.media_player.url', ''); // Stopp
+```
+
+Bevor die URL ans Gerät geht, schaut der Assistent sie einmal an:
+
+- Eine **Playlist** (`.pls`, `.m3u`, wie Radioverzeichnisse sie ausgeben) wird durch ihren ersten Stream ersetzt.
+- Ein Codec, den das Gerät dekodiert, wird **direkt** gespielt — das Gerät holt den Stream selbst. Welche das sind,
+  sagt das Gerät in den Formaten seines Media-Players: seit ESPHome 2026.10 dekodiert eine Firmware nur die
+  Formate, die ihre Pipelines melden, MP3, FLAC und WAV alle nur mit Format `NONE` oder auf älterer Firmware, die
+  gar keine meldet.
+- Alles andere — AAC, HLS (`.m3u8`), Ogg Vorbis, ein Format, das das Gerät nicht meldet — läuft **durch ffmpeg**:
+  der Media-Server der ESPHome-Satelliten (der Port im Voice-Tab) liefert es dem Gerät als FLAC (oder im Codec,
+  den das Gerät meldet), mit der Rate und den Kanälen, die es verlangt, sonst 48 kHz mono. Ein ffmpeg pro
+  spielendem Satelliten; es endet, wenn das Gerät nicht mehr zuhört oder eine andere URL geschrieben wird.
+- `transcode` = true schickt jede URL durch ffmpeg, auch eine, die das Gerät selbst dekodieren könnte (für einen
+  Sender, mit dessen Server das Gerät nicht klarkommt). Ohne ffmpeg geht alles unverändert ans Gerät.
+
+Was auf einem Bildschirm als „läuft gerade“ steht, regelt die Firmware: eine `text`-Entity wie „Media title“ ist
+ein schreibbarer State unter `controls.*` wie jeder andere, ein Skript oder pi-agent kann den Sendernamen dort
+hineinschreiben.
 
 #### Satelliten mit Bildschirm
 

@@ -400,6 +400,16 @@ const KINDS: KindSpec[] = [
         command: (entity, value) => {
             const message = new pb.MediaPlayerCommandRequest();
             message.setKey(entity.key);
+            // `{ url }` plays music: the media pipeline (announcement = false), which replies and announcements only
+            // duck, and which play/pause/stop/volume act on. A URL as an announcement would mute everything else.
+            const url = (value as { url?: unknown } | null)?.url;
+            if (value && typeof value === 'object' && typeof url === 'string' && url.trim()) {
+                message.setHasMediaUrl(true);
+                message.setMediaUrl(url.trim());
+                message.setHasAnnouncement(true);
+                message.setAnnouncement(false);
+                return message;
+            }
             // A number is a volume (0…1), a string is one of the named commands.
             if (typeof value === 'number' || (typeof value === 'string' && /^[\d.]+$/.test(value.trim()))) {
                 message.setHasVolume(true);

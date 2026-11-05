@@ -478,6 +478,15 @@ export class EsphomeSatellites {
     }
 
     /**
+     * Absolute URL of a path on our media server (a live stream) with a host `device` can reach — the local end of
+     * its connection unless a media host is configured. null when it is offline.
+     */
+    mediaUrl(device: string, path: string): string | null {
+        const target = this.connections.find(c => c.online && c.deviceName === device);
+        return target ? target.mediaUrl(path) : null;
+    }
+
+    /**
      * Mirror an assistant timer onto the satellites so they can show it on their own LED ring and ring
      * it themselves. `device` null broadcasts. Returns how many devices were told.
      */
@@ -1589,7 +1598,7 @@ class EsphomeConnection {
     }
 
     /** Absolute URL of a path on the media server, with a host this device can reach. */
-    private mediaUrl(path: string): string {
+    mediaUrl(path: string): string {
         const local = (this.socket?.localAddress || '').replace(/^::ffff:/, '');
         const host = this.opts.mediaHost?.trim() || local || '127.0.0.1';
         // An IPv6 literal has to be bracketed in a URL.

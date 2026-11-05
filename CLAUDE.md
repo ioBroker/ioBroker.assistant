@@ -19,6 +19,20 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Musik/Internetradio per URL auf ESPHome-Satelliten** (Wunsch des Firmware-Entwicklers, 2026-11-05, Punkte 8+9;
+  Punkt 10 „Titel“ = die `text`-Entity der Firmware, nichts im Assistant). State `controls.<player>.url` →
+  `playMediaUrl()`: `MediaPlayerCommandRequest{has_media_url, media_url, has_announcement:true, announcement:false}`
+  (Media-Pipeline, Antworten ducken nur; `esphomeEntities` mediaPlayer nimmt `{url}`), leer/`stop` → STOP, ack mit der
+  URL nach dem Senden (das Gerät meldet keine URL zurück). `src/lib/voice/mediaStream.ts`: `probeStream` (ein GET pro
+  Stufe, nur Header, Body nur bei Playlist ≤ 64 KB; `.pls`/`.m3u` → erster Eintrag, max. 3 Ebenen; HLS bleibt),
+  `deviceCodecs` (gemeldete Formate; keine oder `none` → mp3/flac/wav — seit ESPHome 2026.10 dekodiert die Firmware
+  nur die Pipeline-Formate), `planStream` (direkt | ffmpeg; `transcode`-State = immer ffmpeg; ohne ffmpeg immer
+  direkt), `transcodeTarget` (FLAC vor MP3/Opus/WAV, Rate/Kanäle aus dem default-Format, sonst 48 kHz mono),
+  `transcodeArgs` (`-reconnect…` außer HLS). `MediaServer.serveStream` (ein Quell-Prozess pro Zuhörer, `unserve`
+  schneidet ab, **`flushHeaders()`** — sonst gehen die Header erst mit ffmpegs erstem Byte raus). Pro Player ein
+  Stream (`mediaStreamPaths`), `mediaPlays`-Zähler gegen verspätete Probes. Tests: `mediaStream.test.js` (echter
+  ffmpeg-Lauf WAV→FLAC), `esphome.test.js` (Fake-Gerät nimmt `MediaPlayerCommandRequest`); main per Wegwerf-Harness
+  (fand den fehlenden `.controls` im State-Pfad). Nicht am Gerät, nicht gegen echte Sender.
 - **Bilder (und Video-Verweise) im `ask`** (Nutzerwunsch 2026-11-04, Telegram-Fotos) — `src/lib/media.ts`:
   `parseAskImages` (base64/Data-URL, Typ per Magic Bytes JPEG/PNG/GIF/WebP — die Angabe des Absenders zählt nicht,
   max. `MAX_IMAGES` 4, je ≤ 5 MB base64 = Anthropic-Grenze; ein kaputtes Bild → ganze Anfrage `{error}`, weil eine

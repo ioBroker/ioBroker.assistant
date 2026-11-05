@@ -827,6 +827,16 @@ function fakeDevice({
             } else if (name === 'TextCommandRequest') {
                 state.commands.push({ kind: 'text', key: message.getKey(), value: message.getState() });
                 sendTextState(message.getKey(), message.getState());
+            } else if (name === 'MediaPlayerCommandRequest') {
+                const value = message.getHasMediaUrl()
+                    ? {
+                          url: message.getMediaUrl(),
+                          announcement: message.getHasAnnouncement() ? message.getAnnouncement() : null,
+                      }
+                    : message.getHasCommand()
+                      ? message.getCommand()
+                      : message.getVolume();
+                state.commands.push({ kind: 'mediaPlayer', key: message.getKey(), value });
             } else if (name === 'UpdateCommandRequest') {
                 state.commands.push({ kind: 'update', key: message.getKey(), value: message.getCommand() });
                 if (message.getCommand() === 2) {
@@ -1140,7 +1150,7 @@ test('a false wake closes the mic after 5 s instead of the full 12 s cap', async
     await satellites.start();
     // 5 s of audio at one frame per timer tick: on Windows (15.6 ms ticks) that alone takes ~2.6 s, so wait for
     // the stream to end instead of a fixed time.
-    for (const deadline = Date.now() + 10000; !device.stoppedBy && Date.now() < deadline; ) {
+    for (const deadline = Date.now() + 10000; !device.stoppedBy && Date.now() < deadline;) {
         await new Promise(resolve => setTimeout(resolve, 100));
     }
     await new Promise(resolve => setTimeout(resolve, 300)); // let the server finish the capture
@@ -1202,7 +1212,7 @@ test('a device that stops sending audio is closed after 2 s instead of the 30 s 
     });
 
     await satellites.start();
-    for (const deadline = Date.now() + 10000; !device.stoppedBy && Date.now() < deadline; ) {
+    for (const deadline = Date.now() + 10000; !device.stoppedBy && Date.now() < deadline;) {
         await new Promise(resolve => setTimeout(resolve, 100));
     }
     await new Promise(resolve => setTimeout(resolve, 300));
@@ -1308,7 +1318,7 @@ test('announce reaches a connected satellite as a media url', async t => {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function waitFor(condition, what, ms = 8000) {
-    for (const deadline = Date.now() + ms; !condition(); ) {
+    for (const deadline = Date.now() + ms; !condition();) {
         if (Date.now() > deadline) {
             throw new Error(`timed out waiting for ${what}`);
         }
@@ -1846,6 +1856,24 @@ test('a firmware update entity can be asked to check for a new version now', asy
     assert.equal(latest(), '1.1.0', 'the device reports what the check found');
 });
 
+test('a URL plays on the media player as music, not as an announcement', async t => {
+    const { device, satellites, name } = await connectedSatellite(t, { formats: [['flac', 48000, 1, 'announcement']] });
+    const player = satellites.entities(name).find(e => e.kind === 'mediaPlayer');
+    assert.ok(player, 'the fake device has a media player');
+    assert.equal(satellites.setEntity(name, player.objectId, { url: 'http://radio.example/bob.mp3' }), true);
+    assert.equal(satellites.setEntity(name, player.objectId, 'stop'), true);
+    assert.equal(satellites.setEntity(name, player.objectId, { url: '  ' }), false, 'no URL, no command');
+    await sleep(300);
+    assert.deepEqual(
+        device.commands.filter(c => c.kind === 'mediaPlayer').map(c => c.value),
+        [{ url: 'http://radio.example/bob.mp3', announcement: false }, 2],
+        'media_url with has_announcement = true, announcement = false; then STOP',
+    );
+    // a live stream of ours is addressed with the host the device reaches us on
+    assert.match(satellites.mediaUrl(name, '/stream/x.flac'), /^http:\/\/127\.0\.0\.1:\d+\/stream\/x\.flac$/);
+    assert.equal(satellites.mediaUrl('nobody', '/stream/x.flac'), null);
+});
+
 test('a text pattern is matched against the whole value', () => {
     const { matchesPattern } = require('../../build/lib/voice/esphomeEntities.js');
     assert.equal(matchesPattern('°C', '[^0-9]*'), true);
@@ -1880,7 +1908,7 @@ test('timers are mirrored to the satellite as started / updated / cancelled', as
 
 /** Wait until `check()` holds (or the deadline passes) — the fake device runs on real timers. */
 async function until(check, ms = 8000) {
-    for (const deadline = Date.now() + ms; !check() && Date.now() < deadline; ) {
+    for (const deadline = Date.now() + ms; !check() && Date.now() < deadline;) {
         await new Promise(resolve => setTimeout(resolve, 50));
     }
 }

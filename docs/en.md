@@ -543,6 +543,7 @@ speaker offers twelve:
 | `continue_conversation_delay` | how long the mic stays open for a follow-up, 0–10 s |
 | `mute`, `thinking_sound` | microphone mute and the "thinking" sound |
 | `<media player>.{state,volume,command,muted}` | `command` takes play, pause, stop, mute, unmute, toggle, volume_up, volume_down, turn_on, turn_off |
+| `<media player>.{url,transcode}` | `url` plays music from a URL, see below |
 | `<firmware>.{currentVersion,latestVersion,inProgress,progress,install,check}` | `install` and `check` are buttons: `check` makes the device look for a new version now — an `http_request` update looks only at boot and every 6 hours, and until then `latestVersion` shows the old one |
 
 Writes are not acknowledged optimistically: the device reports back what it actually took, and that is
@@ -559,6 +560,34 @@ sendTo('assistant.0', 'setControl', { device: '3RSPK-…', control: 'mic_volume'
 
 If the assistant hears you too quietly — the log line after each utterance prints the peak level and the
 noise floor — `mic_volume` and `mic_gain` are the two to raise.
+
+#### Music from a URL (internet radio)
+
+Write a URL into `satellites.<id>.controls.<media player>.url` and the satellite plays it as **music**, not as an
+announcement: replies and announcements only duck it, and `command` (pause, play, stop), `volume` and the device's
+own buttons act on it. An empty string or `stop` stops it. The state is acknowledged with the URL once the device
+was told; whether it plays shows in `.state`.
+
+```js
+setState('assistant.0.satellites.Gast.controls.media_player.url', 'https://stream.example.com/radio.mp3');
+setState('assistant.0.satellites.Gast.controls.media_player.url', ''); // stop
+```
+
+Before the URL goes to the device the assistant looks at it once:
+
+- A **playlist** (`.pls`, `.m3u`, as radio directories hand them out) is replaced by its first stream.
+- A codec the device decodes is played **directly** — the device fetches the stream itself. Which ones that is,
+  the device says in its media player's formats: since ESPHome 2026.10 a firmware decodes only the formats its
+  pipelines announce, all of MP3, FLAC and WAV with format `NONE` or on older firmware that announces none.
+- Anything else — AAC, HLS (`.m3u8`), Ogg Vorbis, a format the device does not list — runs **through ffmpeg**:
+  the media server of the ESPHome satellites (the port on the Voice tab) serves it to the device as FLAC (or the
+  codec the device lists), at the rate and channels it asks for, 48 kHz mono otherwise. One ffmpeg per playing
+  satellite; it ends when the device stops listening or another URL is written.
+- `transcode` = true sends every URL through ffmpeg, also one the device could decode itself (for a station whose
+  server the device does not get along with). Without ffmpeg everything goes to the device as it is.
+
+What is playing on a screen is up to the firmware: a `text` entity like "Media title" is a writable state under
+`controls.*` like any other, so a script or pi-agent can write the station name there.
 
 #### Satellites with a screen
 
