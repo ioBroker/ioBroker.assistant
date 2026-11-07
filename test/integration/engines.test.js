@@ -103,3 +103,75 @@ test('hintsToPrompt joins, de-dups and bounds the STT vocabulary bias', () => {
     assert.ok(out.length <= 20, `bounded (${out.length})`);
     assert.ok(out.startsWith('Device0'));
 });
+
+/** A local stand-in for a Whisper container: answers `/v1/audio/transcriptions` and records what it got. */
+async function fakeWhisperServer(text = ' Licht in der Küche an \n') {
+    const http = require('node:http');
+    const requests = [];
+    const server = http.createServer(async (req, res) => {
+        const chunks = [];
+        for await (const c of req) {
+            chunks.push(c);
+        }
+        const body = Buffer.concat(chunks);
+        // Parse the multipart body with the platform's own parser.
+        const form = await new Response(body, { headers: { 'content-type': req.headers['content-type'] } }).formData();
+        requests.push({ url: req.url, auth: req.headers.authorization, form });
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ text }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    return { requests, url: `http://127.0.0.1:${server.address().port}`, close: () => server.close() };
+}
+
+test('STT base URL: normalized, /v1 added only to a bare address', () => {
+    const { normalizeSttBaseUrl } = require('../../build/lib/voice/stt.js');
+    assert.equal(normalizeSttBaseUrl(''), '');
+    assert.equal(normalizeSttBaseUrl('  http://192.168.1.10:8000/ '), 'http://192.168.1.10:8000/v1');
+    assert.equal(normalizeSttBaseUrl('http://host:8000/v1/'), 'http://host:8000/v1');
+    assert.equal(normalizeSttBaseUrl('https://api.groq.com/openai/v1'), 'https://api.groq.com/openai/v1');
+    assert.throws(() => normalizeSttBaseUrl('192.168.1.10:8000'), /not a URL/);
+});
+
+test('STT base URL: an own server gets the audio, its model and its key — never the OpenAI key', async () => {
+    const srv = await fakeWhisperServer();
+    try {
+        const engine = createSttEngine(
+            'openai',
+            ctx({
+                creds: { ...ctx().creds, openaiKey: 'sk-openai-secret' },
+                sttModel: 'Systran/faster-whisper-large-v3-turbo',
+                sttBaseUrl: srv.url,
+                sttServerKey: '',
+            }),
+        );
+        const text = await engine.transcribe(Buffer.alloc(3200), 16000, 'ru-RU', ['Кухня']);
+        assert.equal(text, 'Licht in der Küche an');
+        assert.equal(srv.requests.length, 1);
+        const [req] = srv.requests;
+        assert.equal(req.url, '/v1/audio/transcriptions');
+        assert.doesNotMatch(req.auth || '', /sk-openai-secret/);
+        assert.equal(req.form.get('model'), 'Systran/faster-whisper-large-v3-turbo');
+        assert.equal(req.form.get('language'), 'ru');
+        assert.equal(req.form.get('prompt'), 'Кухня');
+        assert.equal(req.form.get('file').type, 'audio/wav');
+
+        // With a server key that one goes along.
+        const keyed = createSttEngine(
+            'openai',
+            ctx({ sttModel: 'whisper-large-v3-turbo', sttBaseUrl: `${srv.url}/v1`, sttServerKey: 'local-key' }),
+        );
+        await keyed.transcribe(Buffer.alloc(3200), 16000, 'de');
+        assert.equal(srv.requests[1].auth, 'Bearer local-key');
+    } finally {
+        srv.close();
+    }
+});
+
+test('STT base URL: no OpenAI key needed for an own server', () => {
+    assert.throws(() => createSttEngine('openai', ctx()), /API key/);
+    assert.equal(
+        createSttEngine('openai', ctx({ sttBaseUrl: 'http://127.0.0.1:8000' })).constructor.name,
+        'OpenAiStt',
+    );
+});

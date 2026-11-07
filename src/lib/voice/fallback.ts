@@ -13,6 +13,10 @@
  * Any failure of the primary moves on to the fallback: the alternative would be classifying provider
  * errors into "retryable" and "not", which is guesswork across three SDKs — and a request the primary
  * cannot answer is one the user still wants answered.
+ *
+ * Speech-to-text also moves on when the primary returns no text at all. A satellite only sends audio it took
+ * for speech, and models differ in what they make of it: Nemotron returned nothing for a quiet
+ * "Мессенджер. Да, да." that Whisper recognised. The price is a second request for a false wake.
  */
 import type { SttEngine } from './stt';
 import type { TtsEngine, TtsResult } from './tts';
@@ -24,17 +28,30 @@ export interface NamedEngine<T> {
     engine: T;
 }
 
-/** Run `attempt` over the engines in order; the last error survives if all of them fail. */
+/**
+ * Run `attempt` over the engines in order; the last error survives if all of them fail. A result that
+ * `useful` rejects also moves on to the next engine; if none does better, the first such result is returned.
+ */
 async function overEngines<T, R>(
     engines: NamedEngine<T>[],
     what: string,
     log: VoiceLogger,
     attempt: (engine: T) => Promise<R>,
+    useful?: (result: R) => boolean,
 ): Promise<R> {
     let last: Error | undefined;
+    let unused: { result: R } | undefined;
     for (const [index, entry] of engines.entries()) {
         try {
             const result = await attempt(entry.engine);
+            const next = engines[index + 1];
+            if (useful && !useful(result)) {
+                unused ??= { result };
+                if (next) {
+                    log.info(`${what}: ${entry.name} returned nothing — trying ${next.name}.`);
+                }
+                continue;
+            }
             if (index > 0) {
                 log.info(`${what}: answered by the fallback engine (${entry.name}).`);
             }
@@ -47,6 +64,9 @@ async function overEngines<T, R>(
             );
         }
     }
+    if (unused) {
+        return unused.result;
+    }
     throw last ?? new Error(`${what}: no engine configured`);
 }
 
@@ -58,7 +78,13 @@ export class FallbackStt implements SttEngine {
     ) {}
 
     transcribe(pcm: Buffer, sampleRate: number, lang: string, hints?: string[]): Promise<string> {
-        return overEngines(this.engines, 'Speech-to-text', this.log, e => e.transcribe(pcm, sampleRate, lang, hints));
+        return overEngines(
+            this.engines,
+            'Speech-to-text',
+            this.log,
+            e => e.transcribe(pcm, sampleRate, lang, hints),
+            text => !!text.trim(),
+        );
     }
 
     /** Prepare every engine: the fallback is useless if its model is only downloaded once it is needed. */

@@ -31,6 +31,8 @@ export interface TimerInfo {
     duration: number;
     /** Epoch ms the timer fires at. */
     fireAt: number;
+    /** What to say when it fires, word for word (a reminder set by a script); absent = the usual "timer finished". */
+    announce?: string;
 }
 
 /** Options for creating a new timer. */
@@ -40,6 +42,8 @@ export interface AddTimerOptions {
     source?: string;
     /** Duration in seconds (> 0). */
     duration: number;
+    /** See {@link TimerInfo.announce}. */
+    announce?: string;
 }
 
 export interface TimerManagerOptions {
@@ -84,6 +88,10 @@ export class TimerManager {
             duration,
             fireAt: now + duration * 1000,
         };
+        const announce = (o.announce || '').trim();
+        if (announce) {
+            info.announce = announce;
+        }
         this.timers.set(info.id, info);
         this.opts.log?.debug(`timer added: ${info.id} "${info.label}" in ${duration}s`);
         this.arm(info);
@@ -146,6 +154,9 @@ export class TimerManager {
                     duration: t.duration || Math.round((t.fireAt - now) / 1000),
                     fireAt: t.fireAt,
                 };
+                if (typeof t.announce === 'string' && t.announce) {
+                    info.announce = t.announce;
+                }
                 this.timers.set(info.id, info);
                 this.arm(info);
                 restored++;

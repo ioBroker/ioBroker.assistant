@@ -19,6 +19,197 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Dialogmodus für ESPHome-Satelliten** (Nutzerwunsch 2026-11-05: „ioBroker – Dialogmodus an“ → ohne Wake-Word
+  weitersprechen, „Dialogmodus aus“ → normal). `nlu.ts.dialogCommand()` (de/en/ru, Modus-Phrase Pflicht, Fragen
+  und > 8 Wörter → null, an **und** aus → null) → `main.switchDialog()` in `produceAnswer` nach der
+  `askUser`-Antwort, vor allen Stufen; im Dialog schaltet auch ein bloßes Stoppwort (≤ 2 Wörter) aus. Journal
+  `nlu`/`dialog on|off`. `esphome.ts`: `EsphomeConnection.setDialog(on, reason, open?)` / `EsphomeSatellites.
+  setDialog|dialog`, Option `onDialog` → State `satellites.<id>.dialog` (boolean, `switch.mode`, schreibbar, in
+  `markEsphomeSatellite` angelegt; Schreiben an einem wartenden Satelliten = Bestätigungston per Durchsage mit
+  `start_conversation`, `question=false` → keine offene Ja/Nein-Frage). Im Dialog: jede Antwort `continue_conversation
+  '1'` (INTENT_END + RUN_END), Folge-Mikro ohne WAKE_WORD_END (die Phrase ist die alte), `startTimeoutMs` 0, Detektor
+  fängt nach `DIALOG_WINDOW_MS` 10 s **Audio** ohne Laut neu an (`nextDialogWindow`, `SpeechDetector.hearing`/
+  `analysedMs`), max. 20 s Rede. Nichts erkannt (Stille-`timeout`/`speech-end`, leere STT) → INTENT_END „1“ +
+  `reopenDialog()` = 250 ms Stille als TTS_END + RUN_END „1“ (ESPHome öffnet das Mikro erst nach einer gespielten
+  Antwort); leere Antwort (Ton-Bestätigung) → der Ton als Antwort (`playConfirmationTone` tut im Dialog nichts).
+  Aus: Stopp des Geräts (außer Echo unseres ERROR), offline, Pipeline-Fehler, Stream-Ende/Stall, 5 min ohne
+  verstandene Anfrage (`DIALOG_IDLE_MS`, Prüfung alle 5 s, nicht während gehört/geantwortet wird); beim Ausschalten
+  schließt ein Mikro, das nichts hört, sofort. Tests: `esphome.test.js` (Fake-Gerät `speak()`/`position()`/
+  `maxStreamMs`), `nlu.test.js` (`dialogCommand`). ⚠️ Nicht am Gerät: ob ESPHome/linux-voice-assistant nach dem
+  stillen Clip das Mikro wirklich wieder öffnet, ist aus dem Quellcode abgeleitet (gleicher Weg wie Rückfragen).
+- **Dialog-Modus im Chat-Tab** (Nutzerwunsch 2026-11-05): Knopf `RecordVoiceOver` links vom Eingabefeld, nur bei
+  `VoiceDialog.supported` (Secure Context + getUserMedia), aktiv nur mit `voiceEnabled`. `src-admin/src/voiceDialog.ts`:
+  `VoiceDialog` (getUserMedia mit AEC/NS/AGC, ScriptProcessor 2048 → `Resampler` linear auf 16 kHz),
+  `UtteranceDetector` (Energie-Gate wie `vad.ts`: Rauschboden, Kandidat ≥ 250 ms, Lücke 300 ms, Stille 1 s bzw. 1,6 s
+  nach 2,5 s Rede, max 30 s, Pre-Roll 400 / Tail 300 ms; `BROWSER_DETECTOR` min 400/240 — Browser-Mikro mit AGC).
+  **Halbduplex**: während `ask` und Vorlesen wird das Mikro nicht ausgewertet, danach 400 ms Pause, Detektor-Reset
+  (Rauschboden bleibt). `ChatComponent.dialogTurn` → `ask {audio: PCM base64, format:'pcm', sampleRate:16000,
+  spoken:true}` (Quelle `chat` = gleiche Konversation wie getippt), `heard:''` → still weiter, Antwort per `tts`-sendTo
+  (Satellitenstimme), sonst `speechSynthesis` in `voiceLanguage`, Schutz-Timeout. Backend: `AskMessage.spoken` →
+  `answer(…, spoken)` setzt `requestOrigin.voice` → Längenhinweis wie bei Satelliten (Satellit bleibt leer).
+  Detektor/Resampler mit synthetischem Audio geprüft (Scratch, `--experimental-transform-types`), nicht im echten
+  Browser am Mikro. ⚠️ `src-admin`-`tsc` (TS 7) lehnt die eigene tsconfig ab (`esModuleInterop=false`,
+  `moduleResolution=node10`) — Typprüfung mit Root-`tsc` 6 + `ignoreDeprecations:"6.0"`; Vite prüft keine Typen.
+- **ai-parakeet als STT + Installations-Knöpfe für pi-agent/ai-parakeet** (Nutzerwunsch 2026-11-05). Anbieter
+  `parakeet` (auch als Reserve): `src/lib/voice/parakeet.ts` `ParakeetStt` → `sendTo(<inst>,'transcribe',{pcm base64,
+  sampleRate, prompt})` (Buffer würde als JSON-Zahlenarray serialisiert; Sprache geht nicht mit, das Modell erkennt
+  sie), Antwort `{text}`/`{error}`. Über den Nachrichtenbus statt HTTP: geht auf jedem Host, API-Key von ai-parakeet
+  egal. `EngineContext.parakeetInstance`/`sendMessage`; `main.askInstance()` prüft `alive`, Timeout
+  `PARAKEET_TIMEOUT_MS` 60 s. Config `parakeetInstance` (jsonConfig `type:"instance"`). **Knöpfe** (`sendTo`
+  `installAdapter {adapter}`, `useNative` + `result`/`args` → Instanz landet im Formular, sichtbar nur ohne gewählte
+  Instanz): `src/lib/installer.ts` `AdapterInstaller` schickt dem eigenen Host `cmdExec` (`add <name>`; nicht im
+  Repository → `url iobroker.<name>` von npm → `add`), die Antworten `cmdStdout`/`cmdStderr`/`cmdExit` (letzteres
+  doppelt) fängt `onMessage` als Erstes ab. Ein Befehl im Timeout (15 min) beendet den Ablauf (sonst liefe npm
+  parallel zu `add`). Nur `pi-agent`/`ai-parakeet` (`HELPER_ADAPTERS`). Test: `parakeet.test.js` (Fake-Host wie
+  js-controller), main per Wegwerf-Harness. ⚠️ ai-parakeet ist (Stand 2026-11-05) weder auf npm noch im Repository —
+  der Knopf meldet das, bis es veröffentlicht ist; pi-agent nur in „latest“ → bei stable kommt es von npm. Nicht
+  gegen einen echten Host gelaufen.
+- **Musik/Internetradio per URL auf ESPHome-Satelliten** (Wunsch des Firmware-Entwicklers, 2026-11-05, Punkte 8+9;
+  Punkt 10 „Titel“ = die `text`-Entity der Firmware, nichts im Assistant). State `controls.<player>.url` →
+  `playMediaUrl()`: `MediaPlayerCommandRequest{has_media_url, media_url, has_announcement:true, announcement:false}`
+  (Media-Pipeline, Antworten ducken nur; `esphomeEntities` mediaPlayer nimmt `{url}`), leer/`stop` → STOP, ack mit der
+  URL nach dem Senden (das Gerät meldet keine URL zurück). `src/lib/voice/mediaStream.ts`: `probeStream` (ein GET pro
+  Stufe, nur Header, Body nur bei Playlist ≤ 64 KB; `.pls`/`.m3u` → erster Eintrag, max. 3 Ebenen; HLS bleibt),
+  `deviceCodecs` (gemeldete Formate; keine oder `none` → mp3/flac/wav — seit ESPHome 2026.10 dekodiert die Firmware
+  nur die Pipeline-Formate), `planStream` (direkt | ffmpeg; `transcode`-State = immer ffmpeg; ohne ffmpeg immer
+  direkt), `transcodeTarget` (FLAC vor MP3/Opus/WAV, Rate/Kanäle aus dem default-Format, sonst 48 kHz mono),
+  `transcodeArgs` (`-reconnect…` außer HLS). `MediaServer.serveStream` (ein Quell-Prozess pro Zuhörer, `unserve`
+  schneidet ab, **`flushHeaders()`** — sonst gehen die Header erst mit ffmpegs erstem Byte raus). Pro Player ein
+  Stream (`mediaStreamPaths`), `mediaPlays`-Zähler gegen verspätete Probes. Tests: `mediaStream.test.js` (echter
+  ffmpeg-Lauf WAV→FLAC), `esphome.test.js` (Fake-Gerät nimmt `MediaPlayerCommandRequest`); main per Wegwerf-Harness
+  (fand den fehlenden `.controls` im State-Pfad). Nicht am Gerät, nicht gegen echte Sender.
+- **Bilder (und Video-Verweise) im `ask`** (Nutzerwunsch 2026-11-04, Telegram-Fotos) — `src/lib/media.ts`:
+  `parseAskImages` (base64/Data-URL, Typ per Magic Bytes JPEG/PNG/GIF/WebP — die Angabe des Absenders zählt nicht,
+  max. `MAX_IMAGES` 4, je ≤ 5 MB base64 = Anthropic-Grenze; ein kaputtes Bild → ganze Anfrage `{error}`, weil eine
+  Frage zum Bild ohne Bild geraten würde), `parseAskVideo` (**nur** `{adapter, path, …}` im Dateispeicher, `data` →
+  Fehler; `error` vom Absender = konnte nicht gespeichert werden, z. B. > 20 MB), `redactImages` (Trace + Debug-Dump:
+  `<image/jpeg, 180 KB>` statt base64), Texte de/en/ru. `main.ts`: `Attachments` im `requestOrigin`-Store,
+  `askAttachments()` im `ask`-Handler, ohne Text → `imageOnlyQuestion`. `CloudOnly` + `'image'` (Routinen/NLU/lokales
+  LLM blind; nach `script`/`scriptReply` geprüft, `scriptTopics` nur bei Skript), ohne Cloud-Stufe `noVisionText`;
+  Video ohne Frage → `videoNotSupportedText` (Journal-Stufe `none`), mit Frage `attachmentNote` im User-Turn.
+  Verlauf/Journal-Frage = `historyText` („[picture] …“) — Bilder gehen nicht in spätere Runden. `llm.ts`:
+  `openAiUserContent` (`image_url` Data-URL, auch Gemini/OpenRouter) / `anthropicUserContent` (Bilder vor Text).
+  pi-agent: `images` im `ask` + `attachmentNote` im Text (ältere pi-agent verwerfen die Bilder). **pi-agent** (main,
+  nicht committet): `askImages()` → Content-Array mit pi-ai-`ImageContent`, `chat.pending` hält nur `contentText()`
+  (ein Neustart findet die Submission per requestId), Admin-Chat zeigt „[picture]“; Modelle ohne Bildeingang ersetzt
+  pi-ai selbst durch einen Platzhalter. **Telegram** (Branch `feat/assistant-media`, auf `feat/assistant-timeout`):
+  `forwardsMediaToAssistant` (Config `assistantMedia`, Default an, nur mit `msg.from`), Alben per `media_group_id`
+  1,5 s gesammelt, Foto-Größe ≤ 1600 px (`assistantPhotoSize`), Videos → `telegram.0/assistant/video_<Zeit>_<id>.mp4`
+  (neueste 20), `downloadFileOnce` (Speichern + Weiterleiten = ein Download), die Caption geht dann nicht zusätzlich
+  über `processTelegramText` an den Assistenten. Tests: `media.test.js` hier, `test/images.test.js` in pi-agent,
+  Telegram per Wegwerf-Harness.
+- **Telegram-Sprachnachrichten + ffmpeg-Pfad** (Nutzerwunsch 2026-11-04). `ask` nimmt statt `text` auch
+  `audio` (base64) + `format` (`AskMessage`): `transcribeAsk()` — `pcm` (+`sampleRate`) und RIFF direkt, sonst
+  ffmpeg auf **16 kHz** (`decodeAudioBufferToPcm(buf, rate)`), STT aus `getSpeechEngines()` mit Hints, nur bei
+  `voiceEnabled`. Danach normales `answer(question, source, {sttMs, audioMs})` → Journal mit STT-Schritt;
+  `requestOrigin.voice` bleibt false (Antwort ist Text). Antwort `{answer, heard}`; leere Erkennung →
+  `{heard:'', error: nothingHeardText()}` (de/en/ru); Text gewinnt, wenn beides kommt. **Telegram**
+  (`C:\pWork\ioBroker.telegram`, nicht committet): `saveFile` geteilt in `downloadFile`/`storeFile`, die
+  Sprachnachricht wird **einmal** geladen, gespeichert wie bisher (`communicate.pathFile`) und bei
+  `assistantInstance` + `msg.from` + ohne Caption an `askAssistantByVoice()` gegeben: gleiche Alters- und
+  Nutzerprüfung wie Text (Passwort/`doNotAcceptNewUsers`), `typing`-Action, `ask` mit `format:'ogg'`, Antwort
+  „🎤 <heard>\n\n<answer>“; ein alter Assistant antwortet `empty question` ohne `heard` → einmal warnen, nichts
+  in den Chat. **ffmpeg-Pfad**: Config `ffmpegPath` (Reiter Voice, leer = PATH), `ffmpegBin()` an beiden
+  `spawn`s, `FFMPEG_HINT` in der Fehlermeldung, Knopf `testFfmpeg` (Version + ob libmp3lame/libopus da sind).
+  **ffmpeg herunterladen** (`src/lib/voice/ffmpegStatic.ts`, sendTo `downloadFfmpeg`, Nutzerwunsch 2026-11-04):
+  die Binaries von **ffmpeg-static** (Release `b6.1.1`, `ffmpeg-<platform>-<arch>.gz`), aber **nicht das npm-Paket**
+  — dessen Install-Script lädt 20–30 MB bei jeder Installation, und neuere npm fragen vor Install-Scripts (dann
+  fehlt die Binary still). SHA-256 der `.gz` gepinnt (GitHub liefert `digest` pro Asset), Download per Stream
+  durch Hash → Gunzip → `.part` → rename, nach `<Datenverzeichnis>/ffmpeg/ffmpeg(.exe)`. `ffmpegBin()`:
+  Pfad → heruntergeladenes → `ffmpeg` aus PATH; `downloadedFfmpeg()` prüft **jedes Mal** per `existsSync`
+  (Löschen wirkt ohne Neustart). Der Name täuscht: auf linux-arm64 ist es ffmpeg **7.0.2** (johnvansickle).
+  Test: `ffmpegStatic.test.js`. Auf vitanova: Download, `ask` mit OGG dekodiert, danach wieder gelöscht.
+  Geprüft mit Wegwerf-Harnessen (echte Adapter-Klasse, Fake-adapter-core, echtes OGG/Opus aus ffmpeg, Fake-STT;
+  Telegram mit Fake-Bot). Nicht gegen echtes Telegram/echte STT gelaufen.
+- **Eigener STT-Server (OpenAI-kompatibel)** — Nutzerwunsch 2026-11-03 (whisper-large-v3-turbo im Container daneben).
+  Kein eigener Anbieter, sondern Felder am Anbieter `openai`: `sttBaseUrl` + `sttServerKey` (encrypted/protected,
+  in `VOICE_FORM_FIELDS`/`VOICE_FORM_SECRETS`), sichtbar bei STT-Anbieter **oder** -Fallback `openai` (wie jetzt
+  auch `sttModel`). `stt.ts.normalizeSttBaseUrl()` (Adresse ohne Pfad → `/v1`, sonst unverändert; kein URL →
+  Fehler), `OpenAiStt(key, model, baseUrl)` baut dann den Client mit `baseURL`, Timeout 60 s, 1 Retry, Key
+  `sttServerKey || 'none'` — **der OpenAI-Key geht nie an einen fremden Server**, und `requireOpenAi` entfällt.
+  Hints (`prompt`) gehen mit (faster-whisper kann `initial_prompt`). Folge: Fallback „OpenAI-Cloud hinter dem
+  eigenen Server“ geht nicht (gleicher Anbieter). Trace: `server` im STT-Schritt. Test: `engines.test.js`
+  (echter HTTP-Fake auf `/v1/audio/transcriptions`, Multipart geprüft). Nicht gegen einen echten Server gelaufen.
+- **ESPHome 2026.10 / API 1.19 (Feldbericht Alex F., 2026-11-03)** — gegen den ESPHome-dev-Quellcode geprüft
+  (`voice_assistant.cpp`, `api_connection.cpp`, `entity_base.cpp`, `audio.cpp`), nicht gegen das echte Gerät.
+  (1) **Antwortformat** (`replyFormat.ts`, `flac.ts`): der Media-Player wird nur noch mit den Codecs seiner
+  Pipelines gebaut (`USE_AUDIO_WAV_SUPPORT` fehlt dann) → WAV spielte nicht. Wir lesen `supported_formats` des
+  Media-Players (`EsphomeEntity.formats`) und nehmen wie HA das **Announcement-Format** samt Rate/Kanälen:
+  FLAC/WAV selbst (FLAC mit VERBATIM-Subframes, CRC/MD5, Hann-Sinc-Resampler mit Phasentabelle, ~50 ms für 10 s),
+  MP3/Opus per ffmpeg (`main.runFfmpegEncode`, Option `encodeAudio`), ohne ffmpeg FLAC mit Warnung. Gerät ohne
+  Liste (linux-voice-assistant/ThirdReality) → WAV wie bisher. Erkennung im Gerät per Content-Type, sonst
+  Endung → `MediaServer.publish` vergibt `.flac`/`.opus`/`.mp3`. (2) **Stopp der Platine**: in `AWAITING_RESPONSE`
+  schickt `request_stop()` nur `start:false` und wartet auf unser RUN_END → `onStopRequest()` antwortet mit RUN_END
+  und verwirft die laufende Antwort (`run`-Zähler, `current()` nach jedem `await` in `finishCapture`; neuer Wake
+  und Disconnect zählen auch hoch). Stopp ohne offenen Lauf → trotzdem RUN_END, außer ≤ `ERROR_ECHO_MS` nach
+  unserem ERROR (darauf antwortet die Firmware selbst mit `signal_stop_`). (3) **RUN_END direkt nach STT_VAD_END
+  geht verloren** (Zustand `STOP_MICROPHONE`, ältere Firmware; dev hat inzwischen einen Zweig dafür) → beim Verwerfen
+  und bei leerer STT `endWithoutRequest()`: ERROR `stt-no-text-recognized` (wie HA; Voice-PE-YAML spielt dafür
+  keinen Fehlerton) + RUN_END, **kein** STT_END ohne Text. (4) **Kein `object_id` mehr** (nur `key`+`name`;
+  Entity ohne eigenen Namen → `name` leer) → `entityObjectId()`: ASCII-Name nach Firmware-Regel
+  (`esphomeObjectId`, = alte ids), sonst Buchstaben behalten (`\p{Ll}\p{Lu}\p{Nd}`), sonst `<kind>_<key>`; ohne
+  Namen der `friendly_name` aus `DeviceInfoResponse`. `main.isControlId()` überspringt unbrauchbare ids.
+  (5) **Satelliten aufräumen**: `onStatus` liefert die Tabellen-Adresse (`esphomeAddress`: `ip` bzw. `ip:port`),
+  `markEsphomeSatellite` schreibt sie nach `native.esphome` + State `host`; `removeStaleEsphomeSatellites` (vor dem
+  Verbinden) löscht markierte Satelliten ohne Zeile/mit anderem Raum, alte unmarkierte nur mit `wakeWords` und wenn
+  jede Zeile einen Raum hat. sendTo `deleteSatellite {id}` (nicht, solange `alive`), GUI: 🗑 statt ⚙ bei offline.
+  Tests: `replyFormat.test.js` (eigener FLAC-Decoder + ffmpeg-Gegenprobe), `esphome.test.js` (Fake-Gerät:
+  `objectIds:false`, `formats`, `stopAfterVadEndMs`, `sendStop()`).
+- **ESPHome-Satelliten mit Bildschirm + Mikro nur nach Fragen** (Wunsch eines Firmware-Entwicklers, 2026-11-04,
+  `esphome.ts`, gegen ESPHome-dev `voice_assistant.cpp` geprüft, nicht am Gerät). (1) **`continue_conversation`
+  immer explizit** `'1'`/`'0'` in INTENT_END **und** RUN_END: ESPHome setzt das Flag nur in INTENT_END mit dem Key
+  und zurück nur in `request_stop()` → nach **einer** Rückfrage öffnete jede spätere Antwort das Mikro wieder
+  („No text recognized“ nach 5 s). HA schickt „0“ genauso; linux-voice-assistant liest RUN_END und ignoriert „0“.
+  Dazu `ask.ts.endsWithQuestion()`: „?“ zählt nur **am Ende** (vorher überall), Rückfragen mitten im Text brauchen
+  `[[LISTEN]]` (pi-agent setzt es). (2) **Ja/Nein-Knopf**: Event-Entity `confirm_answer` (Typen `yes`/`no`) zählt
+  nur bei offener Frage (`questionUntil` = Antwortlänge + `FOLLOW_UP_START_MS` nach RUN_END mit „1“ bzw. Durchsage
+  mit `start_conversation`; während der Folge-Aufnahme `capture.answersQuestion`; nach Stopp/stiller Aufnahme noch
+  `CONFIRM_GRACE_MS`, weil die Firmware das Mikro beim Tippen evtl. selbst stoppt; Wake-Word = neue Runde → zu).
+  Dann: offene Aufnahme per **RUN_END ohne STT_VAD_END** schließen (Mikro läuft → STOP_MICROPHONE→IDLE, keine
+  Fehleranzeige), `run++`, `opts.answer(yesNoWord(lang), {button})` — pi-agent entscheidet wie bei Sprache —,
+  Antwort als **Durchsage** mit `text` (Display) und `start_conversation` = neue Rückfrage. Ein Folge-Mikro, das das
+  Gerät für die schon beantwortete Frage noch öffnet, wird `IGNORE_FOLLOW_UP_MS` lang sofort per RUN_END beendet.
+  `JournalOrigin.button` im Trace. (3) **Displaysprache**: Select `display_language` einmal pro Verbindung mit dem
+  ersten gemeldeten Zustand abgleichen (`displayLanguageOption`: Name in der Sprache, englischer Name oder Code,
+  `Intl.DisplayNames` + Tabelle); Sprachwechsel = Adapter-Neustart = neuer Abgleich. Tests: `esphome.test.js`
+  (Fake-Gerät `screen:true`, `startPipeline()`, `press()`; gegen den alten Code scheitern 5 von 6), `ask.test.js`.
+  Released als 1.4.7. **1.4.8:** (4) Update-Entity bekommt `controls.<update>.check` (Button → `UpdateCommandRequest`
+  CHECK=2; die Lib kannte `check` schon, es fehlten State + Leaf in `setSatelliteControl`), Dialog zeigt „check“ außer
+  während eines Updates. (5) Entity-Art **`text`** (`ListEntitiesTextResponse`/`TextStateResponse`/
+  `TextCommandRequest`): schreibbarer String-State; Länge in **UTF-8-Bytes** geprüft (die Firmware zählt
+  `std::string::length()`), `pattern` als ganzer Treffer (`matchesPattern`, nicht kompilierbar = erlaubt), Modus
+  Passwort wird **nicht** gespiegelt. Dialog: Textfeld schreibt nur bei Änderung, Key = Wert (Echo des Geräts wird
+  sichtbar). Optionale Bildschirm-Entities in `docs/{en,de}.md` dokumentiert — weitere Namens-Absprachen mit
+  Firmware-Entwicklern lieber über allgemeine Entities lösen.
+  **Nach 1.4.8 (Feldbericht Waveshare `waveshare-va-eb1614`, 2026-11-05):** der Knopf ging bei pi-agent-Fragen nie —
+  ESPHome **leert `wake_word_` nie** (`voice_assistant.cpp` START_PIPELINE: `msg.wake_word_phrase = wake_word_`), das
+  Folge-Mikro kam mit „ioBroker“ und galt als neue Runde. Jetzt: Folge = **offene Frage** (`answersQuestion =
+  now < questionUntil`, Phrase egal; `QUESTION_OPEN_MS` 30 s nach der Antwortlänge, bis die nächste Anfrage
+  beantwortet ist), dann kein WAKE_WORD_END, `NO_SPEECH_FOLLOW_UP_MS`, Journal-`wakeWord` ''. Stille/leere STT
+  verkürzen das Fenster nicht mehr (`max(questionUntil, now+GRACE)`). Die Firmware schickt nach dem Event sofort
+  `voice_assistant.stop`: `onStopRequest` innerhalb `CONFIRM_GRACE_MS` nach dem Knopf (`buttonAt`) und ohne offenen
+  Lauf → nichts tun (kein `run++`, kein zweites RUN_END, `ignoreFollowUpUntil` = 0, weil `request_stop()` das
+  continue-Flag löscht); Stopp **vor** dem Event (Batching) → Frage bleibt `CONFIRM_GRACE_MS` offen.
+  `ignoreFollowUpUntil` gilt jetzt unabhängig von der Phrase, wird aber nur gesetzt, wenn beim Tippen kein Mikro offen
+  war und kein Stopp kurz davor kam. Tests: Fake-Gerät `startPipeline(phrase, speech)`.
+  **pi-agent bekommt `satellite` + `tts`** (nur Satelliten-Anfragen: `requestOrigin.satellite` aus
+  `knownSatelliteId()` = `satelliteStateId` + `satStatesEnsured`, also nicht Wyoming/Chat/Telegram), damit pi-agent
+  später dort sprechen kann (`satellites.<id>.tts`). **Timer eines Satelliten per sendTo**: `setTimer {satellite,
+  seconds, name, announce}` (`timerSatellite()` → `source` = Gerätename wie bei Sprach-Timern → `mirrorTimer` und
+  `announceTargetForSource` greifen), `TimerInfo.announce` (persistiert, wird wörtlich gesagt, auch bei
+  `timerAnnounce` aus), `listTimers`/`cancelTimer {satellite, id?}`. `seconds` als String = Sekunden, `duration`-String
+  mit bloßer Zahl bleibt Minuten. main-Routing per Wegwerf-Harness geprüft, nicht am Gerät.
+- **Skript-Anfragen nur an die Cloud** — `nlu.ts.mentionsScript()` (`SCRIPT_RE`: `skript` überall inkl.
+  Komposita, `script` nur am Wortanfang bzw. `java|type`-Präfix — sonst „description"/„subscription" —,
+  `скрипт` mit Flexion, `blockly`). `main.ts.cloudOnlyReason()` → `'script'`, oder `'scriptReply'`, wenn das
+  Cloud-Modell zu einem Skript zurückgefragt hat (`scriptTopics` pro Quelle, gesetzt in `answerTracked` nur bei
+  `cloudOnly && [[LISTEN]]`, sonst gelöscht, `SCRIPT_TOPIC_MS` = 2 min wie pi-agents Bestätigungs-Timeout).
+  Dann überspringt `produceAnswer` Routinen/YouTube/NLU (jetzt gebündelt in `answerLocally()`) und das lokale
+  LLM — auch als Fallback. Stoppwort und `askUser`-Antwort bleiben davor. Ohne Cloud-Stufe (`agent`/`piAgent`)
+  greift nichts. Anlass (Journal 2026-11-02): „В каком скрипте … Старлин выключается ночью" → NLU-Query
+  „Старлинк: включено", „напиши мне скрипт, который … свет на кухне каждый час" → NLU `timeQuery` (der
+  Satz enthält „который … час"). Test: `nlu.test.js` (`mentionsScript`); das Routing in `main.ts` hat keinen
+  Unit-Test (main wird nicht getestet).
 - **Befehle für später über den Kalender (fullcalendar)** — NLU (`nlu.ts`): `parseWhen()` erkennt Verzögerung
   (`in|nach|через|after` + Dauer direkt danach, „in der Küche“ zählt nicht; `DURATION_PHRASES` kennen jetzt
   „einer halben Stunde“, „in an hour“, „через час“) und **eindeutige** Uhrzeiten (`CLOCK_RE`: „22:30“, „7 Uhr“,
@@ -156,7 +347,18 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   `usesSystemAiSettings`); Änderung dieser vier Felder → Neustart (`hideFab` u. ä. nicht). `ask` kennt
   `conversation`/`instructions` (Key `sendTo:<caller>/<conversation>` in `telegram.chats`). Tests:
   `test/integration/piAgent.test.js` hier, `test/system-ai.test.js` dort.
-  ⚠️ Noch nicht gegen eine laufende pi-agent-Instanz durchgespielt.
+  **Läuft auf 129** (pi-agent 0.7.3/0.8.0, ESPHome-Satellit). **Bestätigung per Sprache** (pi-agent-Option
+  „Confirmation by text in sendTo conversations", `lib/text-confirmation.js` dort): pi-agent antwortet auf einen
+  bestätigungspflichtigen Schreibzugriff mit einer Frage + `[[LISTEN]]`, das nächste `ask` derselben Konversation
+  entscheidet — **pi-agent** prüft per `isYes` (nur Ja-Wort), nicht das Modell. Fehler am echten Gerät (2026-11-02):
+  die Frage kam in der **Systemsprache** (de: „Sag ja oder nein"), der Satellit hört in `voiceLanguage` ru →
+  das deutsche „Ja" lieferte bei der STT (OpenRouter Nemotron, `language:ru`) **leeren Text** (per sendTo
+  `tts`→`stt` reproduziert), der Assistant verwarf das **ohne Log** → „es passiert nichts"; mit Wake-Word wurde
+  daraus „Я" → nein. Ein echtes „Да." kam als „Да да." zurück (auch nein). Fix: `askPiAgent` schickt `language`
+  (`voiceLanguage || language`) mit, pi-agent fragt in der Sprache des Aufrufers (`callerLanguages` pro Key),
+  `isYes` nimmt dasselbe Ja-Wort mehrfach, pi-agent loggt das Gehörte („Answer by text in …"). Leere STT wird
+  jetzt bei ESPHome/nativ geloggt (`Voice Q (…): (empty)`). Nach einem pi-agent-**Neustart** mitten in der
+  Rückfrage ist die Bestätigung `unavailable` (der wartende Aufrufer ist weg) — so gewollt.
 - **Sprachpfad schneller (Issue #3, znyde87)** — sechs Teile, Assistant + Satelliten-Lib + Wrapper:
   (1) **NLU-Gerätemodell gecacht** (`main.ts.getNluDevices` → `nluDevices`, TTL `NLU_DEVICES_TTL_MS`=60 s,
   gleichzeitige Anfragen teilen sich den Build, leeres Ergebnis wird nicht gehalten). Vorher pro Sprachbefehl
@@ -165,10 +367,23 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   (2) **Rückfrage-Flag pro Quelle** (`followUps`-Map + `wantsFollowUp`/`followUpFor`) statt des geteilten
   `lastFollowUp`; ESPHome bekommt jetzt auch das `[[LISTEN]]`-Signal, **UDP** schickt `tts_end.listen`
   (im `tts_end`, damit nichts das Audio überholt) und hält `listening` mit Timer (`LISTEN_WINDOW_MS`).
-  (3) **Lib `C:\iot\assistant-satellite`**: UDP-`Satellite` kennt `listen`/`tts_end.listen` (Follow-up-Fenster
+  (3) **Lib `C:\pWork\assistant-satellite`** (`github.com/ioBroker/assistant-satellite`; der alte Pfad
+  `C:\iot\…` existiert nicht mehr): UDP-`Satellite` kennt `listen`/`tts_end.listen` (Follow-up-Fenster
   wie `LocalListener`, ohne Stille an STT zu streamen, `maxFollowUps`, Ansagen zählen nicht als Antwort) und
   `volume` (absolut/relativ, Software-Gain quadratisch, meldet `{type:'volume',level}` zurück; Host-Hooks
   `onVolume`/`mixerVolume`, `setVolume()`). **Noch nicht veröffentlicht** — Wrapper braucht Lib 0.2.0.
+  **Barge-in im ioBroker-Transport** (Nutzerwunsch 2026-11-04, Branch `feat/barge-in-local` in der Lib,
+  `feat/barge-in` im Wrapper `ioBroker.assistant-satellite`, nicht committet): `LocalListener` wertet das Mikro
+  jetzt auch während `processing`/`speaking` aus (`endRecording` wartet die Antwort nicht mehr ab, `answer()`
+  mit `turn`-Zähler) — Wake-Word stoppt die Wiedergabe bzw. verwirft die noch kommende Antwort und nimmt neu
+  auf. `bargeIn` (Default an), `bargeInThreshold` (Schwelle während der Wiedergabe, 0 = gleich), Hook
+  `onWakeWord` (Wrapper stoppt damit Durchsagen), `onUtterance` liefert `text` → eine Antwort, die das Wake-Word
+  selbst sagt („ioBroker“ bei `io_broker`), unterbricht sich nicht (`wakePhrases`/`saysWakeWord`). Test:
+  `test/bargeIn.test.js` in der Lib (Fake-Mic/-Modell/-Wiedergabe; gegen 0.1.7 scheitern 7 von 9). Ohne AEC hört
+  das Mikro die Antwort mit — nicht am echten Gerät geprüft. **ESPHome-Geräte** können das schon in ihrer
+  Firmware: ThirdReality (`Satellite.cpp`: Wake-Word während TTS → Stopp + neue Runde, eingebautes
+  microWakeWord-„stop“ mit Entity `stop_word_sensitivity`, Tippen), Voice PE („stop“ ab 1 s TTS, Wake-Word
+  stoppt). Unser `onPipelineRequest` verwirft dabei die alte Antwort (`run`-Zähler).
   (4) **Lokales LLM = Fallback**, wenn ein Cloud-Provider da ist (`localLlmFirst` stellt es wieder davor);
   `localLlmTimeoutSec` (Default 15) bricht per `AbortSignal` ab, `threads` = Kerne−1, max. 256 Tokens,
   parallele Fragen → `HANDOFF` statt Warten. (5) NLU-Intent **`volumeSet`** („lauter/leiser/Lautstärke 5",
@@ -239,8 +454,14 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
     damit Satelliten, Durchsagen, Test-Chat und `tts`-sendTo dasselbe Verhalten haben): Plattencache
     (Verzeichnis pro Anbieter+Stimme, Sample-Rate im Dateikopf → nie falsche Tonhöhe, Key =
     sha256(lang+text), nur Texte ≤200 Zeichen — lange Einmal-Antworten füllen sonst die Platte —, LRU-Prune
-    auf 64 MB), `truncateForTts` (400 Zeichen, Schnitt am letzten passenden Satzende; SSML wird nie
-    geschnitten) und SSML-Routing. `TtsEngine` hat dafür optionale `synthesizeSsml`/`warm`-Hooks;
+    auf 64 MB), `truncateForTts` (Config `ttsMaxChars`, Default 400, 0 = aus — über `EngineContext.ttsMaxChars`;
+    aufgefallen als „Satellit hört nach ~30 s auf“: im Journal hatte eine 1900-Zeichen-Antwort von pi-agent
+    `replyAudioMs` 20 784; Schnitt am letzten passenden Satzende; SSML wird nie geschnitten). Dazu
+    **Längenhinweis an das Modell** nur bei Sprach-Anfragen (`requestOrigin.voice` aus
+    `VOICE_TRANSPORTS` esphome/udp/native/wyoming, `main.spokenLengthHint()` → `ttsCache.spokenLengthHint`
+    de/en/ru, Grenze auch als Satzzahl, keine State-IDs/Seriennummern): Cloud-LLM im **User-Turn** hinter
+    der Frage (System-Prompt wäre bei Wechsel Sprache/Text ein Cache-Bust), pi-agent in den Instruktionen
+    (Konversation pro Quelle → stabil). Lokales LLM nicht (256 Tokens Cap). und SSML-Routing. `TtsEngine` hat dafür optionale `synthesizeSsml`/`warm`-Hooks;
     `azure.ts` (`speakSsmlAsync`) und `aws.ts` (`TextType:'ssml'`) implementieren SSML nativ, alle anderen
     bekommen `stripSsml()` statt vorgelesener Tags.
   - `src/lib/voice/fallback.ts` — `FallbackStt`/`FallbackTts`: eine zweite Engine bei Ausfall (Config
@@ -430,6 +651,53 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   +30…120 ms, Rauschboden 5–6, Gate 250/150. ⚠️ Beim Ändern dieser Werte immer gegen echte Captures
   prüfen, nicht nur gegen `micFrame()` — das Fake-Gerät im Test sendet jetzt bewusst erst `chirpMs`
   Chirp und dann Sprache, weil es sonst die Realität nicht abbildet.
+  **Sprachschwelle pro Gerät** (2026-11-03, Feldbericht „Handy-Alex“): ein Handy mit Satelliten-App
+  (kein Chirp, Rauschunterdrückung → digitale Stille, Rauschboden 0) liefert normale Sprache mit
+  **Peak RMS ~190** → das Minimum 250 ließ nur lautes Sprechen direkt am Telefon durch. Neue Spalte
+  `speechLevel` in `esphomeDevices` (`speechLevelOf()`, leer = `DEFAULT_SPEECH_LEVEL` 250) setzt
+  `minStartLevel`, `minEndLevel` = 0,6× (Verhältnis 250/150). `SpeechDetector.analysedPeak` = Peak
+  **ohne** den Chirp-Vorlauf; liegt er beim Verwerfen ≥ 40 % des Gates, loggt `finishCapture` auf
+  **info** mit Wertvorschlag (≈0,6× Peak) statt nur „nothing but silence“ auf debug.
+  **Abbruch ohne Sprachbeginn** (`SpeechDetector.startTimeoutMs`, Verdict `'no-speech'`, gezählt ab
+  Stream-Beginn inkl. Chirp): ESPHome `NO_SPEECH_MS` 5 s nach Wake-Word, `NO_SPEECH_FOLLOW_UP_MS` 8 s nach
+  Rückfrage. Anlass vitanova 2026-11-03: das eigene Wake-Word „ioBroker“ löste in einer Nacht ~10× aus
+  (okay_nabu nie), sechsmal ohne jede Sprache → Mikro jeweils 12,6 s offen (`maxMs`), viermal mit
+  Geräusch → STT leer. Die 12,6-s-Fälle waren **keine** verpassten Sprachenden.
+  **Diagnose-Aufnahmen** (`src/lib/voice/captures.ts`, `CaptureStore`): Config `esphomeSaveCaptures`
+  (Default aus, Raumaudio!). `esphome.ts` meldet per `onDiscarded` jede Aufnahme, die nicht zur Anfrage
+  wurde (`no-speech` | `silence` | `empty-stt`, mit `vad` inkl. `analysedPeak`); `main.keepCapture()`
+  schreibt in den **ioBroker-Dateispeicher** `assistant.N/captures/<Zeit>_<Gerät>_<Grund>.{wav,json}`
+  (Admin → Dateien, also auch für Nutzer ohne Shell), JSON mit `levels` = RMS pro 100 ms. Nur die neuesten
+  `MAX_CAPTURES` (50) bleiben; Speichern läuft seriell (sonst prunen sich parallele Saves gegenseitig).
+  Test: `test/integration/captures.test.js`.
+  **Erste Auswertung (2026-11-03, vitanova):** eine Rückfrage-Antwort „Мессенджер. Да, да.“ kam bei
+  RMS 150–500 an (Stimme ein paar Meter weg) — die Stille-Grenze 150 lag mitten in der Sprache, „Мессенджер“
+  stand 0,7 s komplett darunter. Nemotron (`nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b`) lieferte
+  dafür leer, auch ×10 verstärkt; Whisper lieferte mit Piepton+Stille „Продолжение следует...“ (Halluzination),
+  verstärkt den richtigen Text. Folgen: **lange Pause nach langer Rede** (`SpeechDetector` `longSilenceMs`/
+  `longAfterMs`, ESPHome: nach `LONG_REQUEST_MS` 2,5 s Sprache × `LONG_PAUSE_FACTOR` 1,5 — Anlass „…чтобы утром
+  говорить мне“ abgeschnitten), **`speechAudio.ts` `prepareForStt`** (ab Sprachbeginn − `PRE_ROLL_MS` 400,
+  bis letzter Laut ≥ 40 % der Stille-Grenze + `TAIL_MS` 400 — in lauten Räumen bleibt das Ende also stehen —,
+  Peak auf `TARGET_PEAK` 16000, max. ×10; die Diagnose-Aufnahme bleibt unverändert), **`FallbackStt` bei
+  leerem Text** (`overEngines(…, useful)`), und **`VadReport`** (`vad.ts`) im Trace: `speechStartMs`, `end`,
+  `silenceMs`, `stt {fromMs,toMs,gain}`, `levels` (RMS/100 ms, nur im Trace, nicht in der Capture-`vad`).
+  Mit dem Zuschnitt (0,89–4,14 s ×10) lieferte Whisper „Мессенджер. Да, нет?“, mit voller Länge „Мессенджер.
+  Да, да.“ — das Schlüsselwort stimmt beide Male, der leise Rest schwankt; ohne Verstärkung „Меседжет.
+  Меседжет.“. Auf vitanova: `speechLevel` 150, `esphomeSilenceMs` 1200, STT Whisper.
+  **Zweite Auswertung (2026-11-03, Fehlauslöser des eigenen Wake-Words):** (a) ein einzelner Laut 100 ms bei
+  RMS 197 öffnete das Gate 150 → Whisper machte aus ×10 verstärkter Stille „и все просят.“ → **`minSpeechMs`**
+  (`vad.ts`, ESPHome `MIN_SPEECH_MS` 200): ein Laut über `startLevel` ist erst Kandidat, Sprache erst nach
+  200 ms über `endLevel`; fällt er `speechGapMs` (300) still, wird er vergessen; `speechStartMs` = Beginn des
+  Kandidaten; der Rauschboden steigt während eines Kandidaten nicht; `longestSoundMs` → eigenes Debug-Log
+  „only a short sound“ (sonst hätte das Log fälschlich „Schwelle senken“ empfohlen). Gegen die echte
+  „Мессенджер“-Aufnahme und das Pegelprofil des Fehlauslösers nachgespielt. (b) Das Gerät hörte nach 2,69 s
+  auf, Audio zu schicken, **ohne** `end` → 30 s `PIPELINE_TIMEOUT_MS` auf „listening“ (im Trace stand
+  `end:'stream'`, weil der Timeout `finishCapture()` ohne Grund rief) → **`checkStall`** (Intervall 250 ms,
+  `STREAM_STALL_MS` 2 s nach dem letzten Audio, `STREAM_START_MS` 5 s ohne jedes Audio), `CaptureEnd` =
+  `SpeechEnd | 'stream' | 'stall' | 'pipeline-timeout'`. (c) Firmware: `wake_word_N_sensitivity` ist der
+  **Wahrscheinlichkeits-Cutoff** (höher = strenger), Slot = Reihenfolge der aktiven Modelle; ein per
+  `SetConfiguration` aktiviertes Modell läuft mit dem `probability_cutoff` seiner JSON, bis das Gerät neu
+  startet oder die Entity geschrieben wird — danach gilt der gespeicherte Slot-Wert.
   **Wake-Words aus ioBroker setzbar** (gegen echte Hardware getestet, Originalzustand wiederhergestellt):
   `esphome.ts` merkt sich die `VoiceAssistantConfigurationResponse` als `WakeWordConfig`
   (active/available[{id,phrase,languages}]/max), meldet sie per `onWakeWords` und sendet auf
@@ -466,6 +734,15 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   `vals` (alle Roh-Werte unter `satellites.*`) und lädt beim Öffnen die Control-Objekte per
   `getForeignObjects`. Slider schreibt erst auf `onChangeCommitted` (sonst pro Pixel ein Geräte-Roundtrip).
   Nach Änderungen hier: `npm run build:gui` **und** `iobroker upload assistant`.
+  **float32-Rauschen** (2026-11-03): die protobuf-`float`-Felder kommen als 0.5000000237487257 bzw. step
+  0.0010000000474974513 an → `esphomeEntities.float32()` (7 signifikante Stellen) für number min/max/step/
+  state, Sensorwert, Media-Volume, Update-Progress; Sensoren zusätzlich auf `decimals` gerundet
+  (`writeSatelliteControl`). Bestehende number-Objekte zieht `syncNumberRange()` nach (`extendObject` nur bei
+  Abweichung). Dialog: Gruppenüberschrift = Kanalname (`groupNames`, Kanäle werden mitgeladen), Zahlen per
+  `formatNumber(value, step)`. Firmware-Update-Gruppe (`isUpdateGroup`/`renderUpdateGroup`, erkannt an den
+  Blättern latestVersion+install+progress): Install-Knopf nur bei `latestVersion ≠ currentVersion` und ohne
+  laufendes Update, `progress` nur während `inProgress` als `LinearProgress` (unbestimmt bis > 0 %),
+  `inProgress` ohne eigene Zeile.
   **Timer-Spiegelung** — `VoiceAssistantTimerEventResponse` (115) via `EsphomeSatellites.timerEvent()`;
   `main.ts.mirrorTimerList()` diffed die `onChange`-Liste gegen `mirroredTimers` (neu→started,
   verschwunden→cancelled, sonst updated), `onFire`→finished. Ziel ist der Ursprungs-Satellit, sonst
@@ -525,6 +802,13 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   Wetter erfinden). Tage nach morgen bleiben beim Tool (Hinweis-Satz am Ende der Injektion). Adapter ohne
   Mapper (Roh-Dump) → keine Injektion, nur Tool. **Hannah
   nutzte `openweathermap` via MQTT** (`weather.py`) — Vorbild für die Normalisierung.
+- **Leere `ask`-Fragen abgewiesen** (Feldbericht Alex F., 2026-11-03): ein Aufrufer ohne `source` (→ `'chat'`)
+  schickte nach jeder Antwort sofort ein leeres `ask` (7–70 ms Abstand, ~1/s) — pi-agent bekam nur den Zeitkontext
+  („Nur Zeit ohne Text…“) und verbrauchte Tokens. Der Admin-Chat schickt nie leer (`send()` trimmt), pi-agent ruft
+  `ask` nur beim telegram-Adapter → vermutlich ein Skript auf `text.response`. Jetzt: `onMessage` trimmt, leer →
+  `{error:'empty question'}`, `reportEmptyAsk()` warnt höchstens einmal pro Minute pro Absender (`EMPTY_ASK_REPORT_MS`)
+  mit Zähler; jede `Q (ask from <instanz>)`-Zeile nennt den Absender (`obj.from`). `answer()` selbst gibt bei leerer
+  Frage `''` zurück (Sicherung für alle anderen Wege; `text.request` filterte schon).
 - LLM-Agent mit Tool-Calling-Schleife für **OpenAI + Anthropic** — `src/lib/llm.ts` (`LlmAgent`).
 - Tools über native ioBroker-API — `src/lib/tools.ts`: `list_rooms`, `list_functions`,
   `find_states({room?,func?,query?})`, `get_state({id})`, `set_state({id,value})`.

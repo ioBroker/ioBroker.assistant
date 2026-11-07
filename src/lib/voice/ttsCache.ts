@@ -24,6 +24,60 @@ import type { VoiceLogger } from './download';
 /** Hard limit for a spoken text. Hannah's 400 characters ≈ 25 seconds of speech. */
 export const MAX_TTS_CHARS = 400;
 
+/**
+ * The configured length limit for spoken text: a number ≥ 0 (0 = no limit), or undefined for the default
+ * ({@link MAX_TTS_CHARS}) — also for installations from before the setting and for a field the user emptied.
+ */
+export function parseTtsMaxChars(value: unknown): number | undefined {
+    if (value === '' || value === null || value === undefined) {
+        return undefined;
+    }
+    const n = Math.round(Number(value));
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+/**
+ * Instruction for a model whose answer will be spoken and cut at `limit` characters: answer within it instead
+ * of being cut mid-thought. Models cannot count characters, so the limit also comes as a number of sentences.
+ * Also asks not to read out state ids and serial numbers — over a speaker they are a minute of digits.
+ * Empty when there is no limit.
+ */
+export function spokenLengthHint(limit: number, lang: string): string {
+    if (!(limit > 0)) {
+        return '';
+    }
+    const n = Math.max(1, Math.round(limit / 120));
+    if (lang === 'ru') {
+        const sentences =
+            n === 1
+                ? 'одно короткое предложение'
+                : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)
+                  ? `${n} коротких предложения`
+                  : `${n} коротких предложений`;
+        return (
+            `Твой ответ зачитывается вслух и обрезается после ${limit} символов. Поэтому отвечай не длиннее ${limit} ` +
+            `символов (примерно ${sentences}), главное — в начале. Не зачитывай ID состояний, серийные номера и ` +
+            'длинные числа, если пользователь сам об этом не просит. Если нужно сказать больше, кратко подведи итог ' +
+            'и предложи рассказать подробнее.'
+        );
+    }
+    if (lang === 'de') {
+        const sentences = n === 1 ? 'einen kurzen Satz' : `${n} kurze Sätze`;
+        return (
+            `Deine Antwort wird vorgelesen und nach ${limit} Zeichen abgeschnitten. Antworte deshalb in höchstens ` +
+            `${limit} Zeichen (etwa ${sentences}), das Wichtigste zuerst. Lies keine State-IDs, Seriennummern oder ` +
+            'langen Zahlen vor, außer der Nutzer fragt ausdrücklich danach. Ist mehr zu sagen, fasse zusammen und ' +
+            'biete an, Details zu nennen.'
+        );
+    }
+    const sentences = n === 1 ? 'one short sentence' : `${n} short sentences`;
+    return (
+        `Your answer is read aloud and cut off after ${limit} characters. Keep it within ${limit} characters ` +
+        `(about ${sentences}), most important point first. Do not read out state ids, serial numbers or long ` +
+        'numbers unless the user asks for them. If there is more to say, summarise and offer the details.'
+    );
+}
+
 /** Texts up to this length are worth caching; a longer one is a one-off answer. */
 export const MAX_CACHE_CHARS = 200;
 
@@ -122,7 +176,10 @@ export class CachedTts implements TtsEngine {
     async synthesize(text: string, lang: string): Promise<TtsResult> {
         const wanted = this.maxChars > 0 ? truncateForTts(text, this.maxChars) : (text || '').trim();
         if (wanted.length < (text || '').trim().length) {
-            this.opts.log.warn(`TTS text shortened from ${text.trim().length} to ${wanted.length} characters.`);
+            this.opts.log.warn(
+                `TTS text shortened from ${text.trim().length} to ${wanted.length} characters ` +
+                    `(limit ${this.maxChars}: "Longest spoken answer" in the Voice tab, 0 = no limit).`,
+            );
         }
         const cacheable = this.maxCacheChars === 0 || wanted.length <= this.maxCacheChars;
         const file = cacheable ? this.entryPath(wanted, lang) : '';

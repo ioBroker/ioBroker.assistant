@@ -10,7 +10,13 @@
  * prompt (style, follow-up marker, memory, device list) goes along as the `instructions` of that
  * conversation; what changes every turn (time, weather, presence) is prepended to the question.
  * pi-agent 0.3.0 and older ignore both fields and answer everything in their root conversation.
+ *
+ * With "Confirmation by text in sendTo conversations", pi-agent answers a write it may not do unasked with a
+ * question ending in `[[LISTEN]]`, and the next `ask` of the conversation is the yes or no. `language` makes it
+ * ask that question in the language the satellite listens in.
  */
+
+import type { ImageInput } from './media';
 
 /** Longest instructions pi-agent accepts for a conversation; anything beyond is cut there. */
 export const PI_AGENT_MAX_INSTRUCTIONS = 20000;
@@ -31,6 +37,23 @@ export interface PiAgentRequest {
     conversation: string;
     /** Instructions of that conversation. */
     instructions: string;
+    /**
+     * Language the user speaks, e.g. `ru`. pi-agent asks its questions to confirm in it; older versions ask in the
+     * system language, and a satellite listening in Russian does not hear a German "Ja" (the STT returns nothing).
+     */
+    language?: string;
+    /**
+     * Pictures that came with the question (`{ data: base64, mimeType }`, the form of pi-ai's `ImageContent`).
+     * Versions of pi-agent before image support ignore them; the text then says that pictures came along.
+     */
+    images?: ImageInput[];
+    /**
+     * Only for a request from a voice satellite: its id under `assistant.N.satellites.*`, and the full id of its `tts`
+     * state. Writing text there speaks it on that satellite — so pi-agent can answer later where it was asked (a
+     * reminder, the end of a background task). Chat and Telegram requests have neither.
+     */
+    satellite?: string;
+    tts?: string;
 }
 
 /**
@@ -88,6 +111,10 @@ export class PiAgentHarness {
                 text: req.text,
                 conversation: conversationOf(req.conversation),
                 instructions: req.instructions,
+                ...(req.language ? { language: req.language } : {}),
+                ...(req.images?.length ? { images: req.images } : {}),
+                ...(req.satellite ? { satellite: req.satellite } : {}),
+                ...(req.tts ? { tts: req.tts } : {}),
                 requestId,
             },
             { timeout: this.timeoutMs },

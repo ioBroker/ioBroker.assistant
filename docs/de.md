@@ -59,6 +59,12 @@ Jede Anfrage läuft durch bis zu drei Stufen und stoppt bei der ersten, die antw
 3. **Cloud-LLM (Tool-Calling)** — der volle Assistent. Er bekommt eine kompakte Geräteliste im Prompt und
    ruft Tools auf (States lesen/schreiben, Historie, Logs …) über die native ioBroker-API.
 
+**Skripte gehen immer an die Cloud.** Kommt im Satz *Skript*, *Script* oder *Скрипт* vor (auch *Lichtskript*,
+*скрипте*, *JavaScript*, *Blockly*), werden Routinen, Regel-Engine und lokales LLM übersprungen — sonst würden
+die Details als eigener Befehl gelesen (*„schreib ein Skript, das jede Stunde das Küchenlicht schaltet"* wurde
+mit der Uhrzeit beantwortet). Fragt das Cloud-Modell dazu nach (*„Welches Licht?"*), geht auch die Antwort
+innerhalb von 2 Minuten an die Cloud. Ohne Cloud-Anbieter gilt das nicht.
+
 ### Anbieter
 
 Ein aktiver LLM-Anbieter: **OpenAI, Anthropic (Claude), Google Gemini, DeepSeek, OpenRouter** oder ein beliebiger
@@ -86,6 +92,12 @@ und Anwesenheit vor jeder Frage. Die Tools dieses Adapters (Timer, Gedächtnis, 
 pi-agent nicht zur Verfügung — Timer und Wecker erledigen weiterhin die regelbasierten Befehle. Getrennte
 Unterhaltungen brauchen ein pi-agent mit `conversation` in `ask` (neuer als 0.3.0); ältere Versionen beantworten
 alles in einer Unterhaltung. Läuft pi-agent nicht oder schlägt fehl, antwortet das lokale Modell, falls aktiviert.
+Eine Anfrage von einem Satelliten trägt zusätzlich `satellite` (seine Id unter `assistant.0.satellites.*`) und `tts`
+(die volle Id seines `tts`-States): pi-agent kann sie mit einer Erinnerung oder einer Hintergrundaufgabe aufheben
+und später dort sprechen, indem es den Text in diesen State schreibt. Anfragen aus Chat und Telegram tragen beides
+nicht. Gibt es pi-agent noch nicht, installiert **pi-agent installieren** neben dem Instanz-Feld ihn auf dem Host
+dieser Instanz (aus dem Repository des Systems, sonst die neueste Version von npm), legt eine Instanz an und wählt
+sie aus; danach die Einstellungen speichern. Das dauert ein paar Minuten, das Log zeigt die Schritte.
 
 ### Satelliten (Sprache)
 
@@ -109,8 +121,8 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
 
 **Zusätzlich für Sprache / Satelliten:**
 
-- Einen **Sprach-Anbieter**: OpenAI, OpenRouter, Azure oder AWS (Cloud), **oder** lokal **Vosk** (STT) + **Piper**
-  (TTS), die bei Bedarf installiert werden — ohne Cloud.
+- Einen **Sprach-Anbieter**: OpenAI, OpenRouter, Azure oder AWS (Cloud), **oder** lokal **Vosk** oder den Adapter
+  **ai-parakeet** (STT) + **Piper** (TTS) — ohne Cloud.
 - Einen oder mehrere **Satelliten** mit Mikrofon und Lautsprecher (z. B. ein Raspberry Pi mit USB-
   Speakerphone). **ffmpeg** wird auf dem Satelliten-Host benötigt (Windows und Linux).
 - **Node.js ≥ 22** auf dem Satelliten-Gerät.
@@ -141,6 +153,24 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
   **`assistant.0.text.response`**. Die Herkunft steht in `text.querySource`.
 - Oder aus einem Skript: `sendTo('assistant.0', 'ask', { text: 'Ist ein Fenster offen?' }, cb)`.
 - Oder den **Test-Chat**-Reiter in den Adapter-Einstellungen nutzen (funktioniert bei laufender Instanz).
+- Oder über **Telegram**: im telegram-Adapter die Assistant-Instanz auswählen. Textnachrichten und
+  **Sprachnachrichten** gehen dann an den Assistenten; die Antwort kommt in denselben Chat, bei einer
+  Sprachnachricht mit dem erkannten Text davor (🎤 …). Für Sprachnachrichten muss im Reiter Voice die
+  Sprache aktiviert und eine Spracherkennung eingerichtet sein, und auf dem ioBroker-Host braucht es
+  **ffmpeg** (Telegram schickt OGG/Opus). Dafür braucht es telegram ab der Version mit
+  Sprachnachrichten-Weiterleitung.
+- Aus einem Skript geht statt Text auch eine Aufnahme: `sendTo('assistant.0', 'ask', { audio: <base64>,
+  format: 'ogg', source: 'skript' }, cb)` → `{ answer, heard }` (`heard` = erkannter Text). `wav` und `pcm`
+  (16 Bit mono, `sampleRate`) gehen ohne ffmpeg, alles andere (ogg, mp3, m4a …) mit.
+- **Fotos** aus Telegram gehen mit ihrer Bildunterschrift als Frage an das Cloud-Modell (ohne: „Was ist auf diesem
+  Bild?“); ein Album ist eine Frage. Ein Skript schickt Bilder genauso: `sendTo('assistant.0', 'ask', { text,
+  images: [{ data: <base64>, mimeType: 'image/jpeg' }] }, cb)` — JPEG, PNG, GIF oder WebP, höchstens 4, je unter
+  3,75 MB. Regeln, Routinen und das lokale Modell werden übersprungen (sie sehen nichts), es braucht also einen
+  Cloud-Anbieter, dessen Modell Bilder nimmt (oder pi-agent mit Bild-Unterstützung); sonst sagt die Antwort das.
+  Spätere Runden des Gesprächs wissen nur, dass es ein Bild gab, sie bekommen es nicht noch einmal.
+- **Videos** werden nie als Inhalt geschickt: Telegram legt sie in seinem Dateispeicher ab, und `ask` bekommt nur
+  `video: { adapter, path, mimeType, durationSec, size }`. Videos sieht sich der Assistent noch nicht an — ein
+  Video ohne Frage bekommt eine kurze Antwort, die das sagt, mit Frage erfährt das Modell davon.
 
 Der Chat zeigt live alle Anfragen — auch die von Satelliten, Telegram und Skripten. **Ein Klick auf eine
 Frage oder Antwort** öffnet die Details zur Fehlersuche: Spracherkennung (Aufnahmelänge, Dauer,
@@ -149,6 +179,17 @@ lokal nicht ausführbar war), der komplette Prompt und jede Runde des Sprachmode
 alle Tool-Aufrufe mit vollständigen Argumenten und Ergebnissen, gelesene und geschriebene States sowie
 die Sprachausgabe — mit Zeitleiste und als JSON zum Kopieren oder Herunterladen. Die Details werden für
 die letzten 200 Anfragen aufbewahrt.
+
+**Dialog** (der Knopf mit dem sprechenden Kopf links neben dem Eingabefeld): Das Mikrofon des Browsers bleibt
+offen, und alles, was du sagst, wird zur Frage — ohne Wake-Word und ohne Klick, bis du den Knopf noch einmal
+drückst. Der Browser merkt, wann du aufhörst zu sprechen (eine Pause von etwa einer Sekunde, nach einer längeren
+Anfrage etwas mehr), die Aufnahme geht an den Assistenten und wird von der Spracherkennung des Reiters Sprache
+erkannt, die Antwort wird mit der Stimme der Satelliten vorgelesen (mit der des Browsers, wenn es keine
+Sprachausgabe gibt), und danach hört er wieder zu. Während er nachdenkt und spricht, hört er nicht zu, damit er
+sich nicht selbst antwortet. Die Antworten sind so kurz wie an einem Satelliten. Es braucht die eingeschaltete
+Sprache mit einer Spracherkennung und den Admin über https oder auf localhost (nur dort erlauben Browser das
+Mikrofon). Jede Äußerung geht an die Spracherkennung — bei einer Cloud-Engine auch ein Husten oder ein Gespräch im
+Raum; eine Aufnahme ohne erkennbaren Text wird still verworfen.
 
 ### Wetter
 
@@ -348,7 +389,8 @@ Sprache ist optional und standardmäßig aus. Aktiviere **Sprache aktivieren (ST
 wähle:
 
 - **Voice-Sprache** — für STT und die vorgelesene Antwort.
-- **Spracherkennungs-Anbieter** — OpenAI, OpenRouter, Azure, AWS oder **Vosk** (lokal, offline).
+- **Spracherkennungs-Anbieter** — OpenAI, OpenRouter, Azure, AWS, **Vosk** (lokal, offline) oder **ai-parakeet**
+  (lokal, offline, ein eigener Adapter).
 - **Sprachausgabe-Anbieter** — OpenAI, OpenRouter, Azure, AWS oder **Piper** (lokal, offline).
 - Anbieter-Schlüssel (getrennt vom LLM-Schlüssel; eine *Sprach-Schlüssel-Quelle* spiegelt manual/manager).
   Stimmen und lokale Modelle laden in Dropdowns.
@@ -362,6 +404,25 @@ Reiter Voice wird der Schlüssel des KI-Anbieters verwendet, wenn das OpenRouter
 systemweiten KI-Einstellungen). Anders als OpenAI ignoriert OpenRouter Vokabel-Hinweise, Geräte- und
 Raumnamen gehen also nicht an die Erkennung. MiniMax-Stimmen gibt es nur als mp3; dafür braucht es
 **ffmpeg** auf dem ioBroker-Host.
+
+**Eigener Whisper-Server** (lokale Erkennung, z. B. whisper-large-v3-turbo in einem Container neben
+ioBroker): als Spracherkennungs-Anbieter *OpenAI (Whisper)* wählen und unter **Server für die
+Spracherkennung** den Server eintragen, z. B. `http://192.168.1.10:8000/v1`. Es geht jeder Server mit dem
+OpenAI-Endpunkt `/v1/audio/transcriptions` (speaches/faster-whisper-server, LocalAI, vLLM; der
+`whisper-server` von whisper.cpp nur, wenn er mit `--inference-path /v1/audio/transcriptions` startet). Eine
+Adresse ohne Pfad bekommt `/v1`. Ins Feld **OpenAI-STT-Modell** gehört das Modell so, wie der Server es nennt
+(speaches: `Systran/faster-whisper-large-v3-turbo`). Ein OpenAI-Schlüssel ist dafür nicht nötig und wird auch
+nie dorthin geschickt; verlangt der Server einen eigenen, kommt er in **Schlüssel des
+Spracherkennungs-Servers**. Vokabel-Hinweise (Raum- und Gerätenamen) gehen mit wie bei OpenAI.
+
+**ai-parakeet** (lokale Erkennung mit NVIDIA Parakeet TDT 0.6B v3 auf der CPU, 25 europäische Sprachen, die das
+Modell selbst erkennt): *ai-parakeet (lokaler Adapter)* als Spracherkennungs-Anbieter oder Reserve wählen und
+seine Instanz. Gibt es keine, installiert **ai-parakeet installieren** den Adapter auf dem Host dieser Instanz und
+legt eine Instanz an; beim ersten Start lädt er das Modell herunter (etwa 670 MB) und braucht dann etwa 1,1 GB
+Arbeitsspeicher. Das Audio geht über den ioBroker-Nachrichtenbus an ihn, die Instanz kann also auf einem anderen
+Host laufen und braucht hier weder Adresse noch Schlüssel. Raum- und Gerätenamen gehen als Prompt mit. Läuft die
+Instanz nicht, übernimmt die Reserve-Engine. Auf einem Raspberry Pi 5 braucht ein gesprochener Befehl 0,5–1 s, und
+er erkennt deutlich besser als Vosk.
 
 **Stimme und Erkennung testen** (unten im Reiter Voice, mit den Einstellungen so, wie sie im Formular
 stehen — auch ungespeichert): *Sprachausgabe* spricht einen Testsatz im Browser und zeigt Abtastrate,
@@ -411,11 +472,52 @@ Zwei Dinge laufen hier anders:
 
 - **Der Adapter entscheidet, wann du fertig geredet hast.** Diese Geräte streamen, bis der Server sie
   stoppt — die Sprachende-Erkennung läuft also im Adapter. Über **Sprachende nach (ms Stille)**
-  (Standard 900) justieren, falls dir die Antwort ins Wort fällt oder der Assistent zu lange wartet.
+  (Standard 900) justieren, falls dir die Antwort ins Wort fällt oder der Assistent zu lange wartet; nach
+  2,5 Sekunden Sprechen gilt das Anderthalbfache, damit eine Denkpause eine längere Anfrage nicht beendet.
+  Bevor die Aufnahme zur Spracherkennung geht, werden Chirp bzw. Piepton des Geräts und die Stille vor und
+  nach der Sprache abgeschnitten und leise Sprache verstärkt (bis ×10).
+  Sprache muss die **Sprachschwelle** des Geräts erreichen (Spalte in der Gerätetabelle, leer = RMS 250).
+  Reagiert ein Gerät auf das Wake-Word, hört danach aber nichts, ist sein Mikrofon leiser (ein Handy mit
+  Satelliten-App liegt typisch unter 200): die Schwelle für diese Zeile senken, z. B. auf 100. Verwirft
+  der Adapter eine Äußerung, die knapp darunter lag, steht das im Log; die Debug-Zeile
+  `captured … (peak RMS …, speech/silence gate …)` zeigt die Pegel. Als Sprache zählt ein Laut erst ab
+  etwa 200 ms — ein Klick oder ein Klopfen nach einer Fehlauslösung geht nicht an die Spracherkennung
+  (die dazu gern einen Satz erfindet). Fängt nach dem Wake-Word 5 Sekunden lang niemand an zu sprechen
+  (nach einer Rückfrage 8 Sekunden), wird das Mikrofon wieder geschlossen — eine Fehlauslösung hält es
+  nicht mehr 12 Sekunden offen. Hört das Gerät auf, Audio zu schicken, ohne den Stream zu beenden, wird
+  die Aufnahme nach 2 Sekunden geschlossen, statt den Satelliten eine halbe Minute auf „hört zu“ zu
+  lassen. Um herauszufinden, was einen Satelliten
+  ausgelöst hat, **Verworfene Aufnahmen zur Diagnose behalten** einschalten: als Stille verworfene oder
+  leer erkannte Aufnahmen landen als WAV plus JSON (Grund, Wake-Word, Pegel des Detektors, RMS pro 100 ms)
+  unter Admin → Dateien → `assistant.0/captures` — die neuesten 50. Sie enthalten Ton aus dem Raum, danach
+  also wieder ausschalten. Auch ohne Aufnahmen zeigen die Anfrage-Details im Chat-Reiter den Pegelverlauf
+  (RMS pro 100 ms), wo die Sprache begann und warum die Aufnahme endete — genug, um zu sehen, ob eine
+  Anfrage abgeschnitten wurde.
 - **Die gesprochene Antwort wird geholt, nicht geschickt.** Das Gerät spielt eine URL ab, deshalb betreibt
   der Adapter einen kleinen HTTP-Server (**Port des Medien-Servers**, Standard `8099`), der jeden Clip ein paar
   Minuten lang ausliefert. Er muss **vom Gerät aus** erreichbar sein; die Adresse wird automatisch aus der
   jeweiligen Geräteverbindung genommen und muss nur hinter NAT, Docker oder VLAN von Hand gesetzt werden.
+
+#### Dialogmodus
+
+„ioBroker, Dialogmodus an“ — danach hört der Satellit nach jeder Antwort von selbst wieder zu, ohne Wake-Word:
+einfach weitersprechen. „Dialogmodus aus“ (oder ein bloßes „Stopp“) schaltet zurück auf normal. Verstanden wird
+auch „Dialog-Modus ein“, „Gesprächsmodus beenden“, „turn on dialog mode“, „выключи режим диалога“; eine Frage
+dazu („Wie schalte ich den Dialogmodus an?“) schaltet nichts.
+
+- **Pausen sind erlaubt.** Solange niemand spricht, bleibt das Mikrofon offen; eine Anfrage darf bis 20 Sekunden
+  lang sein.
+- **Nichts verstanden** (Husten, Fernseher, leere Spracherkennung): keine Antwort, keine Fehlermeldung — der
+  Satellit hört einfach weiter zu. Ein Befehl, der sonst nur mit dem Bestätigungston quittiert wird, spielt den
+  Ton und hört danach weiter zu.
+- **Ende von selbst** nach 5 Minuten ohne verstandene Anfrage, wenn das Gerät gestoppt wird (Stopp-Knopf,
+  Wake-Word während der Antwort), wenn es offline geht oder die Sprachverarbeitung fehlschlägt.
+- **State `satellites.<id>.dialog`** zeigt den Modus und schaltet ihn auch (Skript, VIS): `true` an einem
+  wartenden Satelliten spielt den Bestätigungston und öffnet danach das Mikrofon.
+- Das Mikrofon ist die ganze Zeit offen: alles, was im Raum als Sprache erkannt wird, geht an die
+  Spracherkennung (bei Cloud-STT: Kosten) und als Anfrage an den Assistenten.
+- Nur für ESPHome-Satelliten — dort öffnet die Antwort per `continue_conversation` das Mikrofon. Im Chat-Reiter
+  gibt es dafür den Dialog-Knopf.
 
 #### Wake-Words
 
@@ -503,12 +605,16 @@ geändert werden muss. Ein ThirdReality-Lautsprecher bietet zwölf:
 | `continue_conversation_delay`                                           | wie lange das Mikro für eine Nachfrage offen bleibt, 0–10 s                                        |
 | `mute`, `thinking_sound`                                                | Mikrofon stumm und der „Denk“-Ton                                                                  |
 | `<media player>.{state,volume,command,muted}`                           | `command` nimmt play, pause, stop, mute, unmute, toggle, volume_up, volume_down, turn_on, turn_off |
-| `<firmware>.{currentVersion,latestVersion,inProgress,progress,install}` | `install` ist ein Button                                                                           |
+| `<media player>.{url,transcode}`                                        | `url` spielt Musik von einer URL, siehe unten                                                      |
+| `<firmware>.{currentVersion,latestVersion,inProgress,progress,install,check}` | `install` und `check` sind Buttons: `check` lässt das Gerät sofort nach einer neuen Version suchen — ein `http_request`-Update schaut nur beim Start und alle 6 Stunden, bis dahin zeigt `latestVersion` die alte |
 
 Schreibvorgänge werden **nicht** optimistisch bestätigt: das Gerät meldet zurück, was es tatsächlich
 übernommen hat, und genau das steht im State. Eine Zahl außerhalb des Geräte-Bereichs wird darauf
 geklemmt statt verworfen; ein Wert, den ein `select` nicht kennt, wird mit einer Warnung samt gültiger
-Optionen abgelehnt.
+Optionen abgelehnt. Eine `text`-Entity wird ein schreibbarer String; ein Wert, der länger ist als das
+Gerät erlaubt (es zählt Bytes in UTF-8, „ü“ zählt also doppelt) oder nicht zu seinem Muster passt, wird
+genauso abgelehnt. Ein Text im Passwort-Modus wird gar nicht gespiegelt — einen State kann jedes Skript
+und jeder Admin-Nutzer lesen.
 
 ```js
 sendTo('assistant.0', 'getControls', {}, r => log(JSON.stringify(r)));
@@ -517,6 +623,47 @@ sendTo('assistant.0', 'setControl', { device: '3RSPK-…', control: 'mic_volume'
 
 Wenn dich der Assistent zu leise hört — die Log-Zeile nach jeder Äußerung nennt Spitzenpegel und
 Rauschboden —, sind `mic_volume` und `mic_gain` die beiden Stellschrauben.
+
+#### Musik von einer URL (Internetradio)
+
+Eine URL in `satellites.<id>.controls.<media player>.url` schreiben, und der Satellit spielt sie als **Musik**,
+nicht als Durchsage: Antworten und Durchsagen machen sie nur leiser, und `command` (pause, play, stop), `volume`
+und die Tasten des Geräts wirken auf sie. Ein leerer String oder `stop` hält sie an. Der State wird mit der URL
+bestätigt, sobald das Gerät sie bekommen hat; ob es spielt, zeigt `.state`.
+
+```js
+setState('assistant.0.satellites.Gast.controls.media_player.url', 'https://stream.example.com/radio.mp3');
+setState('assistant.0.satellites.Gast.controls.media_player.url', ''); // Stopp
+```
+
+Bevor die URL ans Gerät geht, schaut der Assistent sie einmal an:
+
+- Eine **Playlist** (`.pls`, `.m3u`, wie Radioverzeichnisse sie ausgeben) wird durch ihren ersten Stream ersetzt.
+- Ein Codec, den das Gerät dekodiert, wird **direkt** gespielt — das Gerät holt den Stream selbst. Welche das sind,
+  sagt das Gerät in den Formaten seines Media-Players: seit ESPHome 2026.10 dekodiert eine Firmware nur die
+  Formate, die ihre Pipelines melden, MP3, FLAC und WAV alle nur mit Format `NONE` oder auf älterer Firmware, die
+  gar keine meldet.
+- Alles andere — AAC, HLS (`.m3u8`), Ogg Vorbis, ein Format, das das Gerät nicht meldet — läuft **durch ffmpeg**:
+  der Media-Server der ESPHome-Satelliten (der Port im Voice-Tab) liefert es dem Gerät als FLAC (oder im Codec,
+  den das Gerät meldet), mit der Rate und den Kanälen, die es verlangt, sonst 48 kHz mono. Ein ffmpeg pro
+  spielendem Satelliten; es endet, wenn das Gerät nicht mehr zuhört oder eine andere URL geschrieben wird.
+- `transcode` = true schickt jede URL durch ffmpeg, auch eine, die das Gerät selbst dekodieren könnte (für einen
+  Sender, mit dessen Server das Gerät nicht klarkommt). Ohne ffmpeg geht alles unverändert ans Gerät.
+
+Was auf einem Bildschirm als „läuft gerade“ steht, regelt die Firmware: eine `text`-Entity wie „Media title“ ist
+ein schreibbarer State unter `controls.*` wie jeder andere, ein Skript oder pi-agent kann den Sendernamen dort
+hineinschreiben.
+
+#### Satelliten mit Bildschirm
+
+Eine Firmware für einen Satelliten mit Display kann diese Entities anbieten; der Assistent nutzt sie,
+wenn es sie gibt, und kommt ohne sie aus:
+
+| Entity | Art | Was der Assistent tut |
+|---|---|---|
+| `confirm_answer` | Event, Typen `yes` / `no` | Solange eine Antwort auf eine Rückfrage wartet (pi-agent: „Testlampe auf true setzen? Sag ja oder nein.“), ist ein Tippen diese Antwort: das offene Mikrofon geht zu, „Ja“/„Nein“ in der Sprache des Voice-Tabs geht als Antwort weiter, und die Antwort darauf wird auf diesem Satelliten samt Text angesagt. Die Frage bleibt offen, bis die nächste Anfrage des Satelliten beantwortet ist, höchstens 30 s nach der Antwort; das Folge-Mikrofon zählt als Antwort darauf, auch wenn die Firmware dabei das letzte Wake-Word mitschickt. Ein Stopp, den die Firmware direkt nach dem Tippen schickt (vor oder nach dem Event), verwirft die Antwort nicht. Ein Tippen ohne offene Frage wird ignoriert. |
+| `display_language` | Select | Wird bei jeder Verbindung einmal auf die Sprache des Voice-Tabs gesetzt. Optionen dürfen Namen („Deutsch“, „English“, „Русский“), englische Namen („German“) oder Codes („de“, „de-DE“) sein. |
+| jedes `text` | Text | Normale schreibbare States — z. B. Beschriftungen und Einheiten der Bildschirmseiten, aus ioBroker gesetzt statt beim Bauen der Firmware. |
 
 #### Timer auf dem Gerät
 
@@ -593,9 +740,11 @@ abgespielt.
 Vier Einstellungen, die sich meist selbst bezahlen:
 
 - **Speech-to-Text-/Text-to-Speech-Reserve** (Tab Voice) — eine zweite Engine, die einspringt, wenn die
-  erste ausfällt: Störung, abgelaufener Key, leeres Guthaben. Mit `Vosk (lokal)` und `Piper (lokal)`
-  hinter einem Cloud-Anbieter hört und antwortet das Haus auch ohne Internet weiter. Die Übergabe steht
-  im Log.
+  erste ausfällt: Störung, abgelaufener Key, leeres Guthaben. Mit `ai-parakeet` oder `Vosk (lokal)` und `Piper (lokal)`
+  hinter einem Cloud-Anbieter hört und antwortet das Haus auch ohne Internet weiter. Die Reserve für die
+  Spracherkennung springt auch ein, wenn die erste Engine für etwas, das der Satellit für Sprache hielt,
+  keinen Text liefert — bei leisen oder kurzen Antworten unterscheiden sich die Modelle stark. Die Übergabe
+  steht im Log.
 - **Gesprochener Text wird auf Platte gecacht.** Der Assistent sagt dieselben kurzen Dinge immer wieder
   ("Ok.", "Timer abgelaufen"), und sie erneut zu synthetisieren kostet eine Cloud-Runde und eine halbe
   Sekunde Latenz für identisches Audio. Kurze Texte (bis 200 Zeichen) liegen deshalb im Datenverzeichnis
@@ -613,8 +762,12 @@ Vier Einstellungen, die sich meist selbst bezahlen:
   Geräten, die nie bestätigen (MQTT, Skripte, `0_userdata`), **ausgeschaltet** lassen: sonst sieht jeder
   Befehl fehlgeschlagen aus.
 
-Zwei Dinge passieren ohne jede Einstellung: eine Antwort über 400 Zeichen wird **am letzten passenden
-Satzende abgeschnitten** (ein vorgelesener Absatz ist eine Minute, die niemand unterbrechen kann), und
+Außerdem: eine Antwort über **Längste gesprochene Antwort** (Tab Voice, Standard 400 Zeichen ≈ 25–30
+Sekunden) wird **am letzten passenden Satzende abgeschnitten** (ein vorgelesener Absatz ist eine Minute, die
+niemand unterbrechen kann; 0 = keine Grenze, beim Kürzen warnt das Log). Bei einer gesprochenen Anfrage
+bekommt das KI-Modell die Grenze mitgeteilt (in Sätzen, weil Modelle keine Zeichen zählen können) und die
+Bitte, keine State-IDs oder langen Zahlen vorzulesen — so antwortet es passend, statt abgeschnitten zu
+werden. Und
 eine Durchsage in **SSML** (`<speak>…</speak>`) wird von Azure und Polly als SSML gesprochen — mit Pausen
 und Betonung —, während die übrigen Engines den Text ohne Markup bekommen, statt die Tags vorzulesen.
 
@@ -879,7 +1032,22 @@ Aus einem Skript:
 sendTo('assistant.0', 'setTimer', { duration: '10 min', label: 'Nudeln', room: 'Küche' }, r => log(r.id));
 sendTo('assistant.0', 'setAlarm', { time: '06:30', weekdays: [1, 2, 3, 4, 5], label: 'Arbeit' });
 sendTo('assistant.0', 'listTimers', {}, r => log(JSON.stringify(r)));
+// eine Erinnerung auf einem Satelliten: dort angezeigt und geklingelt, dann wird dort der Text gesagt
+sendTo('assistant.0', 'setTimer', {
+    satellite: 'Gast',
+    seconds: 3600,
+    name: 'Licht heute schalten',
+    announce: 'Erinnerung: Licht heute schalten',
+}, r => log(r.id || r.error));
+sendTo('assistant.0', 'listTimers', { satellite: 'Gast' }, r => log(JSON.stringify(r.timers)));
+sendTo('assistant.0', 'cancelTimer', { satellite: 'Gast', id: 'tm…' });
 ```
+
+`satellite` ist die Id unter `assistant.0.satellites.*` (oder der Gerätename des Satelliten); der Timer gehört
+dann diesem Satelliten wie einer, der dort per Sprache gestellt wurde. `announce` wird beim Ablauf wörtlich
+gesagt — auch wenn Timer-Ansagen ausgeschaltet sind; ohne heißt es wie sonst „Timer abgelaufen: <Name>.“
+`seconds` zählt in Sekunden, `duration` darf auch ein Ausdruck wie `'10 min'` sein. `listTimers`/`cancelTimer` mit
+`satellite` sehen nur die Timer dieses Satelliten (`cancelTimer` ohne `id` = alle davon).
 
 Ein per Sprache gestellter Timer sagt sich auf dem Satelliten an, an dem er gestellt wurde; einer aus
 Chat, Telegram oder einem Skript überall. Auf einem Satelliten, der das ESPHome-Feature *timers* meldet,
@@ -945,6 +1113,17 @@ sie also auf Dinge, die zählen, statt auf ein Tagebuch.
 - **Satellit erreicht den Assistant nicht** — die Assistant-Instanz muss **laufen**; für ioBroker-nativen
   Transport ist sonst nichts nötig, für UDP Port/Host prüfen.
 - **Voice-Tab-Optionen ausgeblendet** — zuerst **Sprache aktivieren (STT/TTS)**.
+- **„ffmpeg failed: … ENOENT"** (Töne, Telegram-Sprachnachrichten, MP3/Opus-Antworten) — ffmpeg fehlt oder
+  liegt nicht im Suchpfad des ioBroker-Prozesses. Installieren (`sudo apt install ffmpeg`), im Reiter Voice
+  **ffmpeg herunterladen** klicken oder unter **Pfad zu ffmpeg** den vollen Pfad eintragen; **ffmpeg prüfen**
+  zeigt, ob er stimmt. **ffmpeg herunterladen** holt einen statischen Build von
+  [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) (20–30 MB, GPL, gegen eine feste SHA-256 geprüft)
+  ins Datenverzeichnis der Instanz — für Linux (x64, arm64, arm, ia32), Windows x64 und macOS. Er wird genutzt,
+  solange **Pfad zu ffmpeg** leer ist, auch statt eines installierten ffmpeg; wer zurück will, löscht
+  `iobroker-data/assistant.0/ffmpeg/`.
+- **Alter Satellit steht noch in der Liste** — im Reiter Satelliten zeigt ein Satellit, der offline ist, statt
+  des Zahnrads einen Papierkorb; der löscht seine Objekte. Einen Satelliten, der online ist, kann man nicht
+  löschen (er würde sofort neu angelegt).
 - **ESPHome-Satellit bleibt offline** — der Adapter wählt das Gerät an, also muss das *Gerät* auf TCP 6053
   erreichbar sein (`nc -vz <ip> 6053`). Adresse prüfen — und ob nicht schon ein anderer Controller (z. B.
   eine Home-Assistant-Instanz) die Voice-Assistant-Subscription des Geräts hält.
@@ -964,6 +1143,7 @@ sie also auf Dinge, die zählen, statt auf ein Tagebuch.
 | `text.querySource`                                         | Herkunft der letzten Anfrage (`''`, `chat` oder ein Satelliten-Name)  |
 | `tts.text`                                                 | Durchsage an **alle** Satelliten (Text oder Audio-Pfad)               |
 | `satellites.<id>.{status,room,alive,lastSeen,tts}`         | Zustand pro Satellit + Durchsage                                      |
+| `satellites.<id>.dialog`                                   | Dialogmodus eines ESPHome-Satelliten (hört ohne Wake-Word weiter, §6) |
 | `triggers.enabled` / `triggers.count` / `triggers.list`    | proaktive Trigger: Hauptschalter, Anzahl, Live-Status (JSON)          |
 | `triggers.items.<id>.{enabled,fire,lastFired,nextFireAt}`  | Schalter, Test-Knopf und Zeiten pro Trigger                           |
 | `notify.text` / `notify.alert` / `notify.last`             | Systemmeldung sprechen / dringend / was gesprochen wurde              |
@@ -983,13 +1163,13 @@ Alles, was der Assistent kann, ist aus einem Skript erreichbar. Die Antwort komm
 
 | Befehl                                               | Message                                                                  | Antwort                                                                      |
 |------------------------------------------------------|--------------------------------------------------------------------------|------------------------------------------------------------------------------|
-| `ask`                                                | `{ text, source? }`                                                      | `{ answer }` / `{ error }` — die komplette Pipeline, wie per Sprache gefragt |
+| `ask`                                                | `{ text, source? }` oder `{ audio, format, source? }`, dazu `images`/`video` | `{ answer }` / `{ error }` — die komplette Pipeline, wie per Sprache gefragt; mit `audio` zusätzlich `heard` (erkannter Text) |
 | `askUser`                                            | `{ question, room?/target?/source?, timeoutMs? }`                        | `{ answer }` / `{ timeout: true }` — fragen und warten (§9)                  |
 | `notify`                                             | `{ text, severity?, target?/room?, onlyWhenHome? }`                      | `{ spoken }` — Systemmeldung sprechen (§9)                                   |
 | `tts` / `ttsAvailable`                               | `{ text, language? }` / `{}`                                             | ein WAV als base64 / ob eine Engine konfiguriert ist                         |
 | `playSound`                                          | `{ sound, room?/target? }`                                               | eine Datei aus `sounds/` abspielen                                           |
 | `stopRinging`                                        | `{}`                                                                     | klingelnden Timer oder Wecker verstummen lassen                              |
-| `setTimer` / `cancelTimer` / `listTimers`            | `{ duration, label?, room? }` / `{ id? }` / `{}`                         | §11                                                                          |
+| `setTimer` / `cancelTimer` / `listTimers`            | `{ duration oder seconds, label?/name?, room?, satellite?, announce? }` / `{ id?, satellite? }` / `{ satellite? }` | §11                                                                          |
 | `setAlarm` / `cancelAlarm` / `listAlarms`            | `{ time oder hour+minute, weekdays?, label?, room? }` / `{ id? }` / `{}` | §11                                                                          |
 | `saveMemory` / `forgetMemory` / `listMemories`       | `{ text, key? }` / `{ id? oder text? }` / `{}`                           | §11                                                                          |
 | `listTriggers` / `fireTrigger` / `setTriggerEnabled` | `{}` / `{ id }` / `{ id, enabled }`                                      | §10                                                                          |

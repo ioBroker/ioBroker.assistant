@@ -19,6 +19,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import type { VadReport } from './voice/vad';
 
 /** How a request reached us. */
 export type JournalTransport = 'chat' | 'script' | 'state' | 'telegram' | 'esphome' | 'udp' | 'native' | 'wyoming';
@@ -121,7 +122,9 @@ export interface JournalOrigin {
     sttMs?: number;
     audioMs?: number;
     /** Voice activity detection of the utterance (ESPHome) — trace only. */
-    vad?: { peak: number; noiseFloor: number; startLevel: number; endLevel: number };
+    vad?: VadReport;
+    /** Answered with the yes/no button of a satellite's screen instead of speech (ESPHome) — trace only. */
+    button?: 'yes' | 'no';
 }
 
 /** What a transport reports after it synthesised the reply. */

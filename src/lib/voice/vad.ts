@@ -19,11 +19,16 @@
  *
  * Hence two opt-in knobs, both enabled by the ESPHome transport:
  *
- * - `skipMs` drops the leading chirp from the *analysis* (never from the audio, which still goes to STT
- *   in full — a fast speaker may already be talking).
+ * - `skipMs` drops the leading chirp from the *analysis* only. What reaches STT is cut later, from where
+ *   speech was detected minus a margin (`speechAudio.ts`) — a fast speaker may already be talking.
  * - `adaptive` derives the thresholds from a tracked noise floor instead of fixed levels. The floor
  *   follows the quietest frame seen (instant down, very slow up), so it settles on room noise even when
  *   someone starts talking immediately — which a mean or median over a calibration window would not.
+ *
+ * And one for longer requests: `longSilenceMs` after `longAfterMs` of speech. In a quiet room the silence
+ * threshold sits at its minimum, and a voice a few metres away dips below it between syllables — on a
+ * ThirdReality speaker a whole "Мессенджер" (0.7 s) stayed under 150. A pause for thought on top of that
+ * ended a long request mid-sentence, while short commands should keep closing quickly.
  */
 
 /**
@@ -57,8 +62,28 @@ export interface SpeechDetectorOptions {
     endLevel?: number;
     /** Silence after speech that ends the utterance. */
     silenceMs?: number;
+    /**
+     * Silence that ends the utterance once the speaker has talked for {@link longAfterMs} (0 = always
+     * {@link silenceMs}). Somebody dictating a longer request pauses to think, and a short command should
+     * still close fast.
+     */
+    longSilenceMs?: number;
+    /** Speech (from its start to the pause) after which {@link longSilenceMs} applies; 0 = never. */
+    longAfterMs?: number;
+    /**
+     * Sound above the silence threshold needed before a crossing of the speech threshold counts as speech; 0 = the
+     * first loud frame does. A click or a knock is over in 100 ms, the shortest "да" takes about 250.
+     */
+    minSpeechMs?: number;
+    /** A candidate start that falls quiet this long before reaching {@link minSpeechMs} is forgotten. */
+    speechGapMs?: number;
     /** Hard cap on one utterance, in case the room never falls quiet. */
     maxMs?: number;
+    /**
+     * Give up when no speech has started this long after the stream began (the skipped lead-in included);
+     * 0 = only {@link maxMs}. A false wake would otherwise keep the microphone open for the whole `maxMs`.
+     */
+    startTimeoutMs?: number;
     /**
      * Leading audio to leave out of the analysis — for devices that chirp into their own microphone
      * when the wake word fires. The audio itself is untouched; this only stops the chirp from being
@@ -79,8 +104,37 @@ export interface SpeechDetectorOptions {
     warmupMs?: number;
 }
 
-/** Why an utterance ended: the speaker stopped, or we hit the hard cap. */
-export type SpeechEnd = 'speech-end' | 'timeout';
+/** Why an utterance ended: the speaker stopped, we hit the hard cap, or nobody started speaking at all. */
+export type SpeechEnd = 'speech-end' | 'timeout' | 'no-speech';
+
+/**
+ * Why a recording ended, from the transport's view: what the detector said, the device ending the stream
+ * ('stream'), the device going quiet without ending it ('stall'), or the transport's last-resort timer.
+ */
+export type CaptureEnd = SpeechEnd | 'stream' | 'stall' | 'pipeline-timeout';
+
+/** What the detector made of one recording — for the request trace and the diagnosis recordings. */
+export interface VadReport {
+    /** Loudest frame, the wake chirp included. */
+    peak: number;
+    /** Loudest frame after the skipped lead-in. */
+    analysedPeak: number;
+    noiseFloor: number;
+    startLevel: number;
+    endLevel: number;
+    /** Where speech began, in ms from the start of the recording; absent when it never did. */
+    speechStartMs?: number;
+    /** Why the recording ended. */
+    end?: CaptureEnd;
+    /** Sound above the silence threshold since speech started, in ms. */
+    voicedMs?: number;
+    /** Silence that was needed to end it at that point (longer once the speaker talked for a while). */
+    silenceMs?: number;
+    /** RMS per 100 ms of the whole recording. */
+    levels?: number[];
+    /** What went to speech recognition: the recording cut to the speech, and the gain applied to it. */
+    stt?: { fromMs: number; toMs: number; gain: number };
+}
 
 /**
  * How fast the tracked noise floor may follow a *rising* ambient level, per analysed frame (30 ms).
@@ -95,7 +149,12 @@ export class SpeechDetector {
     private readonly fixedStart: number;
     private readonly fixedEnd: number;
     private readonly silenceMs: number;
+    private readonly longSilenceMs: number;
+    private readonly longAfterMs: number;
+    private readonly minSpeechMs: number;
+    private readonly speechGapMs: number;
     private readonly maxMs: number;
+    private readonly startTimeoutMs: number;
     private readonly skipMs: number;
     private readonly adaptive: boolean;
     private readonly minStartLevel: number;
@@ -111,10 +170,25 @@ export class SpeechDetector {
     private floor: number | null = null;
     /** Audio seen so far *including* the skipped lead-in, in milliseconds. */
     private elapsedMs = 0;
+    /** Start of the frame that crossed {@link startLevel}, in ms from the start of the recording; -1 = not yet. */
+    speechStartMs = -1;
+    /** A crossing of {@link startLevel} that has not yet lasted {@link minSpeechMs}: its start, -1 = none. */
+    private candidateMs = -1;
+    /** Quiet since the last loud frame of the candidate. */
+    private candidateQuietMs = 0;
+    /** Sound above {@link endLevel} since the candidate (and then the speech) started, in ms. */
+    voicedMs = 0;
+    /** The longest sound that crossed {@link startLevel}, in ms — also one too short to count as speech. */
+    longestSoundMs = 0;
     /** Audio analysed so far, in milliseconds (exposed for logging). */
     totalMs = 0;
     /** Loudest frame seen so far (exposed for logging — the usual clue when a mic is mis-configured). */
     peak = 0;
+    /**
+     * Loudest frame after the skipped lead-in, i.e. without the wake chirp. Compared with {@link startLevel}
+     * it tells whether a dropped utterance was silence or a voice that was simply too quiet for the gate.
+     */
+    analysedPeak = 0;
 
     constructor({
         sampleRate = 16000,
@@ -122,7 +196,12 @@ export class SpeechDetector {
         startLevel = 700,
         endLevel = 400,
         silenceMs = 900,
+        longSilenceMs = 0,
+        longAfterMs = 0,
+        minSpeechMs = 0,
+        speechGapMs = 300,
         maxMs = 12000,
+        startTimeoutMs = 0,
         skipMs = 0,
         adaptive = false,
         minStartLevel = 250,
@@ -136,7 +215,12 @@ export class SpeechDetector {
         this.fixedStart = startLevel;
         this.fixedEnd = endLevel;
         this.silenceMs = silenceMs;
+        this.longSilenceMs = longSilenceMs;
+        this.longAfterMs = longAfterMs;
+        this.minSpeechMs = minSpeechMs;
+        this.speechGapMs = speechGapMs;
         this.maxMs = maxMs;
+        this.startTimeoutMs = startTimeoutMs;
         this.skipMs = skipMs;
         this.adaptive = adaptive;
         this.minStartLevel = minStartLevel;
@@ -149,6 +233,16 @@ export class SpeechDetector {
     /** True once any frame crossed {@link startLevel} — an utterance that never did is room noise. */
     get sawSpeech(): boolean {
         return this.speechSeen;
+    }
+
+    /** Something is being heard right now: speech, or a sound that may become speech. */
+    get hearing(): boolean {
+        return this.speechSeen || this.candidateMs >= 0;
+    }
+
+    /** Milliseconds of audio analysed so far (the skipped start included). */
+    get analysedMs(): number {
+        return this.elapsedMs;
     }
 
     /** Tracked room level (adaptive mode), for logging. 0 before the first analysed frame. */
@@ -167,6 +261,32 @@ export class SpeechDetector {
             return this.fixedEnd;
         }
         return Math.min(this.startLevel, Math.max(this.minEndLevel, (this.floor ?? 0) * this.endFactor));
+    }
+
+    /**
+     * Silence that ends the utterance right now: {@link silenceMs}, or {@link longSilenceMs} once the speaker
+     * has talked for {@link longAfterMs} before the current pause.
+     */
+    get requiredSilenceMs(): number {
+        if (!this.speechSeen || !this.longAfterMs || this.longSilenceMs <= this.silenceMs) {
+            return this.silenceMs;
+        }
+        const spokenMs = this.elapsedMs - this.silentMs - this.speechStartMs;
+        return spokenMs >= this.longAfterMs ? this.longSilenceMs : this.silenceMs;
+    }
+
+    /** The detector's view of the recording so far. */
+    report(): VadReport {
+        return {
+            peak: Math.round(this.peak),
+            analysedPeak: Math.round(this.analysedPeak),
+            noiseFloor: Math.round(this.noiseFloor),
+            startLevel: Math.round(this.startLevel),
+            endLevel: Math.round(this.endLevel),
+            speechStartMs: this.speechSeen ? this.speechStartMs : undefined,
+            voicedMs: this.speechSeen ? this.voicedMs : undefined,
+            silenceMs: this.requiredSilenceMs,
+        };
     }
 
     /** Feed one audio chunk (any size). Returns why the utterance ended, or null to keep listening. */
@@ -190,6 +310,9 @@ export class SpeechDetector {
                 continue;
             }
             this.totalMs += this.frameMs;
+            if (level > this.analysedPeak) {
+                this.analysedPeak = level;
+            }
 
             if (this.adaptive) {
                 // Three rules, each there to defeat a specific way of getting this wrong:
@@ -206,7 +329,7 @@ export class SpeechDetector {
                         ? 0
                         : level < this.floor
                           ? level
-                          : this.speechSeen
+                          : this.speechSeen || this.candidateMs >= 0
                             ? this.floor
                             : this.floor + (level - this.floor) * NOISE_RISE;
                 if (this.totalMs < this.warmupMs) {
@@ -215,19 +338,45 @@ export class SpeechDetector {
             }
 
             if (!this.speechSeen) {
-                if (level >= this.startLevel) {
+                // A loud frame opens a candidate; it becomes speech once it has lasted `minSpeechMs`, and is
+                // forgotten when it falls quiet for `speechGapMs` before that — a click is not a request.
+                if (this.candidateMs < 0) {
+                    if (level >= this.startLevel) {
+                        this.candidateMs = this.elapsedMs - this.frameMs;
+                        this.candidateQuietMs = 0;
+                        this.voicedMs = this.frameMs;
+                        this.longestSoundMs = Math.max(this.longestSoundMs, this.voicedMs);
+                    }
+                } else if (level >= this.endLevel) {
+                    this.voicedMs += this.frameMs;
+                    this.candidateQuietMs = 0;
+                    this.longestSoundMs = Math.max(this.longestSoundMs, this.voicedMs);
+                } else {
+                    this.candidateQuietMs += this.frameMs;
+                    if (this.candidateQuietMs >= this.speechGapMs) {
+                        this.candidateMs = -1;
+                        this.voicedMs = 0;
+                    }
+                }
+                if (this.candidateMs >= 0 && this.voicedMs >= this.minSpeechMs) {
                     this.speechSeen = true;
-                    this.silentMs = 0;
+                    this.speechStartMs = this.candidateMs;
+                    // A gap inside the candidate already counts towards the end of the utterance.
+                    this.silentMs = this.candidateQuietMs;
                 }
             } else if (level < this.endLevel) {
                 this.silentMs += this.frameMs;
-                if (this.silentMs >= this.silenceMs) {
+                if (this.silentMs >= this.requiredSilenceMs) {
                     verdict ||= 'speech-end';
                 }
             } else {
                 this.silentMs = 0;
+                this.voicedMs += this.frameMs;
             }
 
+            if (!this.speechSeen && this.startTimeoutMs > 0 && this.elapsedMs >= this.startTimeoutMs) {
+                verdict ||= 'no-speech';
+            }
             if (this.totalMs >= this.maxMs) {
                 verdict ||= 'timeout';
             }

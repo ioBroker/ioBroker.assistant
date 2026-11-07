@@ -2,7 +2,14 @@
 // Integration test: rule-based NLU (device command parsing) — the offline fast-path.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Nlu, normalize, splitCommands, spelledNumbersToDigits } = require('../../build/lib/nlu.js');
+const {
+    Nlu,
+    normalize,
+    splitCommands,
+    spelledNumbersToDigits,
+    mentionsScript,
+    dialogCommand,
+} = require('../../build/lib/nlu.js');
 
 const light = {
     name: 'Licht',
@@ -816,4 +823,66 @@ test('deferred: in a combined command each part keeps its own time, a bare part 
             ['x.l', 600],
         ],
     );
+});
+
+test('mentionsScript: a request about a script goes to the cloud model, whatever details it names', () => {
+    for (const text of [
+        // from the journal: the rule NLU answered these with a switch state and with the time
+        'В каком скрипте у меня обрабатывается, что Старлин выключается ночью',
+        'напиши мне скрипт, который включает, выключает свет на кухне каждый час.',
+        'Поменяй скрипт.',
+        'Schreib ein Skript, das um 22 Uhr das Licht in der Küche ausschaltet',
+        'Ändere das Lichtskript',
+        'Kannst du Skripte modifizieren?',
+        'Mach ein Script für die Rollos',
+        'change the script that turns the kitchen light on',
+        'Is there a JavaScript for the alarm?',
+        'Erstelle ein Blockly für die Heizung',
+    ]) {
+        assert.equal(mentionsScript(text), true, text);
+    }
+    for (const text of [
+        'Licht in der Küche aus',
+        'выключи свет на кухне через 2 часа',
+        'который час',
+        'read the description of the lamp',
+        'my subscription',
+        'скрипка играет',
+        'дверь скрипит',
+    ]) {
+        assert.equal(mentionsScript(text), false, text);
+    }
+});
+
+test('dialogCommand: switching the dialog mode of a satellite, but not a question about it', () => {
+    for (const [text, wanted] of [
+        ['ioBroker, Dialogmodus an', 'on'],
+        ['Dialogmodus an.', 'on'],
+        ['Schalte den Dialog-Modus ein', 'on'],
+        ['Gesprächsmodus aktivieren', 'on'],
+        ['Dialogmodus aus', 'off'],
+        ['Dialogmodus beenden!', 'off'],
+        ['Mach den Dialog Modus aus', 'off'],
+        ['turn on dialog mode', 'on'],
+        ['conversation mode off', 'off'],
+        ['exit dialogue mode', 'off'],
+        ['включи режим диалога', 'on'],
+        ['Режим разговора включить', 'on'],
+        ['выключи режим диалога', 'off'],
+        ['Заверши диалоговый режим', 'off'],
+    ]) {
+        assert.equal(dialogCommand(text), wanted, text);
+    }
+    for (const text of [
+        'Wie schalte ich den Dialogmodus an?',
+        'Ist der Dialogmodus an?',
+        'is dialog mode on',
+        'Включен ли режим диалога?',
+        'Dialogmodus',
+        'Dialogmodus an oder aus',
+        'Licht an',
+        'Erklär mir bitte ganz genau, was der Dialogmodus macht, wenn ich ihn an der Box einschalte',
+    ]) {
+        assert.equal(dialogCommand(text), null, text);
+    }
 });

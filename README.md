@@ -57,7 +57,9 @@ the origin in `assistant.0.text.querySource` (satellite name, `chat`, or empty f
 or — if it is a URL/path to an audio file (`.mp3`/`.wav`/…) — played back.
 
 > **Playing audio files needs [ffmpeg](https://ffmpeg.org/) on the host** (Windows and Linux):
-> Linux → `sudo apt install ffmpeg`; Windows → install ffmpeg and add it to the `PATH`.
+> Linux → `sudo apt install ffmpeg`; Windows → install ffmpeg and add it to the `PATH`, or enter its full path
+> under **Path to ffmpeg** on the Voice tab. Without either, **Download ffmpeg** on the Voice tab fetches a static
+> build (ffmpeg-static, 20–30 MB) into the data directory of the instance.
 > Plain-text TTS does not need it — only audio-file playback (mp3/wav/…) does.
 
 ### Start a Hannah satellite pointed at this adapter
@@ -241,6 +243,76 @@ train it twice.
 * (@GermanBluefox) Devices in a room hidden from the smart home (iot, `smartName: false`) are no longer listed without a room
 * (@GermanBluefox) The AI sees what each state of a device is (switch, level, read-only) and that the level alone does not switch a device on
 * (@GermanBluefox) The AI (cloud model and pi-agent) is told to answer in the language of the question
+
+### 1.4.12 (2026-11-05)
+* (@GermanBluefox) ESPHome satellites: dialog mode — "ioBroker, Dialogmodus an" and the satellite listens again after every answer without the wake word (pauses are fine, nothing understood just listens on), "Dialogmodus aus" or a stop ends it, after 5 minutes without a request it ends by itself; state `satellites.<id>.dialog` shows and switches it
+
+### 1.4.11 (2026-11-05)
+* (@GermanBluefox) Speech recognition with the adapter ai-parakeet (NVIDIA Parakeet on the CPU, offline, 25 European languages) as provider or fallback — the audio goes to its instance over the message bus, so it may run on another host
+* (@GermanBluefox) Settings: buttons "Install pi-agent" and "Install ai-parakeet" install the adapter on the host of this instance if needed (from the repository, else from npm), create an instance and select it
+* (@GermanBluefox) Chat: dialog mode — the browser microphone stays open, everything said becomes a question (recognized by the assistant's speech recognition), the answer is read aloud, then it listens again
+
+### 1.4.10 (2026-11-05)
+* (@GermanBluefox) ESPHome satellites: internet radio and music from a URL — `controls.<media player>.url` plays it as media (replies and announcements only duck it, play/pause/stop/volume act on it), empty or `stop` stops. Playlists (.pls/.m3u) are resolved; a stream the device cannot decode (AAC, HLS, …) runs through ffmpeg and is served to it as FLAC; `transcode` forces that
+
+### 1.4.9 (2026-11-05)
+* (@GermanBluefox) ESPHome satellites with a screen: the yes/no button did not answer pi-agent's question — the follow-up microphone carries the last wake word (ESPHome never clears it) and was taken for a new request. A follow-up is now recognised by the open question (until the next answered request, at most 30 s after the reply), and a stop the firmware sends right after the press no longer drops the answer
+* (@GermanBluefox) pi-agent: a request from a satellite also carries `satellite` (its id under `satellites.*`) and `tts` (its `tts` state), so pi-agent can speak there later (reminders, background tasks)
+* (@GermanBluefox) Timers of a satellite: `setTimer` takes `satellite`, `seconds`, `name` and `announce` (said word for word when it fires); `listTimers`/`cancelTimer` take `satellite`. An ESPHome satellite shows and rings such a timer like one set there by voice
+
+### 1.4.8 (2026-11-05)
+* (@GermanBluefox) ESPHome satellites: a firmware update entity gets a "check" button (`controls.<update>.check`) that makes the device look for a new version now, instead of at its next boot or its 6-hour check
+* (@GermanBluefox) ESPHome satellites: `text` entities are mirrored as writable states (labels and units of a satellite with a screen can be set from ioBroker). Values outside the device's length or pattern are refused with a warning; a password text is not mirrored
+* (@GermanBluefox) Docs: the optional entities of a satellite with a screen (`confirm_answer`, `display_language`, `text`)
+
+### 1.4.7 (2026-11-04)
+* (@GermanBluefox) Voice messages: `ask` also takes a recording (`audio` as base64 plus `format`, e.g. `ogg`) instead of text. It is recognised with the speech recognition of the Voice tab and answered like a text question; the reply carries the recognised text as `heard`. Telegram uses it for voice messages
+* (@GermanBluefox) Path to ffmpeg can be set on the Voice tab (empty = from the search path), with a button that checks it
+* (@GermanBluefox) Hosts without ffmpeg: "Download ffmpeg" on the Voice tab fetches a static build of ffmpeg-static (20-30 MB, checked against a fixed SHA-256) into the data directory of the instance; it is used while no path is entered
+* (@GermanBluefox) Pictures: `ask` takes `images` (base64 JPEG/PNG/GIF/WebP, at most 4) and passes them to the cloud model (OpenAI-compatible, Anthropic, pi-agent); without a text the question is "What is in this picture?". Rules and the local model are skipped for them. Telegram uses it for photos
+* (@GermanBluefox) Videos: `ask` takes a reference `video: { adapter, path }` into the file storage (never the content). Videos are not looked at yet: without a question the answer says so, with one the model is told
+* (@GermanBluefox) ESPHome: after a reply that asked something, every later reply re-opened the microphone. The firmware keeps `continue_conversation` until it is told "0", so every reply now says it, like Home Assistant does
+* (@GermanBluefox) Satellites only listen again after a reply that asks something: a [[LISTEN]] marker (pi-agent's confirmations) or a question mark at the end. A question mark in the middle of a reply no longer opens the microphone
+* (@GermanBluefox) ESPHome satellites with a screen: yes/no buttons (event `confirm_answer`) answer the open question like a spoken "yes"/"no" - the microphone closes, the reply is announced on that satellite. A select `display_language` is set to the voice language when the satellite connects
+
+### 1.4.6 (2026-11-03)
+* (@GermanBluefox) Speech recognition: own OpenAI-compatible server (Voice tab, provider OpenAI, "Speech recognition server"), e.g. a local whisper-large-v3-turbo in speaches, faster-whisper-server or LocalAI. It needs no OpenAI key and never gets it; an own key for the server is optional
+
+### 1.4.5 (2026-11-03)
+* (@GermanBluefox) ESPHome satellites: spoken replies go out in the format the device's media player announces (FLAC at its sample rate, as Home Assistant does; MP3/Opus via ffmpeg). Since ESPHome 2026.10 the player is built with only the codecs its pipelines use, and a WAV reply did not play at all. Devices that announce no formats keep getting WAV
+* (@GermanBluefox) ESPHome satellites: when the device ends the conversation itself (button, or the wake word said again), it now gets its RUN_END. It stayed in the conversation, and every further wake word only sent another stop
+* (@GermanBluefox) ESPHome satellites: an utterance that is dropped (silence, or no text recognised) ends with the error `stt-no-text-recognized` before RUN_END, like Home Assistant. A RUN_END right after the end of speech was lost while the device was still stopping its microphone, and the device waited for an answer forever
+* (@GermanBluefox) ESPHome satellites: device controls get their state names from the entity names again. ESPHome 2026 (API 1.19) no longer sends `object_id`, so every control ended up as `satellites.<id>.controls.` and the log filled with errors. Latin names give the same ids as before
+* (@GermanBluefox) Satellites whose row was deleted from the ESPHome table are removed at the next start, and an offline satellite can be removed in the Satellites tab
+
+### 1.4.4 (2026-11-03)
+* (@GermanBluefox) ESPHome satellites: a sound only counts as speech once it has lasted about 200 ms. After a false wake a single click opened the gate, and Whisper made "и все просят." of the amplified silence around it
+* (@GermanBluefox) ESPHome satellites: when a device stops sending audio without ending the stream, the recording is closed after 2 seconds instead of the 30-second pipeline timeout, during which the satellite showed "listening"
+
+### 1.4.3 (2026-11-03)
+* (@GermanBluefox) An empty question sent with `sendTo('ask')` is rejected (`{error: 'empty question'}`) instead of going to the model with nothing but the time context, and the log names the sender once a minute. A script that asked on every answer looped about once a second and used pi-agent tokens. The log line of every `ask` now names the sender
+
+### 1.4.2 (2026-11-03)
+* (@GermanBluefox) ESPHome satellites: after 2.5 seconds of speech a pause may be half as long again before the request ends, so a pause for thought no longer cuts off a longer request. Short commands close as fast as before
+* (@GermanBluefox) ESPHome satellites: speech recognition gets the recording without the device's chirp or beep and without the silence around the speech, and quiet speech is amplified (up to ×10). Whisper made "Продолжение следует..." of the beep and the silence
+* (@GermanBluefox) The speech-to-text fallback also steps in when the first engine returns no text for speech
+* (@GermanBluefox) Request details: the speech recognition step shows the level profile of the recording (RMS per 100 ms), where speech started, why the recording ended and what went to the recognition
+
+### 1.4.1 (2026-11-03)
+* (@GermanBluefox) Satellite settings: compound controls show their name ("Firmware Update") instead of the object id ("thirdreality_firmware_update"), and values of ESPHome devices no longer carry float noise (0.5 instead of 0.5000000237487257, step 0.001 instead of 0.0010000000474974513). Existing number controls get the cleaned range on the next connect
+* (@GermanBluefox) Satellite settings, firmware update: the install button only appears when another version is available, and a running update shows its progress as a bar
+
+### 1.4.0 (2026-11-03)
+* (@GermanBluefox) ESPHome satellites: new column "Speech threshold" per device (empty = 250, as before). A device with a quiet microphone, for example a phone running a satellite app, reacted to the wake word but dropped the command as silence unless one spoke loudly right next to it. When an utterance is dropped although it came close to the threshold, the log now says so and suggests a value
+* (@GermanBluefox) Voice: the length limit for spoken answers is now a setting ("Longest spoken answer", Voice tab, default 400 characters ≈ 25–30 seconds, 0 = no limit). Longer answers stopped after about half a minute without notice; the log warning now names the setting. For a spoken request the AI model (cloud LLM and pi-agent) is told the limit and asked not to read out state ids or long numbers, so the answer fits instead of being cut
+* (@GermanBluefox) ESPHome satellites: the microphone closes again when nobody starts speaking within 5 s of the wake word (8 s after a follow-up question). A false wake kept it open for 12.6 s before
+* (@GermanBluefox) ESPHome satellites: new option "Keep dropped recordings for diagnosis". Recordings dropped as silence or returned empty by the speech recognition are stored as WAV plus a JSON with the detector levels under Files → assistant.N/captures (the newest 50), to find out what set a satellite off. Off by default: they contain audio from the room
+
+### 1.3.1 (2026-11-02)
+* (@GermanBluefox) pi-agent: the language of the satellites goes along with every request, so pi-agent asks its confirmation questions ("… Say yes or no.") in it instead of the system language. Before, a Russian satellite was asked "Sag ja oder nein", and the German "Ja" came back empty from the speech recognition: nothing happened. Needs a pi-agent version that knows the field
+* (@GermanBluefox) Requests about a script ("Skript", "script", "скрипт", also JavaScript/Blockly) always go to the cloud model: routines, rule engine and local LLM read their details as commands of their own ("write a script that switches the kitchen light every hour" was answered with the time). A reply to a question of the cloud model about the script goes there too
+* (@GermanBluefox) Voice: speech that the recognition returns as empty text is now logged ("Voice Q (…): (empty)") for ESPHome and native satellites too, instead of ending without a trace
+* (@GermanBluefox) Chat: opens at the newest entry, and a new request scrolls into view again. Before, the tab often opened at the oldest entries
 
 ### 1.3.0 (2026-10-28)
 * (@GermanBluefox) Commands for later: "turn off the light in 2 hours" or "blinds to 50 % at 10 pm" becomes an event in the calendar (fullcalendar adapter) instead of running now; the AI can plan, list and cancel events. Before, the rule engine switched such commands at once. Needs a fullcalendar version with the new event API (>= 3.1.0)

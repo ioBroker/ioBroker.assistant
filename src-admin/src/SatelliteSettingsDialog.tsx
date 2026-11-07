@@ -13,6 +13,7 @@ import {
     Divider,
     FormControl,
     InputLabel,
+    LinearProgress,
     MenuItem,
     Select,
     Slider,
@@ -73,12 +74,46 @@ export interface SatelliteSettingsProps {
     values: Record<string, ioBroker.StateValue>;
     /** Object definitions of the control states, keyed the same way. Empty while still loading. */
     objects: Record<string, ioBroker.StateObject>;
+    /** Names of the compound controls (channels), keyed by their object id under `controls.`. */
+    groupNames?: Record<string, string>;
     loading: boolean;
     /** Write a value; `prop` is relative to `satellites.<satId>.`. */
     onWrite: (prop: string, value: ioBroker.StateValue) => void;
     /** sendTo the adapter instance (wake-word upload/delete). */
     sendTo: (command: string, message: Record<string, unknown>) => Promise<unknown>;
     onClose: () => void;
+}
+
+/**
+ * A number as the device meant it: with as many decimals as the step has (step 0.001 → 0.5, not 0.5000000237…),
+ * otherwise without the float noise. Objects created before the adapter cleaned the device's float32 values still
+ * carry it, so the dialog does not rely on that.
+ */
+function formatNumber(value: number, step?: number): string {
+    if (!Number.isFinite(value)) {
+        return String(value);
+    }
+    if (step && step > 0 && step < 1) {
+        const decimals = Math.min(6, Math.ceil(-Math.log10(step) - 1e-6));
+        return String(Number(value.toFixed(decimals)));
+    }
+    return String(Number(value.toPrecision(7)));
+}
+
+/** Leaf of a compound control: `progress` of `controls.firmware.progress`, '' for a scalar control. */
+function leafOf(prop: string): string {
+    const rest = prop.replace(/^controls\./, '');
+    const dot = rest.indexOf('.');
+    return dot < 0 ? '' : rest.slice(dot + 1);
+}
+
+/** Order of a firmware update's rows: what is installed, what is available, the buttons, the progress. */
+const UPDATE_ORDER = ['currentVersion', 'latestVersion', 'check', 'install', 'progress'];
+
+/** A firmware update entity: the channel the adapter builds with the versions, the progress and the button. */
+function isUpdateGroup(propsInGroup: string[]): boolean {
+    const leaves = propsInGroup.map(leafOf);
+    return leaves.includes('latestVersion') && leaves.includes('install') && leaves.includes('progress');
 }
 
 /** Controls whose value is the device telling us something, not something to set. */
@@ -204,6 +239,61 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
         }
     };
 
+    /**
+     * A firmware update: the install button only when another version is available and nothing is running, the
+     * progress as a bar only while the update runs (indeterminate until the device reports a percentage). The
+     * "update running" flag is what the bar shows, so it gets no row of its own.
+     */
+    function renderUpdateGroup(group: string, propsInGroup: string[]): (React.JSX.Element | null)[] {
+        const value = (leaf: string): ioBroker.StateValue | undefined => values[`controls.${group}.${leaf}`];
+        const current = String(value('currentVersion') ?? '');
+        const latest = String(value('latestVersion') ?? '');
+        const running = value('inProgress') === true;
+        const progress = Math.min(100, Math.max(0, Number(value('progress')) || 0));
+        const rank = (prop: string): number => {
+            const i = UPDATE_ORDER.indexOf(leafOf(prop));
+            return i < 0 ? UPDATE_ORDER.length : i;
+        };
+        return [...propsInGroup]
+            .sort((a, b) => rank(a) - rank(b))
+            .map(prop => {
+                const leaf = leafOf(prop);
+                if (leaf === 'inProgress') {
+                    return null;
+                }
+                if (leaf === 'install') {
+                    return latest && latest !== current && !running ? renderControl(prop) : null;
+                }
+                if (leaf === 'check') {
+                    // The device looks for a new version only now and then; this asks it to look now.
+                    return running ? null : renderControl(prop);
+                }
+                if (leaf === 'progress') {
+                    if (!running) {
+                        return null;
+                    }
+                    const name = objects[prop]?.common?.name;
+                    return (
+                        <Box key={prop}>
+                            <Typography
+                                variant="caption"
+                                sx={{ opacity: 0.7 }}
+                            >
+                                {typeof name === 'string' ? name : leaf}
+                                {progress > 0 ? ` ${Math.round(progress)} %` : ''}
+                            </Typography>
+                            <LinearProgress
+                                variant={progress > 0 ? 'determinate' : 'indeterminate'}
+                                value={progress}
+                                sx={{ height: 8, borderRadius: 4 }}
+                            />
+                        </Box>
+                    );
+                }
+                return renderControl(prop);
+            });
+    }
+
     // ── controls, grouped so the compound ones stay together ────────────────
     const controlProps = Object.keys(objects).sort();
     /** `controls.<objectId>` (scalar) or `controls.<objectId>.<leaf>` (media player, firmware). */
@@ -244,7 +334,13 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
                     >
                         {label}
                     </Typography>
-                    <Typography variant="body2">{value === undefined || value === null ? '—' : String(value)}</Typography>
+                    <Typography variant="body2">
+                        {value === undefined || value === null
+                            ? '—'
+                            : typeof value === 'number'
+                              ? formatNumber(value, common.step)
+                              : String(value)}
+                    </Typography>
                 </Box>
             );
         }
@@ -297,6 +393,7 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
 
         if (common.type === 'number' && common.min !== undefined && common.max !== undefined) {
             const num = Number(value ?? common.min);
+            const step = common.step ? Number(common.step.toPrecision(7)) : 1;
             return (
                 <Box key={prop}>
                     <Typography variant="body2">
@@ -306,8 +403,8 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
                             variant="caption"
                             sx={{ ml: 1, opacity: 0.7 }}
                         >
-                            {num}
-                            {common.unit || ''} ({common.min}…{common.max})
+                            {formatNumber(num, step)}
+                            {common.unit || ''} ({formatNumber(common.min, step)}…{formatNumber(common.max, step)})
                         </Typography>
                     </Typography>
                     <Slider
@@ -315,26 +412,38 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
                         value={Number.isFinite(num) ? num : common.min}
                         min={common.min}
                         max={common.max}
-                        step={common.step || 1}
+                        step={step}
                         // Only write when the drag ends — otherwise every pixel is a device round-trip.
-                        onChangeCommitted={(_e, v) => onWrite(prop, Array.isArray(v) ? v[0] : v)}
+                        onChangeCommitted={(_e, v) => {
+                            const n = Array.isArray(v) ? v[0] : v;
+                            onWrite(prop, Number(formatNumber(n, step)));
+                        }}
                         valueLabelDisplay="auto"
+                        valueLabelFormat={v => formatNumber(v, step)}
                     />
                 </Box>
             );
         }
 
+        // Free text (a label on the device's screen). Keyed by the value, so the field shows what the device took
+        // once it reports back; written only when it changed, so leaving the field sends nothing.
+        const shown = value === undefined || value === null ? '' : String(value);
+        const write = (text: string): void => {
+            if (text !== shown) {
+                onWrite(prop, text);
+            }
+        };
         return (
             <TextField
-                key={prop}
+                key={`${prop}\n${shown}`}
                 size="small"
                 fullWidth
                 label={label}
-                defaultValue={value === undefined || value === null ? '' : String(value)}
-                onBlur={e => onWrite(prop, e.target.value)}
+                defaultValue={shown}
+                onBlur={e => write(e.target.value)}
                 onKeyDown={e => {
                     if (e.key === 'Enter') {
-                        onWrite(prop, (e.target as HTMLInputElement).value);
+                        write((e.target as HTMLInputElement).value);
                     }
                 }}
             />
@@ -551,10 +660,12 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
                                         variant="subtitle2"
                                         sx={{ opacity: 0.8 }}
                                     >
-                                        {group}
+                                        {props.groupNames?.[group] || group}
                                     </Typography>
                                 ) : null}
-                                {propsInGroup.map(renderControl)}
+                                {isUpdateGroup(propsInGroup)
+                                    ? renderUpdateGroup(group, propsInGroup)
+                                    : propsInGroup.map(renderControl)}
                             </Box>
                         ))}
 

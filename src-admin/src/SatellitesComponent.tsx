@@ -2,7 +2,12 @@ import React from 'react';
 
 import {
     Box,
+    Button,
     Chip,
+    Dialog,
+    DialogActions,
+    DialogContent,
+    DialogTitle,
     IconButton,
     Table,
     TableBody,
@@ -13,7 +18,12 @@ import {
     Tooltip,
     Typography,
 } from '@mui/material';
-import { Campaign as AnnounceIcon, Circle as DotIcon, Settings as SettingsIcon } from '@mui/icons-material';
+import {
+    Campaign as AnnounceIcon,
+    Circle as DotIcon,
+    Delete as DeleteIcon,
+    Settings as SettingsIcon,
+} from '@mui/icons-material';
 import { ConfigGeneric, type ConfigGenericProps, type ConfigGenericState } from '@iobroker/json-config';
 import { I18n } from '@iobroker/gui-components';
 
@@ -50,7 +60,13 @@ interface SatellitesState extends ConfigGenericState {
     settingsFor: string | null;
     /** Control objects of that satellite, loaded when the dialog opens. */
     settingsObjects: Record<string, ioBroker.StateObject>;
+    /** Names of its compound controls (media player, firmware update), keyed by object id under `controls.`. */
+    settingsGroupNames: Record<string, string>;
     settingsLoading: boolean;
+    /** Satellite the delete confirmation is open for, or null. */
+    confirmDelete: string | null;
+    /** Why the last delete failed, shown in the dialog. */
+    deleteError: string;
 }
 
 /** Status chip colour per satellite state. */
@@ -81,7 +97,10 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
             vals: {},
             settingsFor: null,
             settingsObjects: {},
+            settingsGroupNames: {},
             settingsLoading: false,
+            confirmDelete: null,
+            deleteError: '',
         };
     }
 
@@ -196,7 +215,20 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                     byProp[id.slice(prefix.length)] = obj;
                 }
             }
-            this.setState({ settingsObjects: byProp, settingsLoading: false });
+            // Compound controls (media player, firmware update) are channels: their name is the group heading.
+            const channels = (await this.props.oContext.socket
+                .getForeignObjects(`${prefix}controls.*`, 'channel')
+                .catch(() => ({}))) as Record<string, ioBroker.ChannelObject>;
+            const groupNames: Record<string, string> = {};
+            const lang = I18n.getLanguage();
+            for (const [id, obj] of Object.entries(channels || {})) {
+                const name = obj?.common?.name;
+                const text = typeof name === 'string' ? name : name ? name[lang] || name.en || '' : '';
+                if (text) {
+                    groupNames[id.slice(`${prefix}controls.`.length)] = text;
+                }
+            }
+            this.setState({ settingsObjects: byProp, settingsGroupNames: groupNames, settingsLoading: false });
         } catch {
             this.setState({ settingsLoading: false });
         }
@@ -219,6 +251,32 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
             satId === BROADCAST ? `${this.instanceId}.tts.text` : `${this.instanceId}.satellites.${satId}.tts`;
         this.props.oContext.socket.setState(target, { val: text, ack: false }).catch(() => {});
         this.setState(prev => ({ speak: { ...prev.speak, [satId]: '' } }));
+    }
+
+    /**
+     * Forget an offline satellite: the adapter deletes its objects. A satellite that is still configured comes
+     * back on its next connect; one whose row was removed (or a UDP/native one that is gone) stays away.
+     */
+    private async deleteSatellite(satId: string): Promise<void> {
+        try {
+            const res = (await this.props.oContext.socket.sendTo(this.instanceId, 'deleteSatellite', {
+                id: satId,
+            })) as { ok?: boolean; error?: string } | undefined;
+            if (res?.error) {
+                this.setState({ deleteError: res.error });
+                return;
+            }
+        } catch (e) {
+            this.setState({ deleteError: String((e as Error)?.message || e) });
+            return;
+        }
+        this.setState(prev => {
+            const sats = { ...prev.sats };
+            const vals = { ...prev.vals };
+            delete sats[satId];
+            delete vals[satId];
+            return { sats, vals, confirmDelete: null, deleteError: '' };
+        });
     }
 
     /** Compact relative time, e.g. "5 s", "2 min", "1 h", "3 d" — or "—" when never seen. */
@@ -280,7 +338,9 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
             <Box sx={{ width: '100%' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
                     <Typography variant="h6">{I18n.t('custom_assistant_Satellites')}</Typography>
-                    {ids.length ? this.renderComposer(BROADCAST, I18n.t('custom_assistant_Speak on all satellites')) : null}
+                    {ids.length
+                        ? this.renderComposer(BROADCAST, I18n.t('custom_assistant_Speak on all satellites'))
+                        : null}
                 </Box>
 
                 {!ids.length ? (
@@ -340,9 +400,7 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                                             />
                                         </TableCell>
                                         <TableCell>
-                                            <Tooltip
-                                                title={s.lastSeen ? new Date(s.lastSeen).toLocaleString() : ''}
-                                            >
+                                            <Tooltip title={s.lastSeen ? new Date(s.lastSeen).toLocaleString() : ''}>
                                                 <span>{this.ago(s.lastSeen)}</span>
                                             </Tooltip>
                                         </TableCell>
@@ -350,19 +408,29 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                                             {this.renderComposer(id, I18n.t('custom_assistant_Type a message…'))}
                                         </TableCell>
                                         <TableCell sx={{ width: 40 }}>
-                                            <Tooltip title={I18n.t('custom_assistant_Device settings')}>
-                                                <span>
+                                            {s.alive ? (
+                                                <Tooltip title={I18n.t('custom_assistant_Device settings')}>
                                                     <IconButton
                                                         size="small"
-                                                        // The settings live on the device, so there is
-                                                        // nothing to show or change while it is away.
-                                                        disabled={!s.alive}
                                                         onClick={() => void this.openSettings(id)}
                                                     >
                                                         <SettingsIcon />
                                                     </IconButton>
-                                                </span>
-                                            </Tooltip>
+                                                </Tooltip>
+                                            ) : (
+                                                // The settings live on the device, so there is nothing to change
+                                                // while it is away — but a satellite that is gone can be removed.
+                                                <Tooltip title={I18n.t('custom_assistant_Remove satellite')}>
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={() =>
+                                                            this.setState({ confirmDelete: id, deleteError: '' })
+                                                        }
+                                                    >
+                                                        <DeleteIcon />
+                                                    </IconButton>
+                                                </Tooltip>
+                                            )}
                                         </TableCell>
                                     </TableRow>
                                 );
@@ -378,14 +446,61 @@ export default class SatellitesComponent extends ConfigGeneric<ConfigGenericProp
                         room={this.state.sats[this.state.settingsFor]?.room || ''}
                         values={this.state.vals[this.state.settingsFor] || {}}
                         objects={this.state.settingsObjects}
+                        groupNames={this.state.settingsGroupNames}
                         loading={this.state.settingsLoading}
                         onWrite={(prop, value) => this.writeSetting(this.state.settingsFor as string, prop, value)}
                         sendTo={(command, message) =>
                             this.props.oContext.socket.sendTo(this.instanceId, command, message)
                         }
-                        onClose={() => this.setState({ settingsFor: null, settingsObjects: {} })}
+                        onClose={() =>
+                            this.setState({ settingsFor: null, settingsObjects: {}, settingsGroupNames: {} })
+                        }
                     />
                 ) : null}
+
+                <Dialog
+                    open={!!this.state.confirmDelete}
+                    onClose={() => this.setState({ confirmDelete: null, deleteError: '' })}
+                >
+                    <DialogTitle>{I18n.t('custom_assistant_Remove satellite')}</DialogTitle>
+                    <DialogContent>
+                        <Typography variant="body2">
+                            {I18n.t(
+                                'custom_assistant_Remove satellite %s and all its states?',
+                                this.state.confirmDelete || '',
+                            )}
+                        </Typography>
+                        <Typography
+                            variant="body2"
+                            sx={{ mt: 1, opacity: 0.7 }}
+                        >
+                            {I18n.t(
+                                'custom_assistant_A satellite that is still configured appears again when it connects.',
+                            )}
+                        </Typography>
+                        {this.state.deleteError ? (
+                            <Typography
+                                variant="body2"
+                                color="error"
+                                sx={{ mt: 1 }}
+                            >
+                                {this.state.deleteError}
+                            </Typography>
+                        ) : null}
+                    </DialogContent>
+                    <DialogActions>
+                        <Button
+                            color="error"
+                            variant="contained"
+                            onClick={() => void this.deleteSatellite(this.state.confirmDelete as string)}
+                        >
+                            {I18n.t('custom_assistant_Delete')}
+                        </Button>
+                        <Button onClick={() => this.setState({ confirmDelete: null, deleteError: '' })}>
+                            {I18n.t('custom_assistant_Cancel')}
+                        </Button>
+                    </DialogActions>
+                </Dialog>
             </Box>
         );
     }

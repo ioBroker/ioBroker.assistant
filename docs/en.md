@@ -57,6 +57,12 @@ Every request runs through up to three tiers, stopping at the first that can ans
 3. **Cloud LLM (tool-calling)** — the full assistant. It gets a compact list of your devices in its prompt
    and calls tools (read states, set states, history, logs …) over the native ioBroker API.
 
+**Scripts always go to the cloud.** When a sentence contains *script*, *Skript* or *Скрипт* (also German
+compounds such as *Lichtskript*, *скрипте*, *JavaScript*, *Blockly*), routines, rule engine and local LLM are
+skipped — they would read the details as a command of their own (*"write a script that switches the kitchen
+light every hour"* was answered with the time). When the cloud model asks back (*"Which light?"*), the reply
+within 2 minutes goes to the cloud as well. Without a cloud provider this does not apply.
+
 ### Providers
 
 One active LLM provider: **OpenAI, Anthropic (Claude), Google Gemini, DeepSeek, OpenRouter**, or any
@@ -82,7 +88,12 @@ along as its instructions, time, weather and presence in front of each question.
 (timers, memory, announcements, YouTube) are not available to pi-agent — timers and alarms are still handled by
 the rule-based commands. Separate conversations need pi-agent with `conversation` support in `ask` (newer than
 0.3.0); older versions answer everything in one conversation. If pi-agent is not running or fails, the local
-model answers, if enabled.
+model answers, if enabled. A request from a satellite also carries `satellite` (its id under
+`assistant.0.satellites.*`) and `tts` (the full id of its `tts` state): pi-agent can keep them with a reminder or a
+background task and speak there later by writing the text to that state. Chat and Telegram requests carry neither.
+Without pi-agent yet, **Install pi-agent** next to the instance field installs it on the host of this instance
+(from the repository the system uses, else the newest version from npm), creates an instance and selects it; then
+save the settings. It takes a few minutes, the log shows the steps.
 
 ### Satellites (voice)
 
@@ -106,8 +117,8 @@ satellites stay simple. See §7.
 
 **Additionally for voice / satellites:**
 
-- A **speech provider**: OpenAI, OpenRouter, Azure or AWS (cloud), **or** local **Vosk** (STT) + **Piper** (TTS),
-  which install on demand — no cloud.
+- A **speech provider**: OpenAI, OpenRouter, Azure or AWS (cloud), **or** local **Vosk** or the adapter
+  **ai-parakeet** (STT) + **Piper** (TTS) — no cloud.
 - One or more **satellite devices** with a microphone and speaker (e.g. a Raspberry Pi with a USB
   speakerphone). **ffmpeg** is required on the satellite host (Windows and Linux).
 - **Node.js ≥ 22** on the satellite device.
@@ -135,6 +146,23 @@ satellites stay simple. See §7.
   **`assistant.0.text.response`**. The origin is recorded in `text.querySource`.
 - Or from a script: `sendTo('assistant.0', 'ask', { text: 'Is a window open?' }, cb)`.
 - Or use the **Test chat** tab in the adapter settings (works while the instance is running).
+- Or via **Telegram**: select the assistant instance in the telegram adapter. Text messages and **voice
+  messages** then go to the assistant; the answer comes back to the same chat, for a voice message with the
+  recognized text in front (🎤 …). Voice messages need voice enabled with a speech recognition engine on the
+  Voice tab, and **ffmpeg** on the ioBroker host (Telegram sends OGG/Opus). This needs a telegram version
+  that forwards voice messages.
+- A script can send a recording instead of text: `sendTo('assistant.0', 'ask', { audio: <base64>,
+  format: 'ogg', source: 'script' }, cb)` → `{ answer, heard }` (`heard` = the recognized text). `wav` and
+  `pcm` (16-bit mono, `sampleRate`) need no ffmpeg, everything else (ogg, mp3, m4a …) does.
+- **Photos** from Telegram go to the cloud model with their caption as the question (without one: "What is in
+  this picture?"); an album is one question. A script sends pictures the same way: `sendTo('assistant.0', 'ask',
+  { text, images: [{ data: <base64>, mimeType: 'image/jpeg' }] }, cb)` — JPEG, PNG, GIF or WebP, at most 4, each
+  under 3.75 MB. Rules, routines and the local model are skipped (they cannot see), so it needs a cloud provider
+  whose model takes pictures (or pi-agent with picture support); without one the answer says so. Later turns of
+  the conversation only know that there was a picture, they do not get it again.
+- **Videos** are never sent as content: Telegram stores them in its file storage, and `ask` only gets
+  `video: { adapter, path, mimeType, durationSec, size }`. The assistant does not look at videos yet — a video
+  without a question gets a short answer saying so, with a question the model is told about it.
 
 The chat shows every request live — also those from satellites, Telegram and scripts. **Click a question
 or an answer** to open its details for debugging: speech recognition (recording length, duration,
@@ -142,6 +170,17 @@ levels), which tier answered and why the earlier ones did not (e.g. which part o
 run locally), the full prompt and every round of the language model with token counts, all tool calls
 with complete arguments and results, the states read and written, and speech synthesis — as a timeline,
 and as JSON to copy or download. Details are kept for the latest 200 requests.
+
+**Dialog** (the button with the speaking head left of the input field): the microphone of the browser stays
+open, and everything you say becomes a question — without a wake word and without a click, until you press the
+button again. The browser notices when you stop talking (a pause of about a second, longer after a longer
+request), the recording goes to the assistant and is recognized by the speech recognition of the Voice tab, the
+answer is read aloud with the voice of the satellites (the browser's voice if there is no speech output), and
+then it listens again. While it thinks and speaks it does not listen, so it does not answer itself. The answers
+are kept as short as for a satellite. It needs voice enabled with a speech recognition engine, and the admin
+over https or on localhost (browsers allow the microphone only there). Every utterance goes to the speech
+recognition — with a cloud engine also a cough or a conversation in the room; a recording without recognizable
+text is dropped silently.
 
 ### Weather
 
@@ -336,7 +375,8 @@ Voice is optional and off by default. Turn on **Enable voice (STT/TTS)** on the 
 speech recognition/synthesis available; **it does not open any network port**. Then choose:
 
 - **Voice language** — used for STT and the spoken reply.
-- **Speech-to-text provider** — OpenAI, OpenRouter, Azure, AWS, or **Vosk** (local, offline).
+- **Speech-to-text provider** — OpenAI, OpenRouter, Azure, AWS, **Vosk** (local, offline) or **ai-parakeet**
+  (local, offline, an adapter of its own).
 - **Text-to-speech provider** — OpenAI, OpenRouter, Azure, AWS, or **Piper** (local, offline).
 - Provider keys (separate from the LLM key; a *Speech credential mode* mirrors manual/manager). Voices and
   local models load into dropdowns.
@@ -348,6 +388,23 @@ voices of the chosen model. Defaults: `openai/whisper-large-v3-turbo` and `eleve
 Without an OpenRouter key on the Voice tab, the key of the AI provider is used if that is OpenRouter (also
 from the system-wide AI settings). Unlike OpenAI, OpenRouter ignores vocabulary hints, so device and room
 names are not passed to recognition. MiniMax voices only come as mp3 and need **ffmpeg** on the ioBroker host.
+
+**Own Whisper server** (local recognition, e.g. whisper-large-v3-turbo in a container next to ioBroker):
+choose *OpenAI (Whisper)* as speech-to-text provider and enter the server under **Speech recognition server**,
+e.g. `http://192.168.1.10:8000/v1`. Any server with the OpenAI endpoint `/v1/audio/transcriptions` works
+(speaches/faster-whisper-server, LocalAI, vLLM; whisper.cpp's `whisper-server` only when started with
+`--inference-path /v1/audio/transcriptions`). An address without a path gets `/v1`. Put the model into
+**OpenAI STT model** as the server names it (speaches: `Systran/faster-whisper-large-v3-turbo`). No OpenAI key is
+needed for it, and the OpenAI key is never sent there; if the server wants a key of its own, it goes into
+**Key of the speech recognition server**. Vocabulary hints (room and device names) are passed as with OpenAI.
+
+**ai-parakeet** (local recognition with NVIDIA Parakeet TDT 0.6B v3 on the CPU, 25 European languages that the
+model detects itself): choose *ai-parakeet (local adapter)* as speech-to-text provider or fallback, and its
+instance. Without one, **Install ai-parakeet** installs the adapter on the host of this instance and creates an
+instance; on its first start it downloads the model (about 670 MB), and it then needs about 1.1 GB of memory. The
+audio goes to it over the ioBroker message bus, so the instance may run on another host and needs no address or
+key here. Room and device names go along as its prompt. If the instance is not running, the fallback engine takes
+over. On a Raspberry Pi 5 a spoken command takes 0.5–1 s, and it recognises much better than Vosk.
 
 **Test voice and recognition** (at the bottom of the Voice tab, with the settings as they are in the form —
 also unsaved): *Speech output* speaks a test sentence in the browser and shows sample rate, length and
@@ -398,11 +455,49 @@ Two things work differently here:
 
 - **The adapter decides when you stopped talking.** These devices stream until the server tells them to
   stop, so end-of-speech detection runs in the adapter. Tune **End of speech after (ms of silence)**
-  (default 900) if replies cut you off or the assistant waits too long.
+  (default 900) if replies cut you off or the assistant waits too long; after 2.5 seconds of speech half
+  as much again is allowed, so a pause for thought does not end a longer request. Before the recording
+  goes to speech recognition, the device's chirp or beep and the silence before and after the speech are
+  cut off, and quiet speech is amplified (up to ×10). Speech has to reach the
+  device's **Speech threshold** (column in the device table, empty = RMS 250). A device that reacts to
+  the wake word but then hears nothing has a quieter microphone than that (a phone running a satellite
+  app is typically below 200): lower the threshold for that row, e.g. to 100. The log says so when it
+  drops an utterance that came close, and the debug line `captured … (peak RMS …, speech/silence gate …)`
+  shows the levels. A sound only counts as speech once it has lasted about 200 ms — a click or a knock
+  after a false wake is not sent to speech recognition (which tends to invent a sentence for it). If
+  nobody starts speaking within 5 seconds of the wake word (8 seconds after a follow-up question), the
+  microphone is closed again — a false wake no longer keeps it open for 12 seconds. If the device stops
+  sending audio without ending the stream, the recording is closed after 2 seconds instead of keeping
+  the satellite in "listening" for half a minute. To find out what set a satellite off, enable **Keep dropped recordings for diagnosis**:
+  recordings dropped as silence or returned empty by the speech recognition are stored as WAV plus a JSON
+  (reason, wake word, detector levels, RMS per 100 ms) under Admin → Files → `assistant.0/captures` — the
+  newest 50. They contain audio from the room, so switch it off again afterwards. Without any recording,
+  the request details in the Chat tab show the level profile (RMS per 100 ms), where speech started and
+  why the recording ended — enough to see whether a request was cut off.
 - **The spoken reply is fetched, not pushed.** The device plays a URL, so the adapter runs a small HTTP
   server (**Media server port**, default `8099`) serving each clip for a couple of minutes. It must be
   reachable **from the device**; the address is taken from each device connection automatically and only
   needs setting by hand behind NAT, Docker or a VLAN.
+
+#### Dialog mode
+
+"ioBroker, dialog mode on" — from then on the satellite listens again by itself after every answer, without the
+wake word: just keep talking. "Dialog mode off" (or a bare "stop") switches back to normal. Also understood:
+"conversation mode on", "exit dialogue mode", "Dialogmodus an", "включи режим диалога"; a question about it ("is
+dialog mode on?") switches nothing.
+
+- **Pauses are fine.** As long as nobody speaks the microphone stays open; a request may take up to 20 seconds.
+- **Nothing understood** (a cough, the TV, an empty transcription): no answer, no error — the satellite just keeps
+  listening. A command that is otherwise only confirmed with the confirmation tone plays the tone and then keeps
+  listening.
+- **It ends by itself** after 5 minutes without an understood request, when the device is stopped (stop button,
+  wake word during the answer), when it goes offline or when the voice pipeline fails.
+- **The state `satellites.<id>.dialog`** shows the mode and switches it too (script, VIS): `true` on an idle
+  satellite plays the confirmation tone and opens the microphone after it.
+- The microphone is open all the time: everything in the room that is detected as speech goes to the speech
+  recognition (costs with a cloud STT) and to the assistant as a request.
+- ESPHome satellites only — there the answer opens the microphone via `continue_conversation`. The Chat tab has
+  the dialog button for the same.
 
 #### Wake words
 
@@ -491,11 +586,15 @@ speaker offers twelve:
 | `continue_conversation_delay` | how long the mic stays open for a follow-up, 0–10 s |
 | `mute`, `thinking_sound` | microphone mute and the "thinking" sound |
 | `<media player>.{state,volume,command,muted}` | `command` takes play, pause, stop, mute, unmute, toggle, volume_up, volume_down, turn_on, turn_off |
-| `<firmware>.{currentVersion,latestVersion,inProgress,progress,install}` | `install` is a button |
+| `<media player>.{url,transcode}` | `url` plays music from a URL, see below |
+| `<firmware>.{currentVersion,latestVersion,inProgress,progress,install,check}` | `install` and `check` are buttons: `check` makes the device look for a new version now — an `http_request` update looks only at boot and every 6 hours, and until then `latestVersion` shows the old one |
 
 Writes are not acknowledged optimistically: the device reports back what it actually took, and that is
 what the state shows. A number outside the device's range is clamped to it rather than rejected, and a
-value a `select` does not offer is refused with a warning naming the valid options.
+value a `select` does not offer is refused with a warning naming the valid options. A `text` entity
+becomes a writable string; a value longer than the device allows (it counts bytes of UTF-8, so "ü" counts
+twice) or not matching its pattern is refused the same way. A text in password mode is not mirrored at
+all — a state can be read by every script and every admin user.
 
 ```js
 sendTo('assistant.0', 'getControls', {}, r => log(JSON.stringify(r)));
@@ -504,6 +603,45 @@ sendTo('assistant.0', 'setControl', { device: '3RSPK-…', control: 'mic_volume'
 
 If the assistant hears you too quietly — the log line after each utterance prints the peak level and the
 noise floor — `mic_volume` and `mic_gain` are the two to raise.
+
+#### Music from a URL (internet radio)
+
+Write a URL into `satellites.<id>.controls.<media player>.url` and the satellite plays it as **music**, not as an
+announcement: replies and announcements only duck it, and `command` (pause, play, stop), `volume` and the device's
+own buttons act on it. An empty string or `stop` stops it. The state is acknowledged with the URL once the device
+was told; whether it plays shows in `.state`.
+
+```js
+setState('assistant.0.satellites.Gast.controls.media_player.url', 'https://stream.example.com/radio.mp3');
+setState('assistant.0.satellites.Gast.controls.media_player.url', ''); // stop
+```
+
+Before the URL goes to the device the assistant looks at it once:
+
+- A **playlist** (`.pls`, `.m3u`, as radio directories hand them out) is replaced by its first stream.
+- A codec the device decodes is played **directly** — the device fetches the stream itself. Which ones that is,
+  the device says in its media player's formats: since ESPHome 2026.10 a firmware decodes only the formats its
+  pipelines announce, all of MP3, FLAC and WAV with format `NONE` or on older firmware that announces none.
+- Anything else — AAC, HLS (`.m3u8`), Ogg Vorbis, a format the device does not list — runs **through ffmpeg**:
+  the media server of the ESPHome satellites (the port on the Voice tab) serves it to the device as FLAC (or the
+  codec the device lists), at the rate and channels it asks for, 48 kHz mono otherwise. One ffmpeg per playing
+  satellite; it ends when the device stops listening or another URL is written.
+- `transcode` = true sends every URL through ffmpeg, also one the device could decode itself (for a station whose
+  server the device does not get along with). Without ffmpeg everything goes to the device as it is.
+
+What is playing on a screen is up to the firmware: a `text` entity like "Media title" is a writable state under
+`controls.*` like any other, so a script or pi-agent can write the station name there.
+
+#### Satellites with a screen
+
+A firmware for a satellite with a display can offer these entities; the assistant uses them when they
+are there and ignores their absence:
+
+| Entity | Kind | What the assistant does |
+|---|---|---|
+| `confirm_answer` | event, types `yes` / `no` | While a reply waits for an answer (pi-agent's "Set the lamp to on? Say yes or no."), a press is that answer: the open microphone closes, "yes"/"no" in the voice language goes on as the reply, and the reply to it is announced on that satellite with its text. The question stays open until the satellite's next request is answered, at most 30 s after the reply; the follow-up microphone counts as answering it even though the firmware sends the last wake word with it. A stop the firmware sends right after the press (before or after the event) does not drop the answer. A press without an open question is ignored. |
+| `display_language` | select | Set to the voice language once per connect. Options may be names ("Deutsch", "English", "Русский"), English names ("German") or codes ("de", "de-DE"). |
+| any `text` | text | Plain writable states — e.g. labels and units of the screen's pages, set from ioBroker instead of in the firmware build. |
 
 #### Timers on the device
 
@@ -578,8 +716,10 @@ Text is synthesised with the configured TTS engine; an audio file is decoded and
 Four settings that mostly pay for themselves:
 
 - **Speech-to-text / text-to-speech fallback** (Voice tab) — a second engine, used when the first one
-  fails: an outage, an expired key, an empty quota. With `Vosk (local)` and `Piper (local)` behind a cloud
-  provider, the house keeps listening and answering without the internet. The hand-over is in the log.
+  fails: an outage, an expired key, an empty quota. With `ai-parakeet` or `Vosk (local)` and `Piper (local)` behind a cloud
+  provider, the house keeps listening and answering without the internet. The speech-to-text fallback also
+  steps in when the first engine returns no text for something the satellite took for speech — models
+  differ a lot on quiet or short answers. The hand-over is in the log.
 - **The spoken text is cached on disk.** The assistant says the same short things over and over ("Okay.",
   "Timer finished"), and synthesising them again costs a cloud round-trip and half a second of latency for
   audio that is identical. Short texts (up to 200 characters) are therefore kept under the instance's data
@@ -594,8 +734,11 @@ Four settings that mostly pay for themselves:
   to acknowledge the value (`ack:true`) and say "did not respond" if it never does. Leave this **off** for
   devices that never acknowledge (MQTT, scripts, `0_userdata`): every command would look failed.
 
-Two things happen without any setting: an answer longer than 400 characters is **cut at the last sentence
-that fits** (a spoken paragraph is a minute nobody can interrupt), and an announcement written as
+Two more things: an answer longer than **Longest spoken answer** (Voice tab, default 400 characters ≈
+25–30 seconds) is **cut at the last sentence that fits** (a spoken paragraph is a minute nobody can
+interrupt; 0 = no limit, the log warns when it cuts). For a spoken request the AI model is told the limit
+(in sentences, as models cannot count characters) and asked not to read out state ids or long numbers, so
+it answers within it instead of being cut. And an announcement written as
 **SSML** (`<speak>…</speak>`) is spoken as SSML by Azure and Polly — pauses and emphasis included — while
 the other engines get the text without the markup instead of reading the tags out loud.
 
@@ -856,7 +999,22 @@ From a script:
 sendTo('assistant.0', 'setTimer', { duration: '10 min', label: 'pasta', room: 'Kitchen' }, r => log(r.id));
 sendTo('assistant.0', 'setAlarm', { time: '06:30', weekdays: [1, 2, 3, 4, 5], label: 'work' });
 sendTo('assistant.0', 'listTimers', {}, r => log(JSON.stringify(r)));
+// a reminder on one satellite: shown and rung there, then the text is said there
+sendTo('assistant.0', 'setTimer', {
+    satellite: 'Gast',
+    seconds: 3600,
+    name: 'Switch the light',
+    announce: 'Reminder: switch the light today',
+}, r => log(r.id || r.error));
+sendTo('assistant.0', 'listTimers', { satellite: 'Gast' }, r => log(JSON.stringify(r.timers)));
+sendTo('assistant.0', 'cancelTimer', { satellite: 'Gast', id: 'tm…' });
 ```
+
+`satellite` is the id under `assistant.0.satellites.*` (or the satellite's device name); the timer then belongs
+to that satellite like one set there by voice. `announce` is said word for word when it fires — also when timer
+announcements are switched off; without it the usual "Timer finished: <name>." `seconds` count in seconds, a
+`duration` can also be a phrase like `'10 min'`. `listTimers`/`cancelTimer` with `satellite` only see that
+satellite's timers (`cancelTimer` without `id` = all of them).
 
 A timer set by voice announces on the satellite it was set from; one from the chat, Telegram or a script
 announces everywhere. On a satellite that reports the ESPHome *timers* feature, running timers also appear
@@ -920,6 +1078,16 @@ things that matter, not a diary.
 - **Satellite can't reach the assistant** — make sure the assistant instance is **running**; for
   ioBroker-native transport nothing else is needed, for UDP check the port/host.
 - **Voice tab options hidden** — enable **Enable voice (STT/TTS)** first.
+- **"ffmpeg failed: … ENOENT"** (sounds, Telegram voice messages, MP3/Opus replies) — ffmpeg is missing or not
+  in the search path of the ioBroker process. Install it (`sudo apt install ffmpeg`), click **Download ffmpeg** on
+  the Voice tab or enter the full path under **Path to ffmpeg**; **Check ffmpeg** shows whether it is right.
+  **Download ffmpeg** fetches a static build of [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static)
+  (20–30 MB, GPL, checked against a fixed SHA-256) into the data directory of the instance — for Linux
+  (x64, arm64, arm, ia32), Windows x64 and macOS. It is used while **Path to ffmpeg** is empty, also instead of an
+  installed ffmpeg; delete `iobroker-data/assistant.0/ffmpeg/` to go back to the one from the search path.
+- **An old satellite is still listed** — on the Satellites tab a satellite that is offline shows a trash can
+  instead of the gear; it deletes its objects. A satellite that is online cannot be deleted (it would be
+  re-created at once).
 - **ESPHome satellite stays offline** — the adapter dials the device, so the *device* must be reachable
   on TCP 6053 (`nc -vz <ip> 6053`). Check the address, and that no other controller (a Home Assistant
   instance, for example) already holds the device's voice-assistant subscription.
@@ -939,6 +1107,7 @@ things that matter, not a diary.
 | `text.querySource`                                 | origin of the last request (`''`, `chat`, or a satellite name) |
 | `tts.text`                                         | announce to **all** satellites (text or audio path)            |
 | `satellites.<id>.{status,room,alive,lastSeen,tts}` | per-satellite state + announce                                 |
+| `satellites.<id>.dialog`                           | dialog mode of an ESPHome satellite (listens on without wake word, §6) |
 | `triggers.enabled` / `triggers.count` / `triggers.list` | proactive triggers: master switch, number loaded, live status (JSON) |
 | `triggers.items.<id>.{enabled,fire,lastFired,nextFireAt}` | per-trigger switch, test button and timing |
 | `notify.text` / `notify.alert` / `notify.last` | speak a system notification / an urgent one / what was spoken |
@@ -958,13 +1127,13 @@ Everything the assistant can do is reachable from a script. The reply always arr
 
 | Command | Message | Answer |
 |---|---|---|
-| `ask` | `{ text, source? }` | `{ answer }` / `{ error }` — the full pipeline, like asking by voice |
+| `ask` | `{ text, source? }` or `{ audio, format, source? }`, optionally `images` / `video` | `{ answer }` / `{ error }` — the full pipeline, like asking by voice; with `audio` also `heard` (the recognized text) |
 | `askUser` | `{ question, room?/target?/source?, timeoutMs? }` | `{ answer }` / `{ timeout: true }` — ask and wait (§9) |
 | `notify` | `{ text, severity?, target?/room?, onlyWhenHome? }` | `{ spoken }` — speak a system notification (§9) |
 | `tts` / `ttsAvailable` | `{ text, language? }` / `{}` | a WAV as base64 / whether an engine is configured |
 | `playSound` | `{ sound, room?/target? }` | play a file from `sounds/` |
 | `stopRinging` | `{}` | silence a ringing timer or alarm |
-| `setTimer` / `cancelTimer` / `listTimers` | `{ duration, label?, room? }` / `{ id? }` / `{}` | §11 |
+| `setTimer` / `cancelTimer` / `listTimers` | `{ duration or seconds, label?/name?, room?, satellite?, announce? }` / `{ id?, satellite? }` / `{ satellite? }` | §11 |
 | `setAlarm` / `cancelAlarm` / `listAlarms` | `{ time or hour+minute, weekdays?, label?, room? }` / `{ id? }` / `{}` | §11 |
 | `saveMemory` / `forgetMemory` / `listMemories` | `{ text, key? }` / `{ id? or text? }` / `{}` | §11 |
 | `listTriggers` / `fireTrigger` / `setTriggerEnabled` | `{}` / `{ id }` / `{ id, enabled }` | §10 |

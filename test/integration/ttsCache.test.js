@@ -11,6 +11,8 @@ const {
     stripSsml,
     truncateForTts,
     MAX_TTS_CHARS,
+    parseTtsMaxChars,
+    spokenLengthHint,
 } = require('../../build/lib/voice/ttsCache.js');
 
 const silentLog = { info() {}, warn() {}, error() {}, debug() {} };
@@ -94,6 +96,27 @@ test('a long answer is cut and not cached', async t => {
     await tts.synthesize(long, 'en');
     assert.equal(calls.text.length, 2, 'not worth caching → synthesised every time');
     assert.deepEqual(fs.readdirSync(dir).filter(f => f.endsWith('.pcm')), [], 'nothing written');
+});
+
+test('the length limit is configurable, and 0 turns it off', async t => {
+    const long = 'Ein Satz mit einigen Wörtern. '.repeat(40).trim(); // ~1200 characters
+    const warnings = [];
+    const log = { ...silentLog, warn: m => warnings.push(m) };
+
+    const short = fakeEngine();
+    await new CachedTts(short.engine, { dir: tmpDir(t), log, maxChars: 200 }).synthesize(long, 'de');
+    assert.ok(short.calls.text[0].length <= 200, 'cut to the configured limit');
+    assert.match(short.calls.text[0], /\.$/, 'at a sentence end');
+    assert.match(warnings[0], /limit 200/, 'the warning names the limit and where to change it');
+
+    const unlimited = fakeEngine();
+    await new CachedTts(unlimited.engine, { dir: tmpDir(t), log, maxChars: 0 }).synthesize(long, 'de');
+    assert.equal(unlimited.calls.text[0], long, '0 = the whole answer is spoken');
+    assert.equal(warnings.length, 1, 'nothing cut, nothing to warn about');
+
+    const standard = fakeEngine();
+    await new CachedTts(standard.engine, { dir: tmpDir(t), log, maxChars: undefined }).synthesize(long, 'de');
+    assert.ok(standard.calls.text[0].length <= MAX_TTS_CHARS, 'no setting = the default limit');
 });
 
 test('SSML goes to the engine that can speak it, and is flattened for one that cannot', async t => {
@@ -183,4 +206,32 @@ test('a corrupt entry is ignored rather than played at the wrong pitch', async t
     const res = await tts.synthesize('Ok.', 'de');
     assert.equal(calls.text.length, 2, 'synthesised again');
     assert.equal(res.sampleRate, 24000);
+});
+
+test('parseTtsMaxChars: a number, 0 = off, anything else = the default', () => {
+    assert.equal(parseTtsMaxChars(400), 400);
+    assert.equal(parseTtsMaxChars('250'), 250);
+    assert.equal(parseTtsMaxChars(0), 0, '0 switches the limit off');
+    assert.equal(parseTtsMaxChars(''), undefined, 'an emptied field means the default');
+    assert.equal(parseTtsMaxChars(null), undefined);
+    assert.equal(parseTtsMaxChars(undefined), undefined, 'installations from before the setting');
+    assert.equal(parseTtsMaxChars(-1), undefined);
+    assert.equal(parseTtsMaxChars('abc'), undefined);
+});
+
+test('spokenLengthHint names the limit in the voice language, and is empty without one', () => {
+    assert.equal(spokenLengthHint(0, 'de'), '');
+    const de = spokenLengthHint(400, 'de');
+    assert.match(de, /400 Zeichen/);
+    assert.match(de, /3 kurze Sätze/, 'models cannot count characters: the limit also comes as sentences');
+    assert.match(de, /State-IDs/);
+    assert.match(spokenLengthHint(100, 'de'), /einen kurzen Satz/);
+    assert.match(spokenLengthHint(400, 'en'), /400 characters .*3 short sentences/);
+    assert.match(spokenLengthHint(400, 'fr'), /characters/, 'other languages get English');
+    // Russian number agreement
+    assert.match(spokenLengthHint(100, 'ru'), /одно короткое предложение/);
+    assert.match(spokenLengthHint(400, 'ru'), /3 коротких предложения/);
+    assert.match(spokenLengthHint(600, 'ru'), /5 коротких предложений/);
+    assert.match(spokenLengthHint(1440, 'ru'), /12 коротких предложений/);
+    assert.match(spokenLengthHint(2640, 'ru'), /22 коротких предложения/);
 });

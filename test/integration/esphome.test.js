@@ -9,7 +9,14 @@ const crypto = require('node:crypto');
 const { pb, encode, decode, registrySize } = require('../../build/lib/voice/esphomeProto.js');
 const { SpeechDetector, rms } = require('../../build/lib/voice/vad.js');
 const { MediaServer } = require('../../build/lib/voice/mediaServer.js');
-const { EsphomeSatellites } = require('../../build/lib/voice/esphome.js');
+const {
+    EsphomeSatellites,
+    speechLevelOf,
+    DEFAULT_SPEECH_LEVEL,
+    yesNoWord,
+    confirmAnswerOf,
+    displayLanguageOption,
+} = require('../../build/lib/voice/esphome.js');
 const { prepareWakeWord } = require('../../build/lib/voice/wakeWords.js');
 const { microModel } = require('./tfliteModel.js');
 
@@ -145,6 +152,38 @@ const CHIRP_RMS = 16000; // the device's wake acknowledgement, heard on its own 
 const SPEECH_RMS = 420; // measured speech level on the same device
 const ROOM_RMS = 15; // between words
 
+test('a pause for thought does not end a long request, but a short command still closes fast', () => {
+    const opts = { adaptive: true, silenceMs: 300, longSilenceMs: 600, longAfterMs: 1500 };
+    const run = (speechFrames, pauseFrames) => {
+        const detector = new SpeechDetector(opts);
+        let verdict = null;
+        for (let i = 0; i < 10; i++) {
+            verdict ||= detector.push(frameAt(ROOM_RMS)); // 300 ms before anybody speaks
+        }
+        for (let i = 0; i < speechFrames; i++) {
+            verdict ||= detector.push(frameAt(SPEECH_RMS));
+        }
+        for (let i = 0; i < pauseFrames; i++) {
+            verdict ||= detector.push(frameAt(ROOM_RMS));
+        }
+        return { detector, verdict };
+    };
+
+    const command = run(20, 10); // 0.6 s "Licht an", 0.3 s quiet
+    assert.equal(command.verdict, 'speech-end', 'a short command ends after the normal silence');
+    assert.equal(command.detector.speechStartMs, 300, 'speech start is where the first loud frame began');
+
+    const thinking = run(60, 10); // 1.8 s of a longer request, then the same 0.3 s pause
+    assert.equal(thinking.verdict, null, 'the same pause does not end a long request');
+    assert.equal(thinking.detector.requiredSilenceMs, 600);
+    const report = thinking.detector.report();
+    assert.equal(report.speechStartMs, 300);
+    assert.equal(report.silenceMs, 600, 'the report says which silence applied');
+
+    const done = run(60, 20); // ... and a real end of 0.6 s still closes it
+    assert.equal(done.verdict, 'speech-end');
+});
+
 test('skipMs keeps the wake chirp from counting as speech', () => {
     const detector = new SpeechDetector({ skipMs: 300, adaptive: true, silenceMs: 100000 });
     for (let i = 0; i < 10; i++) {
@@ -245,6 +284,145 @@ test('a speaker who starts immediately cannot become the noise floor', () => {
     assert.ok(detector.sawSpeech, 'speech straight after the chirp must still register');
 });
 
+const PHONE_SPEECH_RMS = 160; // a phone running a satellite app, normal voice at arm's length (field report)
+
+test('a quiet microphone stays below the default gate, and a lower speech threshold hears it', () => {
+    // Phones suppress noise down to digital silence, so the floor sits at 0 and only the minimum decides.
+    const run = minStartLevel => {
+        const detector = new SpeechDetector({
+            skipMs: 300,
+            adaptive: true,
+            silenceMs: 100000,
+            ...(minStartLevel ? { minStartLevel, minEndLevel: Math.round(minStartLevel * 0.6) } : {}),
+        });
+        for (let i = 0; i < 10; i++) {
+            detector.push(Buffer.alloc(960)); // no chirp on a phone, just silence
+        }
+        // The phone's noise suppression zeroes the gaps between words, which is why the field log showed a
+        // noise floor of 0 after 12 s of talking.
+        for (let i = 0; i < 40; i++) {
+            detector.push(i % 4 === 3 ? Buffer.alloc(960) : frameAt(PHONE_SPEECH_RMS));
+        }
+        return detector;
+    };
+    const standard = run(0);
+    assert.equal(standard.sawSpeech, false, 'the default gate (250) must not hear the phone');
+    assert.equal(standard.startLevel, 250);
+    assert.ok(
+        standard.analysedPeak >= standard.startLevel * 0.4,
+        'the dropped utterance is loud enough to be reported as a voice that was too quiet',
+    );
+    const lowered = run(100);
+    assert.ok(lowered.sawSpeech, 'a threshold of 100 must hear the phone');
+    assert.equal(lowered.startLevel, 100);
+    assert.equal(lowered.endLevel, 60);
+});
+
+test('startTimeoutMs closes a stream in which nobody starts speaking', () => {
+    const detector = new SpeechDetector({ skipMs: 300, adaptive: true, startTimeoutMs: 1500, maxMs: 60000 });
+    let verdict = null;
+    let ms = 0;
+    for (; ms < 600 && !verdict; ms += 30) {
+        verdict = detector.push(frameAt(ms < 300 ? CHIRP_RMS : ROOM_RMS));
+    }
+    for (; ms < 10000 && !verdict; ms += 30) {
+        verdict = detector.push(frameAt(ROOM_RMS));
+    }
+    assert.equal(verdict, 'no-speech');
+    assert.equal(ms, 1500, 'counted from the start of the stream, the chirp included');
+    assert.equal(detector.sawSpeech, false);
+});
+
+test('startTimeoutMs does not cut off speech that has started', () => {
+    const detector = new SpeechDetector({ skipMs: 300, adaptive: true, startTimeoutMs: 1500, silenceMs: 600 });
+    let verdict = null;
+    for (let i = 0; i < 20 && !verdict; i++) {
+        verdict = detector.push(frameAt(i < 10 ? CHIRP_RMS : ROOM_RMS));
+    }
+    for (let i = 0; i < 100 && !verdict; i++) {
+        verdict = detector.push(frameAt(SPEECH_RMS)); // 3 s of speech, well past the start timeout
+    }
+    assert.equal(verdict, null, 'a speaker who started in time keeps the mic');
+    for (let i = 0; i < 40 && !verdict; i++) {
+        verdict = detector.push(frameAt(ROOM_RMS));
+    }
+    assert.equal(verdict, 'speech-end');
+});
+
+test('minSpeechMs: a click crosses the gate but is not speech, a short "да" is', () => {
+    const opts = { adaptive: true, silenceMs: 600, minSpeechMs: 200, minStartLevel: 150, minEndLevel: 90 };
+    const run = frames => {
+        const detector = new SpeechDetector(opts);
+        let verdict = null;
+        for (let i = 0; i < 10; i++) {
+            verdict ||= detector.push(frameAt(ROOM_RMS)); // 300 ms of room before anything happens
+        }
+        for (const rmsLevel of frames) {
+            verdict ||= detector.push(frameAt(rmsLevel));
+        }
+        for (let i = 0; i < 30; i++) {
+            verdict ||= detector.push(frameAt(ROOM_RMS));
+        }
+        return { detector, verdict };
+    };
+
+    // Measured on vitanova after a false wake: one 100 ms sound at RMS 197 against the gate 150.
+    const click = run([200, 200, 200]);
+    assert.equal(click.detector.sawSpeech, false, 'a 90 ms click is no request');
+    assert.equal(click.verdict, null, 'and therefore nothing to end');
+    assert.equal(click.detector.longestSoundMs, 90, 'the log can say how short it was');
+    assert.equal(click.detector.report().speechStartMs, undefined);
+
+    const da = run(Array(9).fill(SPEECH_RMS)); // 270 ms
+    assert.equal(da.detector.sawSpeech, true, 'the shortest real answer is speech');
+    assert.equal(da.detector.speechStartMs, 300, 'speech starts where the sound began, not where it was confirmed');
+    assert.equal(da.verdict, 'speech-end');
+    assert.equal(da.detector.report().voicedMs, 270);
+
+    // A word with a short dip between its syllables still adds up; the dip already counts as silence.
+    const syllables = run([...Array(4).fill(SPEECH_RMS), ...Array(3).fill(ROOM_RMS), ...Array(4).fill(SPEECH_RMS)]);
+    assert.equal(syllables.detector.sawSpeech, true);
+    assert.equal(syllables.detector.speechStartMs, 300);
+
+    // Two clicks further apart than speechGapMs do not add up to a word.
+    const clicks = run([200, 200, ...Array(12).fill(ROOM_RMS), 200, 200, 200]);
+    assert.equal(clicks.detector.sawSpeech, false);
+});
+
+test('minSpeechMs 0 keeps the first loud frame as speech', () => {
+    const detector = new SpeechDetector({ adaptive: true, silenceMs: 600, minStartLevel: 150, minEndLevel: 90 });
+    for (let i = 0; i < 10; i++) {
+        detector.push(frameAt(ROOM_RMS));
+    }
+    detector.push(frameAt(200));
+    assert.equal(detector.sawSpeech, true);
+    assert.equal(detector.speechStartMs, 300);
+});
+
+test('analysedPeak leaves out the skipped wake chirp', () => {
+    const detector = new SpeechDetector({ skipMs: 300, adaptive: true, silenceMs: 100000 });
+    for (let i = 0; i < 10; i++) {
+        detector.push(frameAt(CHIRP_RMS));
+    }
+    for (let i = 0; i < 10; i++) {
+        detector.push(frameAt(ROOM_RMS));
+    }
+    assert.ok(detector.peak > 10000, 'peak includes the chirp');
+    assert.ok(detector.analysedPeak < 100, `analysedPeak must not, was ${detector.analysedPeak}`);
+});
+
+test('speechLevelOf reads the table cell, whatever form it arrives in', () => {
+    assert.equal(DEFAULT_SPEECH_LEVEL, 250);
+    assert.equal(speechLevelOf({ ip: 'x' }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: '' }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: null }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: 0 }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: -5 }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: 'abc' }), 0);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: 100 }), 100);
+    assert.equal(speechLevelOf({ ip: 'x', speechLevel: '120' }), 120);
+});
+
 // ── media server ────────────────────────────────────────────────────────────
 
 function fetch(url) {
@@ -302,12 +480,36 @@ test('media server serves registered files until they are removed, and nothing e
  * Minimal stand-in for `linux-voice-assistant-cpp`: answers the handshake, fires a wake word, and —
  * like the real firmware — keeps streaming microphone audio until the server sends STT_VAD_END.
  */
-function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }) {
+/**
+ * A fake ESPHome satellite over loopback TCP.
+ *
+ * @param objectIds false = like ESPHome 2026 (API 1.19): announcements without `object_id`
+ * @param formats `supported_formats` of a media player, as [format, sampleRate, channels, purpose]; null = no player
+ * @param stopAfterVadEndMs ask to stop (`VoiceAssistantRequest{start:false}`) this long after STT_VAD_END
+ * @param screen a device with a screen: yes/no buttons (event `confirm_answer`) and a select `display_language`
+ */
+function fakeDevice({
+    speechMs = 600,
+    chirpMs = 600,
+    speechRms = 0,
+    stallAfterMs = 0,
+    wakeWords = ['okay_nabu'],
+    objectIds = true,
+    formats = null,
+    stopAfterVadEndMs = 0,
+    screen = false,
+    // longer streams than this are a server that never stops the microphone
+    maxStreamMs = 10000,
+}) {
     const state = {
         events: [],
         fetched: [],
         streamedMs: 0,
         stoppedBy: null,
+        /** How many pipelines the server accepted (VoiceAssistantResponse) */
+        responses: 0,
+        /** When the device stopped sending audio without ending the stream (`stallAfterMs`). */
+        stalledAt: 0,
         // The firmware owns the wake-word selection and persists it; mirror that here.
         activeWakeWords: [...wakeWords],
         setConfigCalls: [],
@@ -326,7 +528,49 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
         let queue = Promise.resolve();
         let pump = null;
         let elapsed = 0;
-        const send = m => socket.write(encode(m));
+        /** Where in the stream {@link state.speak} put speech, -1 = nowhere */
+        let speakFrom = -1;
+        let speakMs = 0;
+        const send = m => {
+            // Current firmware sends no object ids (API 1.19): every announcement goes out without one.
+            if (!objectIds && typeof m.setObjectId === 'function') {
+                m.setObjectId('');
+            }
+            socket.write(encode(m));
+        };
+        /** Like the firmware's `signal_stop_()`: the device ends the conversation from its side. */
+        state.sendStop = () => {
+            const m = new pb.VoiceAssistantRequest();
+            m.setStart(false);
+            send(m);
+        };
+        /**
+         * Start a pipeline. ESPHome sends the phrase of the last wake word with every request — the follow-up
+         * microphone after a reply with continue_conversation too. The microphone hears only the room, or with
+         * `speech` the chirp and speech like after a wake word.
+         */
+        state.startPipeline = (phrase = '', speech = false) => {
+            elapsed = speech ? 0 : chirpMs + speechMs;
+            speakFrom = -1;
+            const m = new pb.VoiceAssistantRequest();
+            m.setStart(true);
+            m.setWakeWordPhrase(phrase);
+            send(m);
+        };
+        /** Somebody speaks into the open microphone now. */
+        state.speak = (ms = 600) => {
+            speakFrom = elapsed;
+            speakMs = ms;
+        };
+        /** How much audio the open microphone has sent. */
+        state.position = () => elapsed;
+        /** A touch on the screen's yes or no button. */
+        state.press = type => {
+            const m = new pb.EventResponse();
+            m.setKey(50);
+            m.setEventType(type);
+            send(m);
+        };
 
         const stop = why => {
             if (pump) {
@@ -439,6 +683,28 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
         };
         const sendEntities = () => {
             sendSensors();
+            if (formats) {
+                // Like a Voice PE: the media player has no name of its own, so it is named after the device.
+                const player = new pb.ListEntitiesMediaPlayerResponse();
+                player.setKey(40);
+                player.setName(objectIds ? 'Fake Speaker' : '');
+                if (objectIds) {
+                    player.setObjectId('fake_speaker');
+                }
+                player.setSupportsPause(true);
+                player.setSupportedFormatsList(
+                    formats.map(([format, rate, channels, purpose]) => {
+                        const f = new pb.MediaPlayerSupportedFormat();
+                        f.setFormat(format);
+                        f.setSampleRate(rate);
+                        f.setNumChannels(channels);
+                        f.setPurpose(purpose === 'announcement' ? 1 : 0);
+                        f.setSampleBytes(2);
+                        return f;
+                    }),
+                );
+                send(player);
+            }
             for (const e of ENTITIES) {
                 if (e.kind === 'switch') {
                     const m = new pb.ListEntitiesSwitchResponse();
@@ -467,12 +733,72 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
                     send(m);
                 }
             }
+            if (screen) {
+                const buttons = new pb.ListEntitiesEventResponse();
+                buttons.setObjectId('confirm_answer');
+                buttons.setKey(50);
+                buttons.setName('Confirm Answer');
+                buttons.setEventTypesList(['yes', 'no']);
+                send(buttons);
+                const language = new pb.ListEntitiesSelectResponse();
+                language.setObjectId('display_language');
+                language.setKey(51);
+                language.setName('Display Language');
+                language.setEntityCategory(1);
+                language.setOptionsList(['Deutsch', 'English', 'Русский']);
+                send(language);
+                // Labels of the screen's pages, and a secret the adapter must not mirror
+                for (const [key, objectId, name, max, pattern, mode] of [
+                    [52, 'value_1_label', 'Value 1 label', 20, '', 0],
+                    [53, 'value_1_unit', 'Value 1 unit', 8, '[^0-9]*', 0],
+                    [54, 'pin', 'PIN', 8, '', 1],
+                ]) {
+                    const text = new pb.ListEntitiesTextResponse();
+                    text.setObjectId(objectId);
+                    text.setKey(key);
+                    text.setName(name);
+                    text.setMinLength(0);
+                    text.setMaxLength(max);
+                    text.setPattern(pattern);
+                    text.setMode(mode);
+                    send(text);
+                }
+                const firmware = new pb.ListEntitiesUpdateResponse();
+                firmware.setObjectId('firmware');
+                firmware.setKey(60);
+                firmware.setName('Firmware');
+                send(firmware);
+            }
             send(new pb.ListEntitiesDoneResponse());
             // Like the real device: the current values follow the announcements.
             sendSwitchState(1, false);
             sendNumberState(7, 10);
             sendSelectState(8, 'Medium');
             sendSensorStates();
+            if (screen) {
+                sendSelectState(51, 'English');
+                sendTextState(52, 'Wert 1');
+                sendTextState(53, '');
+                sendTextState(54, '1234');
+                sendUpdateState('1.0.0');
+            }
+        };
+        const sendTextState = (key, value) => {
+            const m = new pb.TextStateResponse();
+            m.setKey(key);
+            m.setState(value);
+            m.setMissingState(false);
+            send(m);
+        };
+        /** The firmware entity: what is installed, and what the last check found */
+        const sendUpdateState = latest => {
+            const m = new pb.UpdateStateResponse();
+            m.setKey(60);
+            m.setMissingState(false);
+            m.setCurrentVersion('1.0.0');
+            m.setLatestVersion(latest);
+            m.setTitle('Firmware');
+            send(m);
         };
 
         const handle = (name, message) => {
@@ -490,6 +816,7 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
             } else if (name === 'DeviceInfoRequest') {
                 const reply = new pb.DeviceInfoResponse();
                 reply.setName('fake-speaker');
+                reply.setFriendlyName('Fake Speaker');
                 reply.setModel('fake');
                 send(reply);
             } else if (name === 'SubscribeVoiceAssistantRequest') {
@@ -510,6 +837,24 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
             } else if (name === 'SelectCommandRequest') {
                 state.commands.push({ kind: 'select', key: message.getKey(), value: message.getState() });
                 sendSelectState(message.getKey(), message.getState());
+            } else if (name === 'TextCommandRequest') {
+                state.commands.push({ kind: 'text', key: message.getKey(), value: message.getState() });
+                sendTextState(message.getKey(), message.getState());
+            } else if (name === 'MediaPlayerCommandRequest') {
+                const value = message.getHasMediaUrl()
+                    ? {
+                          url: message.getMediaUrl(),
+                          announcement: message.getHasAnnouncement() ? message.getAnnouncement() : null,
+                      }
+                    : message.getHasCommand()
+                      ? message.getCommand()
+                      : message.getVolume();
+                state.commands.push({ kind: 'mediaPlayer', key: message.getKey(), value });
+            } else if (name === 'UpdateCommandRequest') {
+                state.commands.push({ kind: 'update', key: message.getKey(), value: message.getCommand() });
+                if (message.getCommand() === 2) {
+                    sendUpdateState('1.1.0'); // the check found a release
+                }
             } else if (name === 'VoiceAssistantTimerEventResponse') {
                 state.timerEvents.push({
                     type: message.getEventType(),
@@ -571,23 +916,44 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
                     }
                 })();
             } else if (name === 'VoiceAssistantResponse') {
+                state.responses++;
                 pump = setInterval(() => {
+                    if (stallAfterMs && elapsed >= stallAfterMs) {
+                        // Seen on a ThirdReality speaker: the audio just stops, no end flag, the stream stays open.
+                        state.stalledAt ||= Date.now();
+                        return;
+                    }
                     const audio = new pb.VoiceAssistantAudio();
                     // Like the real firmware: the wake acknowledgement chirp comes back in through
                     // the device's own microphone first, then whatever the speaker says.
-                    audio.setData(elapsed < chirpMs ? micFrame(true) : micFrame(elapsed < chirpMs + speechMs));
+                    // `speechRms` = a quiet microphone (a phone), otherwise loud speech.
+                    audio.setData(
+                        speakFrom >= 0 && elapsed >= speakFrom && elapsed < speakFrom + speakMs
+                            ? micFrame(true)
+                            : elapsed < chirpMs
+                              ? micFrame(true)
+                              : elapsed < chirpMs + speechMs
+                                ? speechRms
+                                    ? frameAt(speechRms)
+                                    : micFrame(true)
+                                : micFrame(false),
+                    );
                     send(audio);
                     elapsed += 30;
-                    if (elapsed > 10000) {
+                    if (elapsed > maxStreamMs) {
                         stop('runaway'); // the server never stopped us — that is a bug worth failing on
                     }
                 }, 5);
             } else if (name === 'VoiceAssistantEventResponse') {
                 const type = message.getEventType();
                 const data = Object.fromEntries(message.getDataList().map(d => [d.getName(), d.getValue()]));
-                state.events.push({ type, data });
-                if (type === 12 || type === 4) {
+                state.events.push({ type, data, at: Date.now() });
+                // RUN_END while the mic streams stops it, like ESPHome's voice_assistant
+                if (type === 12 || type === 4 || type === 2) {
                     stop(`event ${type}`);
+                }
+                if (type === 12 && stopAfterVadEndMs) {
+                    setTimeout(() => state.sendStop(), stopAfterVadEndMs);
                 }
                 if (type === 8 && data.url) {
                     void fetch(data.url).then(r => {
@@ -601,6 +967,7 @@ function fakeDevice({ speechMs = 600, chirpMs = 600, wakeWords = ['okay_nabu'] }
                 // start_conversation is how a question re-opens the mic — record it like the firmware would.
                 state.announces.push({
                     mediaId: message.getMediaId(),
+                    text: message.getText(),
                     startConversation: message.getStartConversation(),
                 });
                 void fetch(message.getMediaId()).then(r => {
@@ -684,8 +1051,16 @@ test('wake word → captured audio → STT → answer → TTS url the device fet
     assert.ok(seen.pcmBytes > 0, 'STT should have received the captured audio');
     assert.equal(seen.question, 'wie spät ist es');
     assert.equal(seen.room, 'Wohnzimmer');
-    assert.equal(seen.audioMs, Math.round((seen.pcmBytes / 2 / 16000) * 1000), 'the journal gets the recording length');
     assert.ok(seen.vad.peak > seen.vad.noiseFloor, 'the journal gets the VAD levels');
+    assert.equal(seen.vad.end, 'speech-end');
+    assert.equal(seen.vad.silenceMs, 300, 'a short request ends after the configured silence');
+    assert.ok(seen.vad.speechStartMs >= 600, `speech is found after the chirp (${seen.vad.speechStartMs})`);
+    // STT gets the speech without the chirp in front and the silence behind; the journal the whole recording.
+    assert.ok(seen.vad.stt.fromMs > 0, 'the chirp is cut off');
+    // 300 ms of closing silence is less than the margin kept after the last sound (speechAudio.test.js cuts longer ones).
+    assert.ok(seen.vad.stt.toMs <= seen.audioMs, 'the cut ends inside the recording');
+    assert.equal(seen.pcmBytes, (seen.vad.stt.toMs - seen.vad.stt.fromMs) * 32, 'STT gets exactly the cut');
+    assert.equal(seen.vad.levels.length, Math.ceil(seen.audioMs / 100), 'the trace gets a level per 100 ms');
     assert.equal(seen.spoken.device, 'fake-speaker');
     assert.equal(seen.spoken.audioMs, 100, 'the journal gets the length of the reply');
 
@@ -701,6 +1076,9 @@ test('wake word → captured audio → STT → answer → TTS url the device fet
         assert.ok(types.includes(type), `missing ${label} event`);
     }
     assert.ok(types.indexOf(12) < types.indexOf(8), 'the mic must be stopped before the reply is sent');
+    // ESPHome keeps the flag of the last INTENT_END that carried it: "0" has to be said, not left out
+    assert.equal(device.events.find(e => e.type === 6).data.continue_conversation, '0');
+    assert.equal(device.events.find(e => e.type === 2).data.continue_conversation, '0');
 
     const ttsEnd = device.events.find(e => e.type === 8);
     assert.match(ttsEnd.data.url, /^http:\/\/127\.0\.0\.1:\d+\/media\/[0-9a-f]+\.wav$/);
@@ -710,6 +1088,203 @@ test('wake word → captured audio → STT → answer → TTS url the device fet
     for (const status of ['idle', 'listening', 'processing', 'speaking']) {
         assert.ok(seen.statuses.includes(status), `missing status ${status}`);
     }
+});
+
+test('a quiet satellite is heard once its speech threshold is lowered', async t => {
+    // No chirp, speech at phone level: with the default gate this would be dropped as silence.
+    const device = fakeDevice({ speechMs: 1500, chirpMs: 0, speechRms: PHONE_SPEECH_RMS });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+
+    const seen = { question: null, vad: null };
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Küche', speechLevel: 100 }],
+        language: 'de',
+        stt: { transcribe: async () => 'licht an' },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(3200), sampleRate: 16000 }) },
+        answer: async (question, ctx) => {
+            seen.question = question;
+            seen.vad = ctx.vad;
+            return 'Ok';
+        },
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        expectsFollowUp: () => false,
+    });
+
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    assert.notEqual(device.stoppedBy, 'runaway', 'the server must end the utterance on silence');
+    assert.equal(seen.question, 'licht an', 'the quiet speech must reach STT');
+    assert.equal(seen.vad.startLevel, 100, 'the configured threshold is the gate');
+    assert.equal(seen.vad.endLevel, 60, 'the silence gate keeps the 250/150 ratio');
+});
+
+test('a false wake closes the mic after 5 s instead of the full 12 s cap', async t => {
+    const device = fakeDevice({ speechMs: 0 }); // the chirp, then nobody says anything
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+
+    const seen = { answered: false, sttCalled: false, debug: [], discarded: [] };
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Salon' }],
+        language: 'de',
+        stt: {
+            transcribe: async () => {
+                seen.sttCalled = true;
+                return '';
+            },
+        },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(3200), sampleRate: 16000 }) },
+        answer: async () => {
+            seen.answered = true;
+            return 'Ok';
+        },
+        media,
+        log: { ...silentLog, debug: m => seen.debug.push(m) },
+        expectsFollowUp: () => false,
+        onDiscarded: capture => seen.discarded.push(capture),
+    });
+
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    // 5 s of audio at one frame per timer tick: on Windows (15.6 ms ticks) that alone takes ~2.6 s, so wait for
+    // the stream to end instead of a fixed time.
+    for (const deadline = Date.now() + 10000; !device.stoppedBy && Date.now() < deadline;) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    await new Promise(resolve => setTimeout(resolve, 300)); // let the server finish the capture
+
+    assert.notEqual(device.stoppedBy, 'runaway', 'the server must close the stream itself');
+    assert.ok(device.streamedMs >= 5000 && device.streamedMs < 6000, `streamed ${device.streamedMs} ms`);
+    assert.equal(seen.sttCalled, false, 'a false wake is not billed to speech recognition');
+    assert.equal(seen.answered, false);
+    assert.ok(
+        seen.debug.some(m => /nobody started speaking/.test(m)),
+        'the log says why the utterance was dropped',
+    );
+    // What the diagnosis recording gets: the whole stream, the reason and the detector levels.
+    assert.equal(seen.discarded.length, 1);
+    const [discarded] = seen.discarded;
+    assert.equal(discarded.reason, 'no-speech');
+    assert.equal(discarded.device, 'fake-speaker');
+    assert.equal(discarded.room, 'Salon');
+    assert.equal(discarded.wakeWord, 'okay nabu', 'the phrase the device reported');
+    assert.equal(discarded.sampleRate, 16000);
+    assert.ok(discarded.pcm.length >= 5 * 16000 * 2, 'the full recording, chirp included');
+    assert.ok(discarded.vad.peak > discarded.vad.analysedPeak, 'the chirp is in peak, not in analysedPeak');
+    assert.equal(discarded.vad.startLevel, 250);
+    // A RUN_END right behind STT_VAD_END is lost while the firmware stops its microphone; the error is not.
+    const types = device.events.map(e => e.type);
+    const vadEnd = types.indexOf(12);
+    assert.deepEqual(types.slice(vadEnd), [12, 0, 2], 'STT_VAD_END, ERROR, RUN_END');
+    assert.equal(device.events[vadEnd + 1].data.code, 'stt-no-text-recognized');
+});
+
+test('a device that stops sending audio is closed after 2 s instead of the 30 s pipeline timeout', async t => {
+    // Chirp, speech, a moment of quiet — and then no more audio, but no end of the stream either.
+    const device = fakeDevice({ speechMs: 600, stallAfterMs: 1500 });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+
+    const seen = { info: [] };
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Salon' }],
+        language: 'de',
+        stt: { transcribe: async () => 'licht an' },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(3200), sampleRate: 16000 }) },
+        answer: async (question, ctx) => {
+            seen.question = question;
+            seen.vad = ctx.vad;
+            return 'Ok';
+        },
+        media,
+        silenceMs: 1200, // longer than the quiet the device sends before it stalls
+        log: { ...silentLog, info: m => seen.info.push(m) },
+        expectsFollowUp: () => false,
+    });
+
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    for (const deadline = Date.now() + 10000; !device.stoppedBy && Date.now() < deadline;) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    assert.ok(device.stalledAt, 'the fake device stalled');
+    assert.equal(device.stoppedBy, 'event 12', 'the server ends the stream itself');
+    assert.equal(seen.question, 'licht an', 'what was said before the stall is still answered');
+    assert.equal(seen.vad.end, 'stall');
+    assert.ok(
+        seen.info.some(m => /stopped sending audio after 1\.50 s/.test(m)),
+        `the log says what happened: ${seen.info.join(' | ')}`,
+    );
+});
+
+test('a recording the speech recognition returns empty is reported for diagnosis', async t => {
+    const device = fakeDevice({ speechMs: 600 });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+
+    const discarded = [];
+    let answered = false;
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Salon' }],
+        language: 'de',
+        stt: { transcribe: async () => '' },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(3200), sampleRate: 16000 }) },
+        answer: async () => {
+            answered = true;
+            return 'Ok';
+        },
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        expectsFollowUp: () => false,
+        onDiscarded: capture => discarded.push(capture),
+    });
+
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    assert.equal(answered, false);
+    assert.equal(discarded.length, 1);
+    assert.equal(discarded[0].reason, 'empty-stt');
+    assert.ok(discarded[0].vad.analysedPeak >= discarded[0].vad.startLevel, 'it did sound like speech');
+    // Like Home Assistant: no STT_END without text, an error the firmware takes to idle in any state, then RUN_END.
+    const types = device.events.map(e => e.type);
+    assert.ok(!types.includes(4), 'no STT_END without text');
+    const error = device.events.find(e => e.type === 0);
+    assert.equal(error?.data.code, 'stt-no-text-recognized');
+    assert.ok(types.indexOf(0) < types.lastIndexOf(2), 'the error comes before RUN_END');
 });
 
 test('announce reaches a connected satellite as a media url', async t => {
@@ -751,6 +1326,329 @@ test('announce reaches a connected satellite as a media url', async t => {
     assert.equal(device.announces.at(-1).startConversation, true, 'a question must open the mic');
 
     assert.equal(await satellites.announce('does-not-exist', Buffer.alloc(16), 16000), 0);
+});
+
+// ── a satellite with a screen ───────────────────────────────────────────────
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function waitFor(condition, what, ms = 8000) {
+    for (const deadline = Date.now() + ms; !condition();) {
+        if (Date.now() > deadline) {
+            throw new Error(`timed out waiting for ${what}`);
+        }
+        await sleep(20);
+    }
+}
+
+test('yes/no word, button event and display language option', () => {
+    assert.equal(yesNoWord('de', true), 'Ja');
+    assert.equal(yesNoWord('ru', false), 'Нет');
+    assert.equal(yesNoWord('zh-cn', true), '是');
+    assert.equal(yesNoWord('xx', true), 'Yes');
+    assert.equal(confirmAnswerOf('yes'), true);
+    assert.equal(confirmAnswerOf(' NO '), false);
+    assert.equal(confirmAnswerOf('maybe'), null);
+    assert.equal(confirmAnswerOf(undefined), null);
+    const names = ['Deutsch', 'English', 'Русский'];
+    assert.equal(displayLanguageOption(names, 'de'), 'Deutsch');
+    assert.equal(displayLanguageOption(names, 'en'), 'English');
+    assert.equal(displayLanguageOption(names, 'ru'), 'Русский');
+    assert.equal(displayLanguageOption(names, 'fr'), null);
+    assert.equal(displayLanguageOption(names, ''), null);
+    // codes instead of names, if the firmware switches to them
+    assert.equal(displayLanguageOption(['de', 'en', 'ru'], 'ru'), 'ru');
+    assert.equal(displayLanguageOption(['de-DE', 'en-US'], 'de'), 'de-DE');
+    assert.equal(displayLanguageOption(['German', 'Russian'], 'ru'), 'Russian');
+});
+
+/** A satellite with a screen whose first request is answered with a question that waits for yes or no. */
+async function screenSatellite(t) {
+    const device = fakeDevice({ speechMs: 600, screen: true });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+    const QUESTION = 'testLamp auf true setzen? Sag ja oder nein.';
+    const asked = [];
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Salon' }],
+        language: 'de',
+        stt: { transcribe: async () => 'schalte die Testlampe ein' },
+        tts: { synthesize: async text => ({ pcm: Buffer.alloc(text.length * 32), sampleRate: 16000 }) },
+        answer: async (question, ctx) => {
+            asked.push({ question, ctx });
+            return asked.length === 1 ? QUESTION : 'Die Testlampe ist jetzt eingeschaltet.';
+        },
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        // like the [[LISTEN]] marker pi-agent puts on its confirmation
+        expectsFollowUp: answer => answer === QUESTION,
+    });
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+    await satellites.start();
+    await waitFor(() => device.events.some(e => e.type === 2), 'the end of the first run');
+    return { device, asked };
+}
+
+test('a screen shows the voice language: set once on connect', async t => {
+    const { device } = await screenSatellite(t);
+    await sleep(200);
+    // English on the device, German in the assistant; the device's echo of the new value is not answered again
+    assert.deepEqual(
+        device.commands.filter(c => c.key === 51),
+        [{ kind: 'select', key: 51, value: 'Deutsch' }],
+    );
+});
+
+test('a yes button answers the open question: the mic closes, the reply is announced', async t => {
+    const { device, asked } = await screenSatellite(t);
+    assert.equal(device.events.find(e => e.type === 6).data.continue_conversation, '1', 'the question continues');
+
+    // The device re-opens the mic for the answer — with the phrase of the last wake word, as ESPHome never clears it
+    // (field report 2026-11-05: the press was ignored as "without an open question"); the user touches "yes" instead
+    // of speaking.
+    const opened = device.events.length;
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 2, 'the follow-up pipeline');
+    await sleep(150);
+    assert.ok(!device.events.slice(opened).some(e => e.type === 10), 'no WAKE_WORD_END for the follow-up');
+    const before = device.events.length;
+    device.press('yes');
+    await waitFor(() => device.announces.length === 1, 'the announced reply');
+
+    const after = device.events.slice(before);
+    assert.ok(
+        after.some(e => e.type === 2),
+        'RUN_END closes the microphone',
+    );
+    assert.ok(!after.some(e => e.type === 0 || e.type === 12), 'no error and no end of speech: nothing was said');
+    assert.equal(device.stoppedBy, 'event 12', 'the first run ended normally');
+    assert.equal(asked.length, 2);
+    assert.equal(asked[1].question, 'Ja', 'the button goes on as the yes word of the voice language');
+    assert.equal(asked[1].ctx.button, 'yes');
+    assert.equal(asked[1].ctx.wakeWord, undefined);
+    assert.deepEqual(
+        { text: device.announces[0].text, startConversation: device.announces[0].startConversation },
+        { text: 'Die Testlampe ist jetzt eingeschaltet.', startConversation: false },
+    );
+    await waitFor(() => device.fetched.length === 2, 'the device fetching the reply');
+
+    // No question open any more: a press changes nothing.
+    device.press('no');
+    await sleep(300);
+    assert.equal(asked.length, 2);
+});
+
+test('a button pressed before the mic opened answers too, and that mic is closed at once', async t => {
+    const { device, asked } = await screenSatellite(t);
+    device.press('no');
+    await waitFor(() => device.announces.length === 1, 'the announced reply');
+    assert.equal(asked[1].question, 'Nein');
+
+    // The firmware still opens the mic for the question (its continue flag): it is closed without a pipeline.
+    const before = device.events.length;
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.events.length > before, 'the answer to the follow-up request');
+    await sleep(200);
+    assert.deepEqual(
+        device.events.slice(before).map(e => e.type),
+        [2],
+        'only RUN_END: no RUN_START, nothing recorded',
+    );
+    assert.equal(device.responses, 1, 'the follow-up pipeline is not accepted');
+
+    // A wake word afterwards is a new request as usual.
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 2, 'the next pipeline');
+});
+
+test('the device stops its conversation right after the press: the answer still goes through', async t => {
+    const { device, asked } = await screenSatellite(t);
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 2, 'the follow-up pipeline');
+    await sleep(100);
+    const before = device.events.length;
+    // Like the screen firmware: the event, then voice_assistant.stop at once
+    device.press('yes');
+    device.sendStop();
+    await waitFor(() => device.announces.length === 1, 'the announced reply');
+    assert.equal(asked[1].question, 'Ja');
+    assert.deepEqual(
+        device.events.slice(before).map(e => e.type),
+        [2],
+        'one RUN_END: the stop after the button ends nothing more',
+    );
+    // That stop dropped the device's continue flag, so a wake word right after is a new request, not a stale mic.
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 3, 'the next pipeline');
+});
+
+test('the stop arrives before the press: the question waits for the report', async t => {
+    const { device, asked } = await screenSatellite(t);
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 2, 'the follow-up pipeline');
+    await sleep(100);
+    // State messages may be batched by the firmware, the stop is not: it can overtake the event.
+    device.sendStop();
+    await waitFor(() => device.events.at(-1).type === 2, 'the end of the follow-up run');
+    device.press('no');
+    await waitFor(() => device.announces.length === 1, 'the announced reply');
+    assert.equal(asked[1].question, 'Nein');
+    assert.equal(asked[1].ctx.button, 'no');
+});
+
+test('a spoken answer closes the question: a button afterwards is no answer', async t => {
+    const { device, asked } = await screenSatellite(t);
+    device.startPipeline('okay nabu', true);
+    await waitFor(() => asked.length === 2, 'the spoken answer');
+    assert.equal(asked[1].ctx.wakeWord, '', 'answered in the follow-up, not after a wake word');
+    await waitFor(() => device.events.filter(e => e.type === 2).length === 2, 'the end of the answer');
+    device.press('yes');
+    await sleep(400);
+    assert.equal(asked.length, 2, 'the press was ignored');
+    assert.equal(device.announces.length, 0);
+});
+
+// ── dialog mode ─────────────────────────────────────────────────────────────
+
+/**
+ * A satellite whose first request, after the wake word, is answered normally. `texts` is what the speech recognition
+ * hears next (then "wie spät ist es"); "Licht an" is done without words, like with the confirmation tone.
+ */
+async function dialogSatellite(t) {
+    const device = fakeDevice({ speechMs: 600, maxStreamMs: 30000 });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+    const texts = [];
+    const asked = [];
+    const changes = [];
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Salon' }],
+        language: 'de',
+        stt: { transcribe: async () => (texts.length ? texts.shift() : 'wie spät ist es') },
+        tts: { synthesize: async text => ({ pcm: Buffer.alloc(text.length * 32), sampleRate: 16000 }) },
+        answer: async (question, ctx) => {
+            asked.push({ question, ctx });
+            return question === 'Licht an' ? '' : `Antwort auf ${question}`;
+        },
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        onDialog: (d, room, on, reason) => changes.push({ on, reason }),
+    });
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+    await satellites.start();
+    await waitFor(() => device.events.some(e => e.type === 2), 'the end of the first run');
+    return { device, satellites, texts, asked, changes, name: satellites.devices()[0] };
+}
+
+test('dialog mode: no wake word, silence does not end the turn, every reply listens again, a stop ends it', async t => {
+    const { device, satellites, asked, changes, name } = await dialogSatellite(t);
+    assert.equal(device.events.find(e => e.type === 6).data.continue_conversation, '0', 'a plain request');
+    assert.equal(satellites.dialog(name), false);
+
+    // switched on while a request is answered ("Dialogmodus an"): the reply opens the mic, nothing is announced
+    assert.equal(satellites.setDialog(name, true), true);
+    assert.equal(satellites.dialog(name), true);
+    assert.deepEqual(changes, [{ on: true, reason: 'command' }]);
+    assert.equal(device.announces.length, 0);
+
+    // The device opens its microphone — with the stale phrase of the last wake word, as ESPHome never clears it.
+    const opened = device.events.length;
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 2, 'the dialog microphone');
+    // More than a window of silence: the detector starts over, the turn goes on.
+    await waitFor(() => device.position() > 14000, 'more than one window of silence', 20000);
+    const silent = device.events.slice(opened);
+    assert.ok(!silent.some(e => e.type === 10), 'no WAKE_WORD_END in dialog mode');
+    assert.ok(!silent.some(e => [0, 2, 12].includes(e.type)), 'silence neither ends the stream nor the run');
+
+    device.speak();
+    await waitFor(() => asked.length === 2, 'the request spoken in the dialog');
+    assert.equal(asked[1].ctx.wakeWord, '', 'not a wake word');
+    await waitFor(() => device.events.filter(e => e.type === 2).length === 2, 'the end of the reply');
+    const reply = device.events.slice(opened);
+    assert.equal(reply.find(e => e.type === 6).data.continue_conversation, '1', 'ESPHome reads it in INTENT_END');
+    assert.equal(reply.find(e => e.type === 2).data.continue_conversation, '1', 'linux-voice-assistant in RUN_END');
+    assert.equal(reply.find(e => e.type === 7).data.text, 'Antwort auf wie spät ist es');
+
+    // The stop button (or the wake word during the reply) ends the dialog.
+    device.sendStop();
+    await waitFor(() => !satellites.dialog(name), 'the dialog mode ending');
+    assert.deepEqual(changes.at(-1), { on: false, reason: 'stop' });
+});
+
+test('dialog mode: nothing recognised listens on, a wordless command answers with the tone, switched off the mic closes', async t => {
+    const { device, satellites, texts, asked, changes, name } = await dialogSatellite(t);
+    await waitFor(() => device.fetched.length === 1, 'the first reply played');
+
+    // Switched on while idle (the state): the tone is announced and opens the microphone, no question is open.
+    const tone = { pcm: Buffer.alloc(3200), sampleRate: 16000 };
+    assert.equal(satellites.setDialog(name, true, tone), true);
+    await waitFor(() => device.announces.length === 1, 'the tone that opens the microphone');
+    assert.deepEqual(
+        { text: device.announces[0].text, startConversation: device.announces[0].startConversation },
+        { text: '', startConversation: true },
+    );
+
+    // A cough: speech the recognition makes no text of. No error, the device just listens again.
+    texts.push('');
+    let opened = device.events.length;
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 2, 'the dialog microphone');
+    // after the part the detector skips for the wake chirp
+    await waitFor(() => device.position() > 2400, 'a moment of silence');
+    device.speak();
+    await waitFor(() => device.events.slice(opened).some(e => e.type === 2), 'the end of the turn');
+    let turn = device.events.slice(opened);
+    assert.ok(!turn.some(e => e.type === 0), 'no error');
+    assert.ok(!turn.some(e => e.type === 4), 'no STT_END without text');
+    assert.equal(turn.find(e => e.type === 6).data.continue_conversation, '1');
+    assert.equal(turn.find(e => e.type === 2).data.continue_conversation, '1');
+    assert.ok(turn.find(e => e.type === 8).data.url, 'a silent clip, after which the device listens again');
+    assert.equal(asked.length, 1, 'nothing was asked');
+    assert.equal(satellites.dialog(name), true);
+
+    // A command done without words: the tone is the reply.
+    texts.push('Licht an');
+    opened = device.events.length;
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 3, 'the next dialog microphone');
+    await waitFor(() => device.position() > 2400, 'a moment of silence');
+    device.speak();
+    await waitFor(() => device.events.slice(opened).some(e => e.type === 2), 'the end of the command');
+    turn = device.events.slice(opened);
+    assert.equal(asked.at(-1).question, 'Licht an');
+    assert.ok(turn.find(e => e.type === 8).data.url, 'the tone as the reply');
+    assert.equal(turn.find(e => e.type === 2).data.continue_conversation, '1');
+
+    // Listening, nobody speaks: switched off, the microphone closes at once.
+    opened = device.events.length;
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 4, 'the last dialog microphone');
+    await sleep(150);
+    assert.equal(satellites.setDialog(name, false), true);
+    await waitFor(() => device.events.slice(opened).some(e => e.type === 2), 'the microphone closing');
+    turn = device.events.slice(opened);
+    assert.ok(
+        turn.some(e => e.type === 12),
+        'end of speech stops the stream',
+    );
+    assert.equal(turn.find(e => e.type === 2).data.continue_conversation, undefined, 'nothing more to listen for');
+    assert.deepEqual(changes, [
+        { on: true, reason: 'command' },
+        { on: false, reason: 'command' },
+    ]);
 });
 
 // ── wake words ──────────────────────────────────────────────────────────────
@@ -1012,6 +1910,34 @@ test('a setting is written to the device and the reported value comes back', asy
     assert.equal(now('mic_noise'), 'High');
 });
 
+test('float32 values of the device arrive as the numbers it meant', () => {
+    const { EntityRegistry, float32 } = require('../../build/lib/voice/esphomeEntities.js');
+    // What the protobuf float fields really hand over (measured on a ThirdReality speaker).
+    assert.equal(float32(0.5000000237487257), 0.5);
+    assert.equal(float32(0.0010000000474974513), 0.001);
+    assert.equal(float32(0.9020000428427011), 0.902);
+    assert.equal(float32(4000), 4000);
+    assert.equal(float32(21.3999996185302734), 21.4);
+
+    // Through the real message path: a float field set to 0.001 comes back as float32.
+    const registry = new EntityRegistry();
+    const announce = new pb.ListEntitiesNumberResponse();
+    announce.setKey(9);
+    announce.setObjectId('stop_word_sensitivity');
+    announce.setName('Stop Word Sensitivity');
+    announce.setMinValue(0);
+    announce.setMaxValue(1);
+    announce.setStep(0.001);
+    const [decodedAnnounce] = decode(encode(announce)).frames;
+    const entity = registry.addFromAnnouncement(decodedAnnounce.name, decodedAnnounce.message);
+    assert.equal(entity.step, 0.001, 'not 0.0010000000474974513');
+    const state = new pb.NumberStateResponse();
+    state.setKey(9);
+    state.setState(0.5);
+    const [decodedState] = decode(encode(state)).frames;
+    assert.equal(registry.applyState(decodedState.name, decodedState.message).value, 0.5);
+});
+
 test('out-of-range numbers are clamped to what the device allows', async t => {
     const { device, satellites, name } = await connectedSatellite(t);
 
@@ -1037,6 +1963,77 @@ test('a select takes its own options in any case and rejects anything else', asy
     assert.equal(device.commands[0].value, 'High', 'and it must be sent with the device spelling');
 });
 
+test('text entities are read and written within their limits', async t => {
+    const { device, satellites, name } = await connectedSatellite(t, { screen: true });
+    const entity = id => satellites.entities(name).find(e => e.objectId === id);
+
+    const label = entity('value_1_label');
+    assert.equal(label.kind, 'text');
+    assert.equal(label.writable, true);
+    assert.equal(label.maxLength, 20);
+    assert.equal(label.value, 'Wert 1');
+    assert.equal(entity('pin').password, true, 'the adapter keeps a password text out of the states');
+    assert.equal(label.password, false);
+
+    assert.equal(satellites.setEntity(name, 'value_1_label', 'Licht Büro'), true);
+    assert.equal(satellites.setEntity(name, 'value_1_unit', '°C'), true);
+    // 20 characters, but 21 bytes: the firmware counts bytes
+    assert.equal(satellites.setEntity(name, 'value_1_label', 'Lüftung Badezimmer 1'), false);
+    assert.equal(satellites.setEntity(name, 'value_1_unit', 'm3/h'), false, 'the pattern allows no digits');
+    assert.equal(satellites.setEntity(name, 'value_1_label', { text: 'x' }), false);
+    await sleep(300);
+
+    assert.deepEqual(
+        device.commands.filter(c => c.kind === 'text').map(c => [c.key, c.value]),
+        [
+            [52, 'Licht Büro'],
+            [53, '°C'],
+        ],
+    );
+    assert.equal(entity('value_1_label').value, 'Licht Büro', 'the device echoes what it took');
+});
+
+test('a firmware update entity can be asked to check for a new version now', async t => {
+    const { device, satellites, name } = await connectedSatellite(t, { screen: true });
+    const latest = () => satellites.entities(name).find(e => e.objectId === 'firmware').value.latestVersion;
+    assert.equal(latest(), '1.0.0');
+
+    assert.equal(satellites.setEntity(name, 'firmware', 'check'), true);
+    await sleep(300);
+    assert.deepEqual(
+        device.commands.filter(c => c.kind === 'update').map(c => c.value),
+        [2],
+        'UpdateCommandRequest with UPDATE_COMMAND_CHECK',
+    );
+    assert.equal(latest(), '1.1.0', 'the device reports what the check found');
+});
+
+test('a URL plays on the media player as music, not as an announcement', async t => {
+    const { device, satellites, name } = await connectedSatellite(t, { formats: [['flac', 48000, 1, 'announcement']] });
+    const player = satellites.entities(name).find(e => e.kind === 'mediaPlayer');
+    assert.ok(player, 'the fake device has a media player');
+    assert.equal(satellites.setEntity(name, player.objectId, { url: 'http://radio.example/bob.mp3' }), true);
+    assert.equal(satellites.setEntity(name, player.objectId, 'stop'), true);
+    assert.equal(satellites.setEntity(name, player.objectId, { url: '  ' }), false, 'no URL, no command');
+    await sleep(300);
+    assert.deepEqual(
+        device.commands.filter(c => c.kind === 'mediaPlayer').map(c => c.value),
+        [{ url: 'http://radio.example/bob.mp3', announcement: false }, 2],
+        'media_url with has_announcement = true, announcement = false; then STOP',
+    );
+    // a live stream of ours is addressed with the host the device reaches us on
+    assert.match(satellites.mediaUrl(name, '/stream/x.flac'), /^http:\/\/127\.0\.0\.1:\d+\/stream\/x\.flac$/);
+    assert.equal(satellites.mediaUrl('nobody', '/stream/x.flac'), null);
+});
+
+test('a text pattern is matched against the whole value', () => {
+    const { matchesPattern } = require('../../build/lib/voice/esphomeEntities.js');
+    assert.equal(matchesPattern('°C', '[^0-9]*'), true);
+    assert.equal(matchesPattern('m3', '[^0-9]*'), false);
+    assert.equal(matchesPattern('abc', 'b'), false, 'like an HTML pattern: the whole value');
+    assert.equal(matchesPattern('abc', '(unclosed'), true, 'a pattern JavaScript cannot read is not held against it');
+});
+
 test('timers are mirrored to the satellite as started / updated / cancelled', async t => {
     const { device, satellites, name } = await connectedSatellite(t);
 
@@ -1057,4 +2054,163 @@ test('timers are mirrored to the satellite as started / updated / cancelled', as
     assert.equal(device.timerEvents[0].name, 'Nudeln');
     assert.equal(device.timerEvents[0].total, 600);
     assert.equal(satellites.timerEvent('no-such-device', timer), 0);
+});
+
+// ── conversation end, reply format, entities of current firmware ────────────
+
+/** Wait until `check()` holds (or the deadline passes) — the fake device runs on real timers. */
+async function until(check, ms = 8000) {
+    for (const deadline = Date.now() + ms; !check() && Date.now() < deadline;) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+}
+
+test('the device ending the conversation while the answer is worked out gets RUN_END, and no reply', async t => {
+    // The firmware waits for an answer after STT_VAD_END; a wake word then sends `start:false` and nothing else.
+    const device = fakeDevice({ speechMs: 600, stopAfterVadEndMs: 100 });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+    const seen = { answered: false, spoken: false, statuses: [] };
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Gast' }],
+        language: 'de',
+        stt: {
+            transcribe: async () => {
+                await new Promise(resolve => setTimeout(resolve, 600)); // still recognising when the stop comes
+                return 'licht an';
+            },
+        },
+        tts: {
+            synthesize: async () => {
+                seen.spoken = true;
+                return { pcm: Buffer.alloc(3200), sampleRate: 16000 };
+            },
+        },
+        answer: async () => {
+            seen.answered = true;
+            return 'Ok';
+        },
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        onStatus: (_d, _r, status) => seen.statuses.push(status),
+        expectsFollowUp: () => false,
+    });
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    await until(() => device.events.some(e => e.type === 2));
+    await new Promise(resolve => setTimeout(resolve, 1200)); // let the STT finish: it must stay silent
+
+    const types = device.events.map(e => e.type);
+    const vadEnd = types.indexOf(12);
+    assert.ok(vadEnd >= 0, 'the utterance was closed');
+    assert.deepEqual(types.slice(vadEnd), [12, 2], 'RUN_END answers the stop, nothing follows');
+    assert.equal(seen.answered, false, 'the request is not answered any more');
+    assert.equal(seen.spoken, false);
+    assert.equal(seen.statuses.at(-1), 'idle');
+});
+
+test('a stop outside a conversation ends it on the device, but the echo of our own error is left alone', async t => {
+    const device = fakeDevice({ speechMs: 600 });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Gast' }],
+        language: 'de',
+        stt: { transcribe: async () => '' },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(3200), sampleRate: 16000 }) },
+        answer: async () => 'Ok',
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        expectsFollowUp: () => false,
+    });
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    await until(() => device.events.some(e => e.type === 2));
+    const runEnds = () => device.events.filter(e => e.type === 2).length;
+    assert.equal(runEnds(), 1);
+
+    // The firmware answers our error with `signal_stop_()` — that one needs no reply.
+    device.sendStop();
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(runEnds(), 1, 'no second RUN_END for the echo of the error');
+
+    // Later, a device still waiting in the conversation (it missed a RUN_END) asks to stop: end it there.
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    device.sendStop();
+    await until(() => runEnds() === 2, 2000);
+    assert.equal(runEnds(), 2, 'a stop outside a conversation gets its RUN_END');
+});
+
+test('replies go out as FLAC at the rate the media player asks for, and ids are derived without object_id', async t => {
+    // ESPHome 2026.10: the player decodes only what its pipelines use, and announcements carry no object_id.
+    const device = fakeDevice({
+        speechMs: 600,
+        objectIds: false,
+        formats: [
+            ['mp3', 44100, 2, 'default'],
+            ['flac', 48000, 1, 'announcement'],
+        ],
+    });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+    const seen = { info: [], entities: [] };
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Gast' }],
+        language: 'de',
+        // A slow STT: the reply is published after the entity list has arrived, as on a real device.
+        stt: {
+            transcribe: async () => {
+                await new Promise(resolve => setTimeout(resolve, 300));
+                return 'wie spät ist es';
+            },
+        },
+        tts: { synthesize: async () => ({ pcm: Buffer.alloc(4800), sampleRate: 24000 }) },
+        answer: async () => 'Es ist zwölf',
+        media,
+        silenceMs: 300,
+        log: { ...silentLog, info: m => seen.info.push(m) },
+        onEntities: (_d, _r, entities) => (seen.entities = entities),
+        expectsFollowUp: () => false,
+    });
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+
+    await satellites.start();
+    await until(() => device.fetched.length > 0);
+
+    assert.deepEqual(
+        seen.entities.map(e => e.objectId).sort(),
+        // The fake's own ids do not all come from the names (mic_noise = 'Noise Suppression'); a real device's do.
+        ['bssid', 'fake_speaker', 'mic_gain', 'noise_suppression', 'occupancy', 'temperature', 'thinking_sound'],
+        'ids from the names, as older firmware sent them; the nameless player is named after the device',
+    );
+    const ttsEnd = device.events.find(e => e.type === 8);
+    assert.match(ttsEnd.data.url, /\/media\/[0-9a-f]+\.flac$/);
+    const body = device.fetched.at(-1).body;
+    assert.equal(body.subarray(0, 4).toString('latin1'), 'fLaC');
+    const packed = body.readBigUInt64BE(8 + 10);
+    assert.equal(Number(packed >> 44n), 48000, 'at the rate of the announcement format');
+    assert.equal(Number(packed & 0xfffffffffn), 4800, '100 ms of 24 kHz speech is 4800 samples at 48 kHz');
+    assert.ok(
+        seen.info.some(m => /spoken replies as FLAC 48000 Hz/.test(m)),
+        `the log says which format: ${seen.info.join(' | ')}`,
+    );
 });

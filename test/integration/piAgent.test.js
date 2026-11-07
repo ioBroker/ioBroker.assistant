@@ -40,6 +40,33 @@ test('ask: sends text, conversation and instructions, with a unique request id a
     assert.equal(first.message.instructions, 'Kurz.');
     assert.deepEqual(first.options, { timeout: 30000 });
     assert.notEqual(first.message.requestId, second.message.requestId, 'pi-agent answers a repeated id only once');
+    assert.equal('language' in first.message, false, 'no language, no field');
+});
+
+test('ask: the language goes along, so pi-agent asks its confirmation questions in it', async () => {
+    // A Russian satellite asked "… Sag ja oder nein." (system language de): the German "Ja" came back empty from the STT
+    const host = fakeHost(() => ({ answer: 'Установить Лампа в true? Скажи да или нет. [[LISTEN]]' }));
+    const harness = new PiAgentHarness(host, 'pi-agent.0');
+    await harness.ask({ text: 'Включи лампу', conversation: 'sat', instructions: '', language: 'ru' });
+    assert.equal(host.sent[0].message.language, 'ru');
+});
+
+test('ask: a satellite request names the satellite and its tts state, others do not', async () => {
+    // pi-agent keeps them with a reminder and speaks there later by writing the tts state
+    const host = fakeHost(() => ({ answer: 'Ich erinnere dich in einer Stunde.' }));
+    const harness = new PiAgentHarness(host, 'pi-agent.0');
+    await harness.ask({
+        text: 'Erinnere mich in einer Stunde ans Licht',
+        conversation: 'waveshare-va-eb1614',
+        instructions: '',
+        satellite: 'Gast',
+        tts: 'assistant.0.satellites.Gast.tts',
+    });
+    await harness.ask({ text: 'Hallo', conversation: 'telegram:Max', instructions: '', satellite: '', tts: '' });
+    assert.equal(host.sent[0].message.satellite, 'Gast');
+    assert.equal(host.sent[0].message.tts, 'assistant.0.satellites.Gast.tts');
+    assert.equal('satellite' in host.sent[1].message, false, 'no satellite, no field');
+    assert.equal('tts' in host.sent[1].message, false);
 });
 
 test('ask: an instance that is not running fails at once, without waiting for the timeout', async () => {

@@ -152,6 +152,31 @@ test('TimerManager: restore reschedules future, drops expired', () => {
     assert.equal(mgr.list()[0].id, 'a');
 });
 
+test('TimerManager: the announcement text of a timer survives a restore', () => {
+    const nowRef = { t: 0 };
+    const { mgr, fired } = makeManager(nowRef);
+    const info = mgr.add({
+        label: 'Licht heute schalten',
+        source: 'waveshare-va-eb1614',
+        duration: 60,
+        announce: '  Erinnerung: Licht heute schalten ',
+    });
+    assert.equal(info.announce, 'Erinnerung: Licht heute schalten');
+    assert.equal('announce' in mgr.add({ duration: 30 }), false, 'without a text no field');
+
+    // what timers.list keeps across a restart
+    const saved = JSON.parse(JSON.stringify(mgr.list()));
+    const { mgr: again } = makeManager(nowRef);
+    again.restore(saved);
+    const restored = again.list().find(t => t.id === info.id);
+    assert.equal(restored.announce, 'Erinnerung: Licht heute schalten');
+    assert.equal(restored.source, 'waveshare-va-eb1614');
+
+    nowRef.t = 60_000;
+    mgr.tick();
+    assert.equal(fired.find(t => t.id === info.id).announce, 'Erinnerung: Licht heute schalten');
+});
+
 // ── formatDuration ──────────────────────────────────────────────────────────
 test('formatDuration de/en/ru', () => {
     assert.equal(formatDuration(300, 'de'), '5 Minuten');

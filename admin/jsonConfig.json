@@ -154,6 +154,31 @@
                     "lg": 2,
                     "xl": 2
                 },
+                "_installPiAgent": {
+                    "type": "sendTo",
+                    "label": "Install pi-agent",
+                    "command": "installAdapter",
+                    "jsonData": "{\"adapter\":\"pi-agent\"}",
+                    "useNative": true,
+                    "showProcess": true,
+                    "variant": "outlined",
+                    "confirm": {
+                        "title": "Install pi-agent",
+                        "text": "This installs the adapter pi-agent on the host of this instance and creates an instance of it. It takes a few minutes. Afterwards choose its model in its settings, or use the system-wide AI settings of admin.",
+                        "ok": "Install",
+                        "cancel": "Cancel"
+                    },
+                    "result": {
+                        "installed": "%s was installed and selected. Save the settings to use it.",
+                        "existing": "%s is already installed and is now selected. Save the settings to use it."
+                    },
+                    "hidden": "data.provider !== 'pi-agent' || !!data.piAgentInstance",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
                 "_piAgentInfo": {
                     "newLine": true,
                     "type": "staticText",
@@ -877,7 +902,7 @@
                     "newLine": true,
                     "type": "table",
                     "label": "ESPHome satellites",
-                    "help": "One row per device. Port empty = 6053. The room is what the assistant treats the satellite as being in. Leave the password empty unless the device really has an API password set — table values are stored unencrypted.",
+                    "help": "One row per device. Port empty = 6053. The room is what the assistant treats the satellite as being in. Speech threshold: the lowest microphone level (RMS) that counts as speech, empty = 250 — lower it (e.g. to 100) if the device reacts to the wake word but does not hear the command; the debug log shows the levels (\"peak RMS\", \"speech/silence gate\"). Leave the password empty unless the device really has an API password set — table values are stored unencrypted.",
                     "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
                     "xs": 12,
                     "sm": 12,
@@ -885,17 +910,25 @@
                     "lg": 12,
                     "xl": 12,
                     "items": [
-                        { "type": "text", "attr": "ip", "title": "Address (IP or host name)", "width": "30%" },
+                        { "type": "text", "attr": "ip", "title": "Address (IP or host name)", "width": "25%" },
                         {
                             "type": "number",
                             "attr": "port",
                             "title": "Port",
-                            "width": "15%",
+                            "width": "12%",
                             "min": 1,
                             "max": 65535,
                             "default": 6053
                         },
-                        { "type": "text", "attr": "room", "title": "Room", "width": "30%" },
+                        { "type": "text", "attr": "room", "title": "Room", "width": "23%" },
+                        {
+                            "type": "number",
+                            "attr": "speechLevel",
+                            "title": "Speech threshold",
+                            "width": "15%",
+                            "min": 10,
+                            "max": 5000
+                        },
                         { "type": "text", "attr": "password", "title": "API password (usually empty)", "width": "25%" }
                     ]
                 },
@@ -929,7 +962,7 @@
                 "esphomeSilenceMs": {
                     "type": "number",
                     "label": "End of speech after (ms of silence)",
-                    "help": "These devices stream until the server stops them, so the adapter decides when you stopped talking. Raise it if replies cut you off, lower it if the assistant waits too long.",
+                    "help": "These devices stream until the server stops them, so the adapter decides when you stopped talking. Raise it if replies cut you off, lower it if the assistant waits too long. After 2.5 seconds of speech half as much again is allowed, so a pause for thought does not end a longer request.",
                     "default": 900,
                     "min": 200,
                     "max": 5000,
@@ -939,6 +972,18 @@
                     "md": 3,
                     "lg": 3,
                     "xl": 3
+                },
+                "esphomeSaveCaptures": {
+                    "type": "checkbox",
+                    "label": "Keep dropped recordings for diagnosis",
+                    "help": "Recordings that were dropped as silence or that speech recognition returned empty are stored as WAV plus a JSON with the levels, under Files → assistant.N/captures (the newest 50). They contain audio from the room: only enable this for troubleshooting.",
+                    "default": false,
+                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
                 },
                 "voiceLanguage": {
                     "newLine": true,
@@ -1008,7 +1053,8 @@
                         { "label": "OpenRouter", "value": "openrouter" },
                         { "label": "Azure Speech", "value": "azure" },
                         { "label": "AWS Transcribe", "value": "aws" },
-                        { "label": "Vosk (local)", "value": "vosk" }
+                        { "label": "Vosk (local)", "value": "vosk" },
+                        { "label": "ai-parakeet (local adapter)", "value": "parakeet" }
                     ],
                     "default": "openai",
                     "hidden": "!data.voiceEnabled",
@@ -1040,14 +1086,15 @@
                     "newLine": true,
                     "type": "select",
                     "label": "Speech-to-text fallback",
-                    "help": "Used when the provider above fails (outage, expired key, empty quota). A local engine keeps voice working without the internet.",
+                    "help": "Used when the provider above fails (outage, expired key, empty quota) or returns no text for speech. A local engine keeps voice working without the internet.",
                     "options": [
                         { "label": "None", "value": "" },
                         { "label": "OpenAI (Whisper)", "value": "openai" },
                         { "label": "OpenRouter", "value": "openrouter" },
                         { "label": "Azure Speech", "value": "azure" },
                         { "label": "AWS Transcribe", "value": "aws" },
-                        { "label": "Vosk (local)", "value": "vosk" }
+                        { "label": "Vosk (local)", "value": "vosk" },
+                        { "label": "ai-parakeet (local adapter)", "value": "parakeet" }
                     ],
                     "default": "",
                     "hidden": "!data.voiceEnabled",
@@ -1077,6 +1124,68 @@
                     "lg": 3,
                     "xl": 3
                 },
+                "ttsMaxChars": {
+                    "type": "number",
+                    "label": "Longest spoken answer (characters)",
+                    "help": "A longer answer is cut at the last sentence end before this limit. 400 characters are about 25–30 seconds of speech. 0 = no limit.",
+                    "default": 400,
+                    "min": 0,
+                    "max": 10000,
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "parakeetInstance": {
+                    "newLine": true,
+                    "type": "instance",
+                    "adapter": "ai-parakeet",
+                    "label": "ai-parakeet instance",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'parakeet' && data.sttFallback !== 'parakeet')",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "_installParakeet": {
+                    "type": "sendTo",
+                    "label": "Install ai-parakeet",
+                    "command": "installAdapter",
+                    "jsonData": "{\"adapter\":\"ai-parakeet\"}",
+                    "useNative": true,
+                    "showProcess": true,
+                    "variant": "outlined",
+                    "confirm": {
+                        "title": "Install ai-parakeet",
+                        "text": "This installs the adapter ai-parakeet on the host of this instance and creates an instance of it. It takes a few minutes. On its first start it downloads the speech model (about 670 MB); it then needs about 1.1 GB of memory.",
+                        "ok": "Install",
+                        "cancel": "Cancel"
+                    },
+                    "result": {
+                        "installed": "%s was installed and selected. Save the settings to use it.",
+                        "existing": "%s is already installed and is now selected. Save the settings to use it."
+                    },
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'parakeet' && data.sttFallback !== 'parakeet') || !!data.parakeetInstance",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "_parakeetInfo": {
+                    "newLine": true,
+                    "type": "staticText",
+                    "text": "The adapter ai-parakeet recognises speech offline on the CPU of its host, in 25 European languages that the model detects itself. The audio goes to it over the ioBroker message bus, so the instance may also run on another host.",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'parakeet' && data.sttFallback !== 'parakeet')",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                },
                 "voiceCredentialType": {
                     "newLine": true,
                     "type": "select",
@@ -1086,7 +1195,7 @@
                         { "label": "Central credential store", "value": "manager" }
                     ],
                     "default": "manual",
-                    "hidden": "!data.voiceEnabled || (data.sttProvider === 'vosk' && data.ttsProvider === 'piper')",
+                    "hidden": "!data.voiceEnabled || ((data.sttProvider === 'vosk' || data.sttProvider === 'parakeet') && data.ttsProvider === 'piper')",
                     "xs": 12,
                     "sm": 12,
                     "md": 4,
@@ -1150,8 +1259,30 @@
                     "newLine": true,
                     "type": "text",
                     "label": "OpenAI STT model (optional)",
-                    "help": "Empty = whisper-1. Also: gpt-4o-transcribe, gpt-4o-mini-transcribe.",
-                    "hidden": "!data.voiceEnabled || data.sttProvider !== 'openai'",
+                    "help": "Empty = whisper-1. Also: gpt-4o-transcribe, gpt-4o-mini-transcribe. With an own server: the model as that server names it, e.g. Systran/faster-whisper-large-v3-turbo.",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'openai' && data.sttFallback !== 'openai')",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "sttBaseUrl": {
+                    "type": "text",
+                    "label": "Speech recognition server (optional)",
+                    "help": "OpenAI-compatible server instead of OpenAI, e.g. a local Whisper: http://192.168.1.10:8000/v1 (speaches, faster-whisper-server, LocalAI). Empty = OpenAI.",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'openai' && data.sttFallback !== 'openai')",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "sttServerKey": {
+                    "type": "password",
+                    "label": "Key of the speech recognition server",
+                    "help": "Only if the server wants one. The OpenAI key is never sent to it.",
+                    "hidden": "!data.voiceEnabled || (data.sttProvider !== 'openai' && data.sttFallback !== 'openai') || !data.sttBaseUrl",
                     "xs": 12,
                     "sm": 6,
                     "md": 4,
@@ -1453,6 +1584,47 @@
                     "md": 5,
                     "lg": 5,
                     "xl": 5
+                },
+                "ffmpegPath": {
+                    "newLine": true,
+                    "type": "text",
+                    "label": "Path to ffmpeg",
+                    "help": "Empty = the downloaded ffmpeg, otherwise ffmpeg from the search path. Needed for timer/alarm sounds, Telegram voice messages and MP3/Opus replies. Example: /usr/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe",
+                    "default": "",
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 8,
+                    "md": 5,
+                    "lg": 5,
+                    "xl": 5
+                },
+                "_testFfmpeg": {
+                    "type": "sendTo",
+                    "command": "testFfmpeg",
+                    "label": "Check ffmpeg",
+                    "variant": "outlined",
+                    "jsonData": "{\"path\":\"${data.ffmpegPath}\"}",
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 4,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "_downloadFfmpeg": {
+                    "type": "sendTo",
+                    "command": "downloadFfmpeg",
+                    "label": "Download ffmpeg",
+                    "title": "Downloads a static ffmpeg (ffmpeg-static, 20-30 MB) into the data directory of the instance. It is used when no path is entered.",
+                    "variant": "outlined",
+                    "showProcess": true,
+                    "jsonData": "{\"path\":\"${data.ffmpegPath}\"}",
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 4,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
                 },
                 "_voiceTest": {
                     "newLine": true,

@@ -1,7 +1,9 @@
 import * as os from 'node:os';
 import * as fs from 'node:fs';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { promisify } from 'node:util';
+import { randomBytes } from 'node:crypto';
 
 import {
     Adapter,
@@ -20,6 +22,8 @@ import {
     parseClockTime,
     parseWeekdays,
     isStopCommand,
+    dialogCommand,
+    mentionsScript,
     type NluDevice,
     type NluIntent,
 } from './lib/nlu';
@@ -39,7 +43,7 @@ import { Journal, errorInfo, traceDirFor, type JournalOrigin } from './lib/journ
 import { LocalLlm, installLocalLlm, isLocalLlmInstalled, isHandoff, DEFAULT_LOCAL_MODEL_URL } from './lib/localLlm';
 import { resolveApiKey, resolveVoiceCredentials, type LlmKey } from './lib/credentials';
 import { ConversationStore, type ConversationTurn } from './lib/context';
-import { PendingQuestions, ANY_SOURCE, ASK_TIMEOUT_MS } from './lib/ask';
+import { PendingQuestions, ANY_SOURCE, ASK_TIMEOUT_MS, endsWithQuestion } from './lib/ask';
 import { PresenceTracker, buildPresencePrompt, parsePresenceRows, type PresenceInfo } from './lib/presence';
 import { describeTargets, findTarget, isBroadcast, parseTargetRows, type TargetGroup } from './lib/targets';
 import { matchRoutine, parseRoutineRows, type Routine } from './lib/routines';
@@ -79,14 +83,30 @@ import {
 } from './lib/triggers';
 import { VoiceServer } from './lib/voice/voiceServer';
 import { WyomingServer } from './lib/voice/wyoming';
-import { EsphomeSatellites, type TimerEvent, type WakeWordConfig } from './lib/voice/esphome';
+import {
+    EsphomeSatellites,
+    esphomeAddress,
+    type EsphomeDevice,
+    type TimerEvent,
+    type WakeWordConfig,
+} from './lib/voice/esphome';
 import {
     MEDIA_COMMANDS,
     type EsphomeEntity,
     type MediaPlayerValue,
     type UpdateInfo,
 } from './lib/voice/esphomeEntities';
-import { MediaServer } from './lib/voice/mediaServer';
+import { MediaServer, type StreamSource } from './lib/voice/mediaServer';
+import {
+    STREAM_CONTENT_TYPES,
+    STREAM_EXTENSIONS,
+    deviceCodecs,
+    planStream,
+    probeStream,
+    transcodeArgs,
+    transcodeTarget,
+    type TranscodeTarget,
+} from './lib/voice/mediaStream';
 import {
     WAKE_WORD_DIR,
     WAKE_WORD_ID_RE,
@@ -108,7 +128,23 @@ import {
     type SpeechProvider,
 } from './lib/voice/engines';
 import { pcmFromResponse } from './lib/voice/openrouter';
+import { MAX_TTS_CHARS, parseTtsMaxChars, spokenLengthHint } from './lib/voice/ttsCache';
+import { CaptureStore, type DiscardedCapture } from './lib/voice/captures';
+import { downloadFfmpegStatic, ffmpegStaticPath } from './lib/voice/ffmpegStatic';
 import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
+import { AdapterInstaller, type InstallerAdapter } from './lib/installer';
+import {
+    attachmentNote,
+    historyText,
+    imageOnlyQuestion,
+    isVideoError,
+    noVisionText,
+    parseAskImages,
+    parseAskVideo,
+    videoNotSupportedText,
+    type ImageInput,
+    type VideoRef,
+} from './lib/media';
 import {
     SYSTEM_AI_ID,
     readSystemAi,
@@ -138,6 +174,28 @@ const WEATHER_CTX_TTL = 5 * 60 * 1000;
  */
 const NLU_DEVICES_TTL_MS = 60_000;
 
+/**
+ * How long a question of the cloud model about a script keeps the next request of that source with the cloud model
+ * (the reply, e.g. "the kitchen light, every hour", says nothing about a script). As long as pi-agent waits for a
+ * confirmation by text.
+ */
+const SCRIPT_TOPIC_MS = 2 * 60_000;
+
+/**
+ * Why a request skips the local tiers: it names a script, it answers a question about one, or pictures came with it
+ * (only the cloud model can see them).
+ */
+type CloudOnly = 'script' | 'scriptReply' | 'image' | null;
+
+/** Pictures and a video that came with a request (`ask` from Telegram). */
+interface Attachments {
+    images: ImageInput[];
+    /** Only where the sender stored it - the assistant does not look at videos yet. */
+    video: VideoRef | null;
+}
+
+const NO_ATTACHMENTS: Attachments = { images: [], video: null };
+
 /** Default for `localLlmTimeoutSec`: after this the local model is stopped and the next tier answers. */
 const LOCAL_LLM_TIMEOUT_SEC = 15;
 /**
@@ -151,12 +209,42 @@ const LOCAL_LLM_MAX_TOKENS = 256;
  * the TTS cache at startup; everything else is cached on first use.
  */
 /** Fields of the Voice tab the voice test takes from the unsaved form (everything an STT or TTS engine is built from). */
+/** Transports whose answer is spoken by a satellite (and therefore cut at `ttsMaxChars`). */
+const VOICE_TRANSPORTS: ReadonlySet<string> = new Set(['esphome', 'udp', 'native', 'wyoming']);
+
+/** Appended to a failed ffmpeg start: the usual cause is a missing binary or a wrong path. */
+const FFMPEG_HINT = ' — install ffmpeg, or download it or set its path on the Voice tab';
+
+/** `sendTo(<instance>, 'ask', …)`: a text question, or a recording (`audio`) when there is no text. */
+interface AskMessage {
+    text?: string;
+    /** Conversation key, e.g. `telegram:Max`; empty = the admin chat. */
+    source?: string;
+    /** Base64 recording, used when `text` is empty (e.g. a Telegram voice message). */
+    audio?: string;
+    /** `ogg`, `mp3`, `wav`, `pcm` … — anything but WAV/PCM is decoded with ffmpeg. */
+    format?: string;
+    /** Only for `pcm` (16-bit mono); default 16000. */
+    sampleRate?: number;
+    /** Recognition language; default = the voice language. */
+    language?: string;
+    /** The caller reads the answer aloud (dialog mode of the admin chat): the model is asked for a short spoken answer. */
+    spoken?: boolean;
+    /** Pictures for the cloud model: `[{ data: base64, mimeType }]`, at most 4 (see lib/media). */
+    images?: unknown;
+    /** A video, never as content: `{ adapter, path, mimeType?, durationSec?, size? }` of the ioBroker file storage. */
+    video?: unknown;
+}
+
 const VOICE_FORM_FIELDS = [
     'voiceLanguage',
     'sttProvider',
     'sttModel',
+    'sttBaseUrl',
+    'sttServerKey',
     'openrouterSttModel',
     'voskModel',
+    'parakeetInstance',
     'ttsProvider',
     'ttsVoice',
     'ttsModel',
@@ -179,7 +267,25 @@ const VOICE_FORM_FIELDS = [
     'piperVoice',
 ];
 /** Of those, the protected ones: the browser never gets them, so an empty value there means "keep the saved one" */
-const VOICE_FORM_SECRETS = ['voiceApiKey', 'openrouterSpeechKey', 'azureSpeechKey', 'awsSecretAccessKey'];
+const VOICE_FORM_SECRETS = [
+    'voiceApiKey',
+    'openrouterSpeechKey',
+    'azureSpeechKey',
+    'awsSecretAccessKey',
+    'sttServerKey',
+];
+
+/** How long ai-parakeet may take for one recognition (queue, loading an unloaded model, a slow host). */
+const PARAKEET_TIMEOUT_MS = 60_000;
+
+/** Adapters a button in the settings installs, and the setting that gets their instance. */
+const HELPER_ADAPTERS = new Map<string, 'piAgentInstance' | 'parakeetInstance'>([
+    ['pi-agent', 'piAgentInstance'],
+    ['ai-parakeet', 'parakeetInstance'],
+]);
+
+/** An empty `ask` from the same caller is reported at most this often. */
+const EMPTY_ASK_REPORT_MS = 60_000;
 
 /** How long to wait for a device to confirm a write, and how often to look. */
 const ACK_TIMEOUT_MS = 2000;
@@ -219,6 +325,11 @@ function valuesMatch(actual: unknown, expected: unknown): boolean {
         return Math.abs(a - b) <= Math.max(1, Math.abs(b) * 0.02);
     }
     return String(actual).trim().toLowerCase() === String(expected).trim().toLowerCase();
+}
+
+/** Whether an ESPHome entity id can be the last part of an ioBroker id (empty ones came from ESPHome 2026). */
+function isControlId(objectId: string): boolean {
+    return !!objectId && !/[^\p{Ll}\p{Lu}\p{Nd}_-]/u.test(objectId);
 }
 
 /**
@@ -365,6 +476,8 @@ class Assistant extends Adapter {
     private agent: LlmAgent | null = null;
     /** Provider "pi-agent": the cloud tier is a pi-agent instance instead of {@link agent}. */
     private piAgent: PiAgentHarness | null = null;
+    /** Installs pi-agent / ai-parakeet from the settings; created on the first use. */
+    private installer: AdapterInstaller | null = null;
     /** The cloud LLM of the instance (own or system-wide settings); `null` without one. */
     private llm: ResolvedLlm | null = null;
     /** What of `system.ai` this instance depends on, while it takes the system-wide AI settings. */
@@ -390,6 +503,8 @@ class Assistant extends Adapter {
     private localLlmLoading: Promise<void> | null = null;
     /** Last reported local-LLM download percent (to throttle state writes / avoid log spam). */
     private lastLlmPct = -1;
+    /** A running "Download ffmpeg" - a second click waits for the same download. */
+    private ffmpegDownload: Promise<string> | null = null;
     /** UDP voice server for satellites (only when voiceEnabled); null otherwise. */
     private voice: VoiceServer | null = null;
     /** Wyoming TCP endpoint (only when wyomingEnabled); null otherwise. */
@@ -416,8 +531,16 @@ class Assistant extends Adapter {
     private mirroredTimers = new Map<string, TimerInfo>();
     /** Per satellite: resolves once its control objects exist, so state writes can wait for them. */
     private readonly satControlsReady = new Map<string, Promise<void>>();
+    /** Per media player (`<satId>.<objectId>`): the newest URL write, so a slow look at an older one cannot win. */
+    private readonly mediaPlays = new Map<string, number>();
+    /** Per media player: the path of its live stream through ffmpeg on the media server, while there is one. */
+    private readonly mediaStreamPaths = new Map<string, string>();
+    /** Whether ffmpeg starts, per binary, looked up at most once a minute (playing a URL asks every time). */
+    private ffmpegCheck: { bin: string; ok: boolean; at: number } | null = null;
     /** Satellites whose `volume` state exists and is subscribed (see updateSatelliteVolume). */
     private readonly satVolumeEnsured = new Set<string>();
+    /** ESPHome satellite id → the table address already written to its object (see markEsphomeSatellite). */
+    private readonly satEsphomeMarked = new Map<string, string>();
     /** Native (ioBroker) satellite state-id → sender instance id, so we can push announcements back to it. */
     private readonly nativeSatFrom = new Map<string, string>();
     /** Countdown timers / reminders (roadmap #2); mirrored into `timers.*` states. Null until onReady. */
@@ -450,7 +573,14 @@ class Assistant extends Adapter {
      * Where the request being answered came from, for the LLM tools: a tool only gets the model's
      * arguments, but "play X" from the bedroom satellite should go to the bedroom TV.
      */
-    private readonly requestOrigin = new AsyncLocalStorage<{ source: string; room: string }>();
+    private readonly requestOrigin = new AsyncLocalStorage<{
+        source: string;
+        room: string;
+        voice: boolean;
+        /** Id of the satellite under `satellites.*` a voice request came from; '' for chat, Telegram, scripts. */
+        satellite: string;
+        attachments: Attachments;
+    }>();
     /** Who is at home (roadmap B1); mirrored into `presence.*`. Null until onReady. */
     private presence: PresenceTracker | null = null;
     /** Satellites currently set to Do-Not-Disturb, by state id (mirrors `satellites.<id>.dnd`). */
@@ -699,6 +829,10 @@ class Assistant extends Adapter {
     private async startEsphome(llmKey: LlmKey | null): Promise<void> {
         const cfg = this.config;
         const devices = (cfg.esphomeDevices || []).filter(d => d?.ip?.trim());
+        // Rows deleted from the table leave their satellite objects behind otherwise — forever offline in the list.
+        await this.removeStaleEsphomeSatellites(devices).catch(e =>
+            this.log.warn(`Could not clean up removed ESPHome satellites: ${(e as Error).message}`),
+        );
         if (!devices.length) {
             this.log.warn('ESPHome satellites are enabled, but no device is configured.');
             return;
@@ -749,6 +883,7 @@ class Assistant extends Adapter {
                     sttMs: origin.sttMs,
                     audioMs: origin.audioMs,
                     vad: origin.vad,
+                    button: origin.button,
                 }),
             onSpoken: (device, info) => this.reportSpoken(device, info),
             getHints: () => this.buildSttHints(),
@@ -756,11 +891,12 @@ class Assistant extends Adapter {
             mediaHost: (cfg.esphomeMediaHost || '').trim(),
             silenceMs: cfg.esphomeSilenceMs || 0,
             log: this.log,
-            onStatus: (device, room, state) => {
-                this.updateSatelliteState(device, room, state).catch(e =>
-                    this.log.debug(`satellite state update failed: ${(e as Error).message}`),
-                );
+            onStatus: (device, room, state, address) => {
+                this.updateSatelliteState(device, room, state)
+                    .then(() => this.markEsphomeSatellite(device, room, address))
+                    .catch(e => this.log.debug(`satellite state update failed: ${(e as Error).message}`));
             },
+            encodeAudio: (pcm, sampleRate, target) => this.runFfmpegEncode(pcm, sampleRate, target),
             onWakeWords: (device, room, config) => {
                 this.updateSatelliteWakeWords(device, room, config).catch(e =>
                     this.log.debug(`satellite wake word update failed: ${(e as Error).message}`),
@@ -777,6 +913,13 @@ class Assistant extends Adapter {
                 );
             },
             expectsFollowUp: (answer, device) => this.followUpFor(device, answer),
+            onDialog: (device, room, on) => {
+                const id = this.knownSatelliteId(device, room);
+                if (id) {
+                    this.setStateAsync(`satellites.${id}.dialog`, { val: on, ack: true }).catch(() => {});
+                }
+            },
+            onDiscarded: cfg.esphomeSaveCaptures ? capture => this.keepCapture(capture) : undefined,
             externalWakeWords: () =>
                 [...this.customWakeWords.values()].map(w => ({
                     id: w.id,
@@ -813,10 +956,16 @@ class Assistant extends Adapter {
             log: this.log,
             voskModel: (cfg.voskModel || '').trim(),
             sttModel: (cfg.sttModel || '').trim(),
+            sttBaseUrl: (cfg.sttBaseUrl || '').trim(),
+            sttServerKey: cfg.sttServerKey || '',
             ttsModel: (cfg.ttsModel || '').trim(),
             openrouterSttModel: (cfg.openrouterSttModel || '').trim(),
             openrouterTtsModel: (cfg.openrouterTtsModel || '').trim(),
             decodeAudio: audio => this.decodeAudioBufferToPcm(audio),
+            ttsMaxChars: parseTtsMaxChars(cfg.ttsMaxChars),
+            parakeetInstance: (cfg.parakeetInstance || '').trim().replace(/^system\.adapter\./, ''),
+            sendMessage: (instance, command, message) =>
+                this.askInstance(instance, command, message, PARAKEET_TIMEOUT_MS),
         };
     }
 
@@ -927,11 +1076,10 @@ class Assistant extends Adapter {
 
     /**
      * True when the assistant's reply asks the user something, so a satellite should re-open its mic to
-     * capture the answer without a wake word (→ the `listen` flag of the voice response). Detects a question
-     * mark anywhere, not just at the end, because a clarifying reply often reads "Welches Gerät …? Sag mir …".
+     * capture the answer without a wake word (→ the `listen` flag of the voice response). See {@link endsWithQuestion}.
      */
     private expectsFollowUp(answer: string): boolean {
-        return /[?？]/.test(answer || '');
+        return endsWithQuestion(answer);
     }
 
     /** A transport synthesised the reply to `source`'s latest request — the journal shows it with that request. */
@@ -951,6 +1099,31 @@ class Assistant extends Adapter {
             fallback: cfg.ttsFallback || undefined,
             voice: (voices[provider] || '').trim() || undefined,
         });
+    }
+
+    /** Per caller of `ask`: when an empty question was last reported, and how many came since. */
+    private readonly emptyAsks = new Map<string, { reportedAt: number; count: number }>();
+
+    /**
+     * An empty `ask` is rejected, and reported once a minute per caller. Field report (2026-11-03): a caller asked
+     * with empty text every time an answer arrived — about once a second, each one a pi-agent request about "only
+     * the time" (the time context was the whole question) and paid tokens. A script that asks on every change of
+     * `text.response` loops exactly like that.
+     */
+    private reportEmptyAsk(from: string): void {
+        const now = Date.now();
+        const entry = this.emptyAsks.get(from) ?? { reportedAt: 0, count: 0 };
+        entry.count++;
+        if (now - entry.reportedAt >= EMPTY_ASK_REPORT_MS) {
+            this.log.warn(
+                `Ignoring an empty question from ${from} (sendTo "ask")${
+                    entry.count > 1 ? ` — ${entry.count} since the last report` : ''
+                }. A script that asks whenever text.response changes keeps doing this in a loop.`,
+            );
+            entry.reportedAt = now;
+            entry.count = 0;
+        }
+        this.emptyAsks.set(from, entry);
     }
 
     /** Record the origin of the current text.request/response ('' = state write, 'chat' = message, else satellite). */
@@ -1029,6 +1202,10 @@ class Assistant extends Adapter {
             const sttStart = Date.now();
             const text = (await engines.stt.transcribe(pcm, rate, language, await this.buildSttHints())).trim();
             if (!text) {
+                const ms = Math.round((pcm.length / 2 / rate) * 1000);
+                this.log.info(
+                    `Voice Q (${source}): (empty) — speech recognition returned no text for ${ms} ms of audio`,
+                );
                 return { text: '', answer: '' };
             }
             const answer = await this.answerVoice(text, source, {
@@ -1115,6 +1292,12 @@ class Assistant extends Adapter {
     private satelliteStateId(device: string, room: string): string {
         const roomName = (room || '').replace(/^(enum\.rooms\.|system\.rooms\.)/, '');
         return (roomName || device).replace(/[^\w-]/g, '_') || 'unknown';
+    }
+
+    /** The id under `satellites.*` of the satellite a request came from, or '' when it has no states there (Wyoming). */
+    private knownSatelliteId(device: string, room: string): string {
+        const id = this.satelliteStateId(device, room);
+        return this.satStatesEnsured.has(id) ? id : '';
     }
 
     /** Reflect a satellite's status into `satellites.<room>.*` states (created on first sight). */
@@ -1254,6 +1437,111 @@ class Assistant extends Adapter {
     }
 
     /**
+     * Note which table row an ESPHome satellite belongs to (`native.esphome` on `satellites.<id>`) and show its
+     * address in the host column. That is what lets {@link removeStaleEsphomeSatellites} remove it once the row is
+     * deleted — the id alone is the room or the device name and says nothing about the configuration.
+     */
+    private async markEsphomeSatellite(device: string, room: string, address: string): Promise<void> {
+        const id = await this.ensureSatelliteObjects(device, room);
+        if (this.satEsphomeMarked.get(id) === address) {
+            return;
+        }
+        this.satEsphomeMarked.set(id, address);
+        await this.setObjectNotExistsAsync(`satellites.${id}.dialog`, {
+            type: 'state',
+            common: {
+                name: 'Dialog mode: listens again after every answer, without the wake word',
+                type: 'boolean',
+                role: 'switch.mode',
+                read: true,
+                write: true,
+                def: false,
+            },
+            native: {},
+        });
+        this.subscribeStates(`satellites.${id}.dialog`);
+        await this.setStateAsync(`satellites.${id}.dialog`, { val: !!this.esphome?.dialog(device), ack: true });
+        const obj = await this.getObjectAsync(`satellites.${id}`);
+        if ((obj?.native as { esphome?: string } | undefined)?.esphome !== address) {
+            await this.extendObjectAsync(`satellites.${id}`, { native: { esphome: address } });
+        }
+        await this.setStateAsync(`satellites.${id}.host`, { val: address, ack: true });
+    }
+
+    /**
+     * Remove the objects of ESPHome satellites whose row was deleted from the table (or whose room changed, which
+     * changes the id). Runs before the devices connect, so nothing is re-created meanwhile.
+     *
+     * A satellite marked by {@link markEsphomeSatellite} is matched by its address. One from an older version
+     * carries no mark; it is recognised by `wakeWords` (only ESPHome satellites have it) and removed only when
+     * every row has a room — otherwise a row without one could be it, under its device name.
+     */
+    private async removeStaleEsphomeSatellites(devices: EsphomeDevice[]): Promise<void> {
+        const expected = new Map<string, string | null>(
+            devices.map(d => [esphomeAddress(d), d.room?.trim() ? this.satelliteStateId('', d.room) : null]),
+        );
+        const allHaveRooms = [...expected.values()].every(id => id !== null);
+        const roomIds = new Set([...expected.values()].filter((id): id is string => !!id));
+        const prefix = `${this.namespace}.satellites.`;
+        const view = await this.getObjectViewAsync('system', 'device', {
+            startkey: prefix,
+            endkey: `${prefix}香`,
+        });
+        for (const row of view.rows) {
+            const id = row.id.slice(prefix.length);
+            if (!id || id.includes('.')) {
+                continue;
+            }
+            const address = (row.value?.native as { esphome?: string } | undefined)?.esphome;
+            let reason = '';
+            if (address) {
+                if (!expected.has(address)) {
+                    reason = `${address} is no longer in the ESPHome satellites table`;
+                } else {
+                    const want = expected.get(address);
+                    if (want && want !== id) {
+                        reason = `${address} is now in room ${want}`;
+                    }
+                }
+            } else if (allHaveRooms && !roomIds.has(id) && (await this.getObjectAsync(`satellites.${id}.wakeWords`))) {
+                reason = 'no row of the ESPHome satellites table has this room any more';
+            }
+            if (reason) {
+                this.log.info(`Satellite ${id} removed: ${reason}`);
+                await this.forgetSatellite(id);
+            }
+        }
+    }
+
+    /** Delete a satellite's objects (Satellites tab). Refused while it is online: it would be re-created at once. */
+    private async deleteSatellite(id: string): Promise<void> {
+        if (!id || /[^\w-]/.test(id)) {
+            throw new Error(`invalid satellite id "${id}"`);
+        }
+        if (!(await this.getObjectAsync(`satellites.${id}`))) {
+            throw new Error(`no satellite ${id}`);
+        }
+        const alive = await this.getStateAsync(`satellites.${id}.alive`);
+        if (alive?.val === true) {
+            throw new Error(`satellite ${id} is online`);
+        }
+        await this.forgetSatellite(id);
+        this.log.info(`Satellite ${id} deleted`);
+    }
+
+    /** Drop the object tree of one satellite and everything cached about it. */
+    private async forgetSatellite(id: string): Promise<void> {
+        await this.delObjectAsync(`satellites.${id}`, { recursive: true });
+        this.satStatesEnsured.delete(id);
+        this.satWakeWordStatesEnsured.delete(id);
+        this.satVolumeEnsured.delete(id);
+        this.satControlsReady.delete(id);
+        this.satEsphomeMarked.delete(id);
+        this.satDeviceById.delete(id);
+        this.dndById.delete(id);
+    }
+
+    /**
      * Publish a satellite's wake-word configuration and let it be changed from ioBroker.
      *
      * Only ESPHome satellites have this: the wake word runs on the device, and the ESPHome API lets the
@@ -1300,6 +1588,33 @@ class Assistant extends Adapter {
             val: JSON.stringify({ max: config.max, words }),
             ack: true,
         });
+    }
+
+    /** Store for `esphomeSaveCaptures`, in the adapter's file storage (Admin → Files → assistant.N/captures). */
+    private captureStore: CaptureStore | null = null;
+
+    /** Keep a dropped ESPHome recording for diagnosis (`esphomeSaveCaptures`). Never blocks the voice pipeline. */
+    private keepCapture(capture: DiscardedCapture): void {
+        this.captureStore ||= new CaptureStore({
+            write: async (path, data) => {
+                await this.writeFileAsync(this.namespace, path, data);
+            },
+            list: async dir => {
+                try {
+                    const entries = await this.readDirAsync(this.namespace, dir);
+                    return entries.filter(e => !e.isDir).map(e => e.file);
+                } catch {
+                    return []; // nothing kept yet
+                }
+            },
+            remove: async path => {
+                await this.delFileAsync(this.namespace, path);
+            },
+        });
+        this.captureStore
+            .save(capture)
+            .then(path => this.log.debug(`ESPHome ${capture.device}: recording kept as ${this.namespace}/${path}`))
+            .catch(e => this.log.warn(`Could not keep the recording of ${capture.device}: ${(e as Error).message}`));
     }
 
     /** Read the uploaded wake words (`<instance>/wakewords/<id>.json` + `.tflite`) once. */
@@ -1454,6 +1769,10 @@ class Assistant extends Adapter {
         });
 
         for (const entity of entities) {
+            if (!isControlId(entity.objectId)) {
+                this.log.debug(`Satellite ${device}: no usable id for "${entity.name}" (${entity.kind}) — skipped`);
+                continue;
+            }
             const id = `${base}.${entity.objectId}`;
             const name = entity.name || entity.objectId;
             if (entity.kind === 'mediaPlayer') {
@@ -1468,8 +1787,30 @@ class Assistant extends Adapter {
                     true,
                 );
                 await this.ensureState(`${id}.muted`, 'Muted', 'boolean', 'media.mute', false);
+                // Music from a URL (internet radio): the device plays it as media, not as an announcement
+                await this.ensureState(
+                    `${id}.url`,
+                    'Play a URL (radio, MP3/FLAC/WAV; others through ffmpeg); empty or "stop" = stop',
+                    'string',
+                    'media.url',
+                    true,
+                );
+                await this.setObjectNotExistsAsync(`${id}.transcode`, {
+                    type: 'state',
+                    common: {
+                        name: 'Always play URLs through ffmpeg (else only when the device cannot decode them)',
+                        type: 'boolean',
+                        role: 'switch',
+                        read: true,
+                        write: true,
+                        def: false,
+                    },
+                    native: {},
+                });
                 this.subscribeStates(`${id}.volume`);
                 this.subscribeStates(`${id}.command`);
+                this.subscribeStates(`${id}.url`);
+                this.subscribeStates(`${id}.transcode`);
             } else if (entity.kind === 'update') {
                 await this.setObjectNotExistsAsync(id, { type: 'channel', common: { name }, native: {} });
                 await this.ensureState(`${id}.currentVersion`, 'Installed version', 'string', 'text', false);
@@ -1477,7 +1818,11 @@ class Assistant extends Adapter {
                 await this.ensureState(`${id}.inProgress`, 'Update running', 'boolean', 'indicator', false);
                 await this.ensureState(`${id}.progress`, 'Update progress', 'number', 'value', false);
                 await this.ensureState(`${id}.install`, 'Install the update', 'boolean', 'button', true);
+                // A device looks for a new version only now and then (an http_request update: at boot and every
+                // 6 h); until then latestVersion shows the old one and install does nothing.
+                await this.ensureState(`${id}.check`, 'Check for an update now', 'boolean', 'button', true);
                 this.subscribeStates(`${id}.install`);
+                this.subscribeStates(`${id}.check`);
             } else if (entity.kind === 'event') {
                 await this.setObjectNotExistsAsync(id, {
                     type: 'state',
@@ -1511,6 +1856,19 @@ class Assistant extends Adapter {
                           ? { name, type: 'boolean', role: 'indicator', read: true, write: false, def: false }
                           : { name, type: 'string', role: 'text', read: true, write: false, def: '' };
                 await this.setObjectNotExistsAsync(id, { type: 'state', common, native: {} });
+            } else if (entity.kind === 'text') {
+                if (entity.password) {
+                    // A secret would sit in a state every script and admin user can read.
+                    this.log.debug(`Satellite ${device}: "${name}" is a password text — not mirrored`);
+                    continue;
+                }
+                // Labels and units of a satellite with a screen, set from here instead of in the firmware build.
+                await this.setObjectNotExistsAsync(id, {
+                    type: 'state',
+                    common: { name, type: 'string', role: 'text', read: true, write: true, def: '' },
+                    native: {},
+                });
+                this.subscribeStates(id);
             } else {
                 const common: ioBroker.StateCommon =
                     entity.kind === 'switch'
@@ -1537,6 +1895,11 @@ class Assistant extends Adapter {
                                 unit: entity.unit || undefined,
                             };
                 await this.setObjectNotExistsAsync(id, { type: 'state', common, native: {} });
+                if (entity.kind === 'number') {
+                    // Objects from before float32() kept the raw float noise (step 0.0010000000474974513);
+                    // the device may also change its range with a firmware update.
+                    await this.syncNumberRange(id, entity);
+                }
                 this.subscribeStates(id);
             }
         }
@@ -1584,8 +1947,24 @@ class Assistant extends Adapter {
         await this.writeSatelliteControl(satId, entity);
     }
 
+    /** Bring min/max/step of an existing number control in line with what the device announces now. */
+    private async syncNumberRange(id: string, entity: EsphomeEntity): Promise<void> {
+        const obj = await this.getObjectAsync(id);
+        if (!obj || obj.type !== 'state') {
+            return;
+        }
+        const wanted = { min: entity.min, max: entity.max, step: entity.step };
+        const common = obj.common;
+        if (common.min !== wanted.min || common.max !== wanted.max || common.step !== wanted.step) {
+            await this.extendObjectAsync(id, { common: wanted });
+        }
+    }
+
     /** Write one entity's current value into its state(s). Always acked — this is the device talking. */
     private async writeSatelliteControl(satId: string, entity: EsphomeEntity): Promise<void> {
+        if (!isControlId(entity.objectId) || (entity.kind === 'text' && entity.password)) {
+            return; // never created (see buildSatelliteControls)
+        }
         const base = `satellites.${satId}.controls.${entity.objectId}`;
         if (entity.kind === 'mediaPlayer') {
             const v = entity.value as MediaPlayerValue;
@@ -1599,7 +1978,17 @@ class Assistant extends Adapter {
             await this.setStateAsync(`${base}.inProgress`, { val: v.inProgress, ack: true });
             await this.setStateAsync(`${base}.progress`, { val: v.progress, ack: true });
         } else {
-            await this.setStateAsync(base, { val: entity.value as ioBroker.StateValue, ack: true });
+            let val = entity.value as ioBroker.StateValue;
+            // The device says how many decimals of a measurement mean something; the rest is noise.
+            if (
+                entity.kind === 'sensor' &&
+                typeof val === 'number' &&
+                entity.decimals !== undefined &&
+                entity.decimals >= 0
+            ) {
+                val = Number(val.toFixed(Math.min(entity.decimals, 10)));
+            }
+            await this.setStateAsync(base, { val, ack: true });
         }
     }
 
@@ -1617,19 +2006,180 @@ class Assistant extends Adapter {
         // Compound entities address a leaf: `<objectId>.volume`, `<objectId>.install`, …
         const [objectId, leaf] = path.split('.');
         let payload: unknown = value;
-        if (leaf === 'install') {
+        if (leaf === 'install' || leaf === 'check') {
             if (!value) {
                 return; // button released
             }
-            payload = 'install';
+            payload = leaf; // UpdateCommandRequest: install = UPDATE, check = CHECK
         } else if (leaf === 'volume' || leaf === 'command') {
             payload = value;
+        } else if (leaf === 'url') {
+            this.playMediaUrl(satId, device, objectId, value).catch(e =>
+                this.log.warn(`Playing ${String(value)} on ${device} failed: ${(e as Error).message}`),
+            );
+            return;
+        } else if (leaf === 'transcode') {
+            // A setting of ours, nothing for the device: taken as written
+            this.setStateAsync(`satellites.${satId}.controls.${path}`, { val: !!value, ack: true }).catch(() => {});
+            return;
         } else if (leaf) {
             return; // read-only leaf of a compound entity
         }
         if (!this.esphome.setEntity(device, objectId, payload)) {
             this.log.warn(`Writing ${objectId} on ${device} was rejected — see the warning above.`);
         }
+    }
+
+    /**
+     * A URL written to `controls.<player>.url`: play it on the satellite as music (internet radio, a file on a web
+     * server). Playlists are resolved to their first stream; a codec the device decodes goes there directly, anything
+     * else (AAC, HLS …) through ffmpeg, served by our media server — see `mediaStream.ts`. Empty or "stop" stops.
+     *
+     * Acked with the URL once the device was told: it reports no URL back, only the player state (`.state`).
+     */
+    private async playMediaUrl(
+        satId: string,
+        device: string,
+        objectId: string,
+        value: ioBroker.StateValue,
+    ): Promise<void> {
+        const esphome = this.esphome;
+        const media = this.media;
+        if (!esphome || !media) {
+            return;
+        }
+        const key = `${satId}.${objectId}`;
+        const stateId = `satellites.${satId}.controls.${objectId}.url`;
+        const seq = (this.mediaPlays.get(key) || 0) + 1;
+        this.mediaPlays.set(key, seq);
+        const raw = typeof value === 'string' ? value.trim() : '';
+        const endStream = (): void => {
+            const old = this.mediaStreamPaths.get(key);
+            if (old) {
+                this.mediaStreamPaths.delete(key);
+                media.unserve(old);
+            }
+        };
+
+        if (!raw || raw.toLowerCase() === 'stop') {
+            const sent = esphome.setEntity(device, objectId, 'stop');
+            endStream();
+            if (sent) {
+                await this.setStateAsync(stateId, { val: '', ack: true });
+            }
+            return;
+        }
+        let url: URL;
+        try {
+            url = new URL(raw);
+        } catch {
+            this.log.warn(`Satellite ${device}: "${raw}" is not a URL — nothing played.`);
+            return;
+        }
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+            this.log.warn(`Satellite ${device}: only http(s) URLs can be played, not ${url.protocol}`);
+            return;
+        }
+        const entities = esphome.entities(device);
+        if (!entities.some(e => e.kind === 'mediaPlayer' && e.objectId === objectId)) {
+            this.log.warn(
+                `Satellite ${device} is not connected or has no media player "${objectId}" — nothing played.`,
+            );
+            return;
+        }
+        // The decoders are built into the firmware for all its players together
+        const formats = entities.flatMap(e => e.formats ?? []);
+        const always = (await this.getStateAsync(`satellites.${satId}.controls.${objectId}.transcode`))?.val === true;
+        const [probe, ffmpeg] = await Promise.all([probeStream(url.href), this.ffmpegAvailable()]);
+        if (this.mediaPlays.get(key) !== seq) {
+            return; // a newer URL (or a stop) was written meanwhile
+        }
+        const plan = planStream(probe, deviceCodecs(formats), always, ffmpeg);
+        endStream();
+        let target = plan.url;
+        let how = 'directly';
+        if (plan.mode === 'transcode') {
+            const t = transcodeTarget(formats);
+            const streamPath = `/stream/${randomBytes(12).toString('hex')}.${STREAM_EXTENSIONS[t.codec]}`;
+            const absolute = esphome.mediaUrl(device, streamPath);
+            if (!absolute) {
+                this.log.warn(`Satellite ${device} went offline — nothing played.`);
+                return;
+            }
+            media.serveStream(
+                streamPath,
+                STREAM_CONTENT_TYPES[t.codec],
+                this.transcodeSource(plan.url, t, plan.kind === 'hls', device),
+            );
+            this.mediaStreamPaths.set(key, streamPath);
+            target = absolute;
+            how = `through ffmpeg as ${t.codec.toUpperCase()} ${t.sampleRate} Hz${t.channels === 2 ? ' stereo' : ''}`;
+        }
+        const resolved = plan.url !== url.href ? ` (playlist entry ${plan.url})` : '';
+        this.log.info(`Satellite ${device}: playing ${raw}${resolved} ${how} — ${plan.reason}`);
+        if (!esphome.setEntity(device, objectId, { url: target })) {
+            endStream();
+            return;
+        }
+        await this.setStateAsync(stateId, { val: raw, ack: true });
+    }
+
+    /**
+     * The source of a transcoded stream: one ffmpeg per listener, reading `url` and writing `target` into the
+     * response for as long as the device listens.
+     */
+    private transcodeSource(url: string, target: TranscodeTarget, hls: boolean, device: string): StreamSource {
+        return res => {
+            const proc = spawn(this.ffmpegBin(), transcodeArgs(url, target, hls), {
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            let stopped = false;
+            let lastError = '';
+            proc.stdout.pipe(res);
+            proc.stderr.on('data', (d: Buffer) => {
+                lastError = String(d).trim().split(/\r?\n/).pop() || lastError;
+                this.log.debug(`ffmpeg (${device}): ${String(d).trim()}`);
+            });
+            proc.on('error', e => {
+                this.log.warn(`Stream for ${device}: ffmpeg failed: ${e.message}${FFMPEG_HINT}`);
+                res.destroy();
+            });
+            proc.on('close', code => {
+                if (stopped) {
+                    return;
+                }
+                // The source ended (a file played to its end) or failed (station offline, unknown format)
+                if (code) {
+                    this.log.warn(
+                        `Stream for ${device} ended — ffmpeg exited with code ${code}${lastError ? `: ${lastError}` : ''}`,
+                    );
+                } else {
+                    this.log.debug(`Stream for ${device} ended — the source ended`);
+                }
+                res.end();
+            });
+            return () => {
+                stopped = true;
+                proc.kill();
+            };
+        };
+    }
+
+    /** Whether ffmpeg starts at all; remembered for a minute per binary. */
+    private async ffmpegAvailable(): Promise<boolean> {
+        const bin = this.ffmpegBin();
+        const now = Date.now();
+        if (this.ffmpegCheck?.bin === bin && now - this.ffmpegCheck.at < 60_000) {
+            return this.ffmpegCheck.ok;
+        }
+        let ok = true;
+        try {
+            await promisify(execFile)(bin, ['-version'], { timeout: 5_000 });
+        } catch {
+            ok = false;
+        }
+        this.ffmpegCheck = { bin, ok, at: now };
+        return ok;
     }
 
     /**
@@ -1658,6 +2208,69 @@ class Assistant extends Adapter {
                 });
             }
         }
+    }
+
+    /**
+     * Apply a write to `satellites.<id>.dialog`. Switched on while the satellite is idle, it plays the confirmation
+     * tone and opens its microphone after it.
+     */
+    private async setSatelliteDialog(satId: string, on: boolean): Promise<void> {
+        const device = this.satDeviceById.get(satId) || satId;
+        const tone = confirmationTone();
+        if (this.esphome?.setDialog(device, on, on ? tone : undefined)) {
+            await this.setStateAsync(`satellites.${satId}.dialog`, { val: on, ack: true });
+            return;
+        }
+        this.log.warn(`Cannot switch the dialog mode of ${device}: it is not a connected ESPHome satellite.`);
+        await this.setStateAsync(`satellites.${satId}.dialog`, { val: !!this.esphome?.dialog(device), ack: true });
+    }
+
+    /**
+     * "Dialogmodus an/aus" said to a satellite — or, in dialog mode, a bare "stop". The reply to "on" is the first turn
+     * of the dialog already: the satellite listens again after it. null when the request is no such command.
+     */
+    private switchDialog(question: string, source: string): string | null {
+        let wanted = dialogCommand(question);
+        const inDialog = !!this.esphome?.dialog(source);
+        if (!wanted && inDialog && isStopCommand(question) && question.trim().split(/\s+/).length <= 2) {
+            wanted = 'off';
+        }
+        if (!wanted) {
+            return null;
+        }
+        const on = wanted === 'on';
+        const lang = this.answerLanguage();
+        const pick = (ru: string, de: string, en: string): string => (lang === 'ru' ? ru : lang === 'de' ? de : en);
+        let text: string;
+        let done = false;
+        if (this.esphome?.setDialog(source, on)) {
+            done = true;
+            text = on
+                ? pick(
+                      'Режим диалога включён. Говорите без слова активации, «выключи режим диалога» его завершит.',
+                      'Dialogmodus an. Sprich einfach weiter, „Dialogmodus aus“ beendet ihn.',
+                      'Dialog mode on. Just keep talking; "dialog mode off" ends it.',
+                  )
+                : pick('Режим диалога выключен.', 'Dialogmodus aus.', 'Dialog mode off.');
+        } else if (source === 'chat') {
+            text = pick(
+                'В чате для этого есть кнопка «Диалог» слева от поля ввода.',
+                'Im Chat gibt es dafür den Dialog-Knopf links neben dem Eingabefeld.',
+                'In the chat, use the dialog button left of the input field.',
+            );
+        } else {
+            text = pick(
+                'Режим диалога есть только у спутников ESPHome.',
+                'Den Dialogmodus gibt es nur an ESPHome-Satelliten.',
+                'The dialog mode is only available on ESPHome satellites.',
+            );
+        }
+        this.journal?.note({ tier: 'nlu', detail: `dialog ${wanted}` });
+        this.journal?.step({
+            stage: 'nlu',
+            title: done ? `Dialog mode ${wanted} for ${source}` : `Dialog mode ${wanted}: not possible for ${source}`,
+        });
+        return text;
     }
 
     /**
@@ -2040,24 +2653,66 @@ class Assistant extends Adapter {
         return this.runFfmpegDecode(src);
     }
 
-    /** Decode an in-memory audio buffer (uploaded mp3/wav) to mono 16-bit PCM via ffmpeg (stdin pipe). */
-    private decodeAudioBufferToPcm(buf: Buffer): Promise<{ pcm: Buffer; sampleRate: number }> {
-        return this.runFfmpegDecode('pipe:0', buf);
+    /**
+     * Decode an in-memory audio buffer (uploaded mp3/wav, a Telegram voice message) to mono 16-bit PCM via ffmpeg
+     * (stdin pipe). `sampleRate` 16 kHz is what speech recognition wants; playback keeps 24 kHz.
+     */
+    private decodeAudioBufferToPcm(buf: Buffer, sampleRate = 24000): Promise<{ pcm: Buffer; sampleRate: number }> {
+        return this.runFfmpegDecode('pipe:0', buf, sampleRate);
+    }
+
+    /** The ffmpeg binary: the configured path, else the downloaded one, else `ffmpeg` from the search path. */
+    private ffmpegBin(): string {
+        return this.config.ffmpegPath?.trim() || this.downloadedFfmpeg() || 'ffmpeg';
+    }
+
+    /**
+     * The static ffmpeg from "Download ffmpeg" on the Voice tab, '' if there is none. Looked up every time (one
+     * `stat`), so deleting the file falls back to the search path without a restart.
+     */
+    private downloadedFfmpeg(): string {
+        const file = ffmpegStaticPath(this.instanceDataDir());
+        return fs.existsSync(file) ? file : '';
+    }
+
+    /**
+     * "Download ffmpeg" on the Voice tab: the static build of ffmpeg-static into the data dir, then the same check
+     * as "Check ffmpeg". It is used from now on, unless a path is entered.
+     *
+     * @param configuredPath the path from the (unsaved) form
+     */
+    private async downloadFfmpeg(configuredPath: string): Promise<{ result?: string; error?: string }> {
+        let file: string;
+        try {
+            this.ffmpegDownload ??= downloadFfmpegStatic(this.instanceDataDir(), { log: this.log }).finally(
+                () => (this.ffmpegDownload = null),
+            );
+            file = await this.ffmpegDownload;
+        } catch (e) {
+            this.log.warn(`Download of ffmpeg failed: ${(e as Error).message}`);
+            return { error: `Download failed: ${(e as Error).message}` };
+        }
+        const check = await this.testFfmpeg(file);
+        if (check.error || !configuredPath.trim()) {
+            return check;
+        }
+        return { result: `${check.result} — not used while a path to ffmpeg is entered` };
     }
 
     /** Run ffmpeg to decode `input` (a path/URL, or `pipe:0` with `stdinData`) to mono 16-bit PCM. */
-    private runFfmpegDecode(input: string, stdinData?: Buffer): Promise<{ pcm: Buffer; sampleRate: number }> {
+    private runFfmpegDecode(
+        input: string,
+        stdinData?: Buffer,
+        sampleRate = 24000,
+    ): Promise<{ pcm: Buffer; sampleRate: number }> {
         return new Promise((resolve, reject) => {
-            const sampleRate = 24000;
             // prettier-ignore
             const args = ['-hide_banner', '-loglevel', 'error', '-i', input, '-ac', '1', '-ar', String(sampleRate), '-f', 's16le', '-'];
-            const proc = spawn('ffmpeg', args);
+            const proc = spawn(this.ffmpegBin(), args);
             const chunks: Buffer[] = [];
             proc.stdout.on('data', (d: Buffer) => chunks.push(d));
             proc.stderr.on('data', (d: Buffer) => this.log.debug(`ffmpeg: ${String(d).trim()}`));
-            proc.on('error', e =>
-                reject(new Error(`ffmpeg failed: ${e.message} — install ffmpeg to play audio files`)),
-            );
+            proc.on('error', e => reject(new Error(`ffmpeg failed: ${e.message}${FFMPEG_HINT}`)));
             proc.on('close', code =>
                 code === 0
                     ? resolve({ pcm: Buffer.concat(chunks), sampleRate })
@@ -2070,7 +2725,71 @@ class Assistant extends Adapter {
         });
     }
 
-    /** Invalidate the cached device/room/function listings when a room/function enum changes. */
+    /**
+     * Encode mono 16-bit PCM as MP3 or Opus (Ogg) via ffmpeg — for an ESPHome media player that was built with
+     * nothing but that decoder. FLAC and WAV need no tool and are written in `replyFormat.ts`.
+     */
+    private runFfmpegEncode(
+        pcm: Buffer,
+        sampleRate: number,
+        target: { codec: 'mp3' | 'opus'; sampleRate: number; channels: number },
+    ): Promise<Buffer> {
+        return new Promise((resolve, reject) => {
+            // prettier-ignore
+            const input = ['-hide_banner', '-loglevel', 'error', '-f', 's16le', '-ar', String(sampleRate), '-ac', '1', '-i', 'pipe:0'];
+            // prettier-ignore
+            const output = target.codec === 'mp3'
+                ? ['-c:a', 'libmp3lame', '-b:a', '128k', '-f', 'mp3']
+                : ['-c:a', 'libopus', '-b:a', '64k', '-f', 'ogg'];
+            // Opus runs at 48/24/16/12/8 kHz only; anything else would make libopus refuse.
+            const rate =
+                target.codec === 'opus' && ![48000, 24000, 16000, 12000, 8000].includes(target.sampleRate)
+                    ? 48000
+                    : target.sampleRate;
+            const args = [...input, '-ar', String(rate), '-ac', String(target.channels), ...output, '-'];
+            const proc = spawn(this.ffmpegBin(), args);
+            const chunks: Buffer[] = [];
+            proc.stdout.on('data', (d: Buffer) => chunks.push(d));
+            proc.stderr.on('data', (d: Buffer) => this.log.debug(`ffmpeg: ${String(d).trim()}`));
+            proc.on('error', e => reject(new Error(`ffmpeg failed: ${e.message}${FFMPEG_HINT}`)));
+            proc.on('close', code =>
+                code === 0 && chunks.length
+                    ? resolve(Buffer.concat(chunks))
+                    : reject(new Error(`ffmpeg exited with code ${code}`)),
+            );
+            proc.stdin.on('error', () => {}); // ignore EPIPE if ffmpeg exits early
+            proc.stdin.end(pcm);
+        });
+    }
+
+    /**
+     * "Check ffmpeg" on the Voice tab: start the binary at `path` ('' = from the search path), report its version and
+     * whether it can write MP3 and Opus (ESPHome devices that play nothing else). Decoding needs no extra library.
+     */
+    private async testFfmpeg(path: string): Promise<{ result?: string; error?: string }> {
+        const bin = path.trim() || this.downloadedFfmpeg() || 'ffmpeg';
+        const run = async (args: string[]): Promise<string> =>
+            (await promisify(execFile)(bin, args, { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 })).stdout;
+        try {
+            const firstLine = (await run(['-version'])).split(/\r?\n/)[0];
+            const version = firstLine.replace(/\s+Copyright.*$/i, '').trim();
+            const encoders = await run(['-hide_banner', '-encoders']).catch(() => '');
+            const has = (name: string): boolean => new RegExp(`\\s${name}\\s`).test(encoders);
+            const missing = ['libmp3lame', 'libopus'].filter(e => !has(e));
+            return {
+                result: `${version} (${bin})${missing.length ? ` — without ${missing.join(', ')}: MP3/Opus replies for ESPHome devices are not possible` : ''}`,
+            };
+        } catch (e) {
+            const err = e as NodeJS.ErrnoException;
+            return {
+                error:
+                    err.code === 'ENOENT'
+                        ? `${bin} not found${path.trim() ? '' : ' in the search path'} — install ffmpeg, download it or enter the full path`
+                        : `${bin} failed: ${err.message}`,
+            };
+        }
+    }
+
     /** Vendor and key of the cloud LLM: speech of the same vendor (OpenAI, OpenRouter) reuses the key. */
     private async speechLlmKey(): Promise<LlmKey | null> {
         const provider = this.config.provider || 'openai';
@@ -2134,6 +2853,13 @@ class Assistant extends Adapter {
         const satTts = id.match(/\.satellites\.([^.]+)\.tts$/);
         if (satTts) {
             await this.announceToSatellites(String(state.val ?? ''), satTts[1]); // satTts[1] = satellite state id
+            return;
+        }
+
+        // Dialog mode of an ESPHome satellite: it listens again after every answer, without the wake word.
+        const satDialog = id.match(/\.satellites\.([^.]+)\.dialog$/);
+        if (satDialog) {
+            await this.setSatelliteDialog(satDialog[1], !!state.val);
             return;
         }
 
@@ -2330,6 +3056,20 @@ class Assistant extends Adapter {
             return;
         }
 
+        // Output of a command the host runs for us (installing pi-agent / ai-parakeet).
+        if (this.installer?.handleMessage(obj.command, obj.message)) {
+            return;
+        }
+
+        // Settings buttons "Install pi-agent" / "Install ai-parakeet".
+        if (obj.command === 'installAdapter') {
+            const result = await this.installHelperAdapter(obj.message);
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
+
         // Settings-dialog "Test connection" button.
         if (obj.command === 'testApiConnection') {
             const result = await this.testApiConnection(
@@ -2488,18 +3228,44 @@ class Assistant extends Adapter {
             return;
         }
 
-        // Scripts: start a countdown timer. message = { duration: seconds | "5 min", label?, room? }.
+        // Scripts: start a countdown timer. message = { duration | seconds: seconds | "5 min", label | name?, room?,
+        // satellite?, announce? }. With `satellite` (its id under satellites.*, or the device name) the timer is that
+        // satellite's like one set there by voice: an ESPHome satellite shows and rings it, and the announcement plays
+        // there. `announce` = what to say when it fires, word for word (default: "Timer finished: <name>.").
         if (obj.command === 'setTimer') {
-            const m = (obj.message || {}) as { duration?: number | string; label?: string; room?: string };
+            const m = (obj.message || {}) as {
+                duration?: number | string;
+                seconds?: number | string;
+                label?: string;
+                name?: string;
+                room?: string;
+                satellite?: string;
+                announce?: string;
+            };
+            // `seconds` are seconds also as a string; a bare number in a `duration` string stays minutes as before
             const duration =
-                typeof m.duration === 'string'
-                    ? parseDurationSeconds(m.duration, true) || 0
-                    : Math.round(Number(m.duration) || 0);
+                m.seconds !== undefined
+                    ? Math.round(Number(m.seconds) || 0) ||
+                      (typeof m.seconds === 'string' ? parseDurationSeconds(m.seconds, false) || 0 : 0)
+                    : typeof m.duration === 'string'
+                      ? parseDurationSeconds(m.duration, true) || 0
+                      : Math.round(Number(m.duration) || 0);
+            const satellite = this.timerSatellite(m.satellite);
             let result: { ok: boolean; id?: string; fireAt?: number; error?: string };
-            if (!this.timers || duration <= 0) {
-                result = { ok: false, error: this.timers ? 'duration must be > 0 seconds' : 'timers not ready' };
+            if (!this.timers) {
+                result = { ok: false, error: 'timers not ready' };
+            } else if (duration <= 0) {
+                result = { ok: false, error: 'duration must be > 0 seconds' };
+            } else if (satellite === null) {
+                result = { ok: false, error: `unknown satellite "${String(m.satellite)}"` };
             } else {
-                const info = this.timers.add({ label: m.label || '', room: m.room || '', source: '', duration });
+                const info = this.timers.add({
+                    label: String(m.name ?? m.label ?? ''),
+                    room: m.room || '',
+                    source: satellite,
+                    duration,
+                    announce: typeof m.announce === 'string' ? m.announce : '',
+                });
                 result = { ok: true, id: info.id, fireAt: info.fireAt };
             }
             if (obj.callback) {
@@ -2508,20 +3274,39 @@ class Assistant extends Adapter {
             return;
         }
 
-        // Scripts: cancel a timer by id, or all when no id is given. message = { id? }.
+        // Scripts: cancel a timer by id, or all when no id is given. message = { id?, satellite? } — with `satellite`
+        // only that satellite's timers.
         if (obj.command === 'cancelTimer') {
-            const m = (obj.message || {}) as { id?: string };
-            const cancelled = m.id ? (this.timers?.cancel(m.id) ? 1 : 0) : (this.timers?.cancelAll() ?? 0);
+            const m = (obj.message || {}) as { id?: string; satellite?: string };
+            const satellite = this.timerSatellite(m.satellite);
+            let result: { ok: boolean; cancelled: number; error?: string };
+            if (satellite === null) {
+                result = { ok: false, cancelled: 0, error: `unknown satellite "${String(m.satellite)}"` };
+            } else {
+                const mine = (this.timers?.list() || []).filter(t => !satellite || t.source === satellite);
+                const ids = m.id ? mine.filter(t => t.id === m.id).map(t => t.id) : mine.map(t => t.id);
+                const cancelled =
+                    satellite || m.id
+                        ? ids.filter(id => this.timers?.cancel(id)).length
+                        : (this.timers?.cancelAll() ?? 0);
+                result = { ok: true, cancelled };
+            }
             if (obj.callback) {
-                this.sendTo(obj.from, obj.command, { ok: true, cancelled }, obj.callback);
+                this.sendTo(obj.from, obj.command, result, obj.callback);
             }
             return;
         }
 
-        // Scripts: list the running timers.
+        // Scripts: list the running timers. message = { satellite? } — with it only that satellite's.
         if (obj.command === 'listTimers') {
+            const m = (obj.message || {}) as { satellite?: string };
+            const satellite = this.timerSatellite(m.satellite);
+            const result =
+                satellite === null
+                    ? { timers: [], error: `unknown satellite "${String(m.satellite)}"` }
+                    : { timers: (this.timers?.list() || []).filter(t => !satellite || t.source === satellite) };
             if (obj.callback) {
-                this.sendTo(obj.from, obj.command, { timers: this.timers?.list() || [] }, obj.callback);
+                this.sendTo(obj.from, obj.command, result, obj.callback);
             }
             return;
         }
@@ -2762,6 +3547,43 @@ class Assistant extends Adapter {
                 payload = { error: `${m.control} on ${m.device} rejected the value (see the log)` };
             } else {
                 payload = { ok: true };
+            }
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, payload, obj.callback);
+            }
+            return;
+        }
+
+        // Voice tab: "Check ffmpeg" with the (unsaved) path from the form. message = { path }.
+        if (obj.command === 'testFfmpeg') {
+            const raw = (obj.message as { path?: unknown } | undefined)?.path;
+            const result = await this.testFfmpeg(typeof raw === 'string' ? raw : this.config.ffmpegPath);
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
+
+        // Voice tab: "Download ffmpeg". message = { path } (the unsaved path, only for the result text).
+        if (obj.command === 'downloadFfmpeg') {
+            const raw = (obj.message as { path?: unknown } | undefined)?.path;
+            const result = await this.downloadFfmpeg(typeof raw === 'string' ? raw : this.config.ffmpegPath || '');
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result, obj.callback);
+            }
+            return;
+        }
+
+        // Satellites tab: forget a satellite that is gone. message = { id } (the state id under `satellites.`).
+        if (obj.command === 'deleteSatellite') {
+            const raw = (obj.message as { id?: unknown } | undefined)?.id;
+            const id = typeof raw === 'string' ? raw : '';
+            let payload: Record<string, unknown>;
+            try {
+                await this.deleteSatellite(id);
+                payload = { ok: true };
+            } catch (e) {
+                payload = { error: (e as Error).message };
             }
             if (obj.callback) {
                 this.sendTo(obj.from, obj.command, payload, obj.callback);
@@ -3022,28 +3844,89 @@ class Assistant extends Adapter {
         if (obj.command !== 'ask') {
             return;
         }
-        const message = obj.message as { text?: string; source?: string } | string;
+        const message = obj.message as AskMessage | string;
         const text = typeof message === 'string' ? message : message?.text;
         // Origin for text.querySource: caller-provided (e.g. 'telegram:Max') or 'chat' for the admin chat.
         const source = (typeof message === 'string' ? '' : message?.source?.trim()) || 'chat';
+        // Who sent it (javascript.0, telegram.0, admin.0 for the chat tab) — the way to find a script gone wrong.
+        const caller = String(obj.from || '').replace(/^system\.adapter\./, '') || 'unknown';
 
+        let question = String(text ?? '').trim();
+        // A recording instead of text (a Telegram voice message): recognise it first, then answer as usual.
+        const audio = typeof message === 'string' ? undefined : message?.audio;
+        let heard: { sttMs: number; audioMs: number } | undefined;
+        if (!question && typeof audio === 'string' && audio) {
+            if (!this.ready) {
+                if (obj.callback) {
+                    this.sendTo(obj.from, obj.command, { error: 'agent not ready' }, obj.callback);
+                }
+                return;
+            }
+            try {
+                const res = await this.transcribeAsk(message as AskMessage);
+                if (!res.text) {
+                    this.log.info(
+                        `Voice Q (ask from ${caller}, ${source}): (empty) — speech recognition returned no text for ${res.audioMs} ms of audio`,
+                    );
+                    if (obj.callback) {
+                        this.sendTo(obj.from, obj.command, { heard: '', error: this.nothingHeardText() }, obj.callback);
+                    }
+                    return;
+                }
+                question = res.text;
+                heard = { sttMs: res.sttMs, audioMs: res.audioMs };
+            } catch (e) {
+                this.log.warn(`Voice message from ${caller} (${source}) not recognised: ${(e as Error).message}`);
+                if (obj.callback) {
+                    this.sendTo(obj.from, obj.command, { error: (e as Error).message }, obj.callback);
+                }
+                return;
+            }
+        }
+        // Pictures (a Telegram photo or album) go to the cloud model; a video only as the place it was stored.
+        const attachments = this.askAttachments(message, caller, source);
+        if (typeof attachments === 'string') {
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, { error: attachments }, obj.callback);
+            }
+            return;
+        }
+        if (!question && attachments.images.length) {
+            question = imageOnlyQuestion(this.answerLanguage(), attachments.images.length);
+        }
+        if (!question && !attachments.video) {
+            this.reportEmptyAsk(caller);
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, { error: 'empty question' }, obj.callback);
+            }
+            return;
+        }
         if (!this.ready) {
             if (obj.callback) {
                 this.sendTo(obj.from, obj.command, { error: 'agent not ready' }, obj.callback);
             }
             return;
         }
-        const question = String(text ?? '');
-        this.log.info(`Q (${obj.command}): ${question}`);
-        this.setStateAsync('text.request', { val: question, ack: true }).catch(() => {});
+        const shown = historyText(question, attachments.images.length, !!attachments.video);
+        this.log.info(
+            `${heard ? 'Voice Q' : 'Q'} (${obj.command} from ${caller}): ${shown}${attachments.video ? ` (video ${attachments.video.adapter}/${attachments.video.path})` : ''}`,
+        );
+        this.setStateAsync('text.request', { val: shown, ack: true }).catch(() => {});
         this.setQuerySource(source);
         try {
-            const answer = await this.answer(question, source);
+            const spoken = typeof message !== 'string' && message?.spoken === true;
+            const answer = await this.answer(question, source, heard ?? {}, attachments, spoken);
             this.log.info(`A: ${answer}`);
             this.setStateAsync('text.response', { val: answer, ack: true }).catch(() => {});
             if (obj.callback) {
                 // `journaled`: the admin chat gets this exchange from the journal and must not add it twice.
-                this.sendTo(obj.from, obj.command, { answer, journaled: !!this.journal?.enabled }, obj.callback);
+                // `heard`: what was recognised in a recording, so the caller can show it with the answer.
+                this.sendTo(
+                    obj.from,
+                    obj.command,
+                    { answer, journaled: !!this.journal?.enabled, ...(heard ? { heard: question } : {}) },
+                    obj.callback,
+                );
             }
         } catch (e) {
             this.log.error(`Assistant error: ${(e as Error).message}`);
@@ -3051,11 +3934,88 @@ class Assistant extends Adapter {
                 this.sendTo(
                     obj.from,
                     obj.command,
-                    { error: (e as Error).message, journaled: !!this.journal?.enabled },
+                    {
+                        error: (e as Error).message,
+                        journaled: !!this.journal?.enabled,
+                        ...(heard ? { heard: question } : {}),
+                    },
                     obj.callback,
                 );
             }
         }
+    }
+
+    /**
+     * The pictures and the video of an `ask`, or why they are refused (then nothing is answered: a question about a
+     * picture without the picture would be answered with a guess).
+     */
+    private askAttachments(message: AskMessage | string, caller: string, source: string): Attachments | string {
+        if (typeof message === 'string' || !message) {
+            return NO_ATTACHMENTS;
+        }
+        const { images, error } = parseAskImages(message.images);
+        if (error) {
+            this.log.warn(`Pictures from ${caller} (${source}) refused: ${error}`);
+            return `pictures: ${error}`;
+        }
+        const video = parseAskVideo(message.video);
+        if (isVideoError(video)) {
+            this.log.warn(`Video from ${caller} (${source}) refused: ${video.error}`);
+            return video.error;
+        }
+        return images.length || video ? { images, video } : NO_ATTACHMENTS;
+    }
+
+    /** Pictures and video of the request being answered */
+    private attachments(): Attachments {
+        return this.requestOrigin.getStore()?.attachments ?? NO_ATTACHMENTS;
+    }
+
+    /** Language of fixed replies: the voice language, else the system language. */
+    private answerLanguage(): string {
+        return String(this.config.voiceLanguage || this.language || 'en');
+    }
+
+    /**
+     * Speech recognition for an `ask` that carries a recording instead of text. `audio` is base64; `format` says what
+     * it is: `wav` and `pcm` (16-bit mono, `sampleRate`, default 16 kHz) are read directly, anything else (`ogg` from
+     * Telegram, mp3, m4a …) goes through ffmpeg. Uses the STT engine of the Voice tab, so voice must be enabled.
+     */
+    private async transcribeAsk(msg: AskMessage): Promise<{ text: string; sttMs: number; audioMs: number }> {
+        if (!this.config.voiceEnabled) {
+            throw new Error('speech recognition is off — enable voice on the Voice tab of the assistant');
+        }
+        const engines = await this.getSpeechEngines();
+        if (!engines) {
+            throw new Error('speech recognition is not configured — check the Voice tab of the assistant');
+        }
+        const data = Buffer.from(msg.audio || '', 'base64');
+        const format = (msg.format || '').toLowerCase().replace(/^\./, '');
+        let pcm: Buffer;
+        let sampleRate: number;
+        if (format === 'pcm') {
+            pcm = data;
+            sampleRate = Number(msg.sampleRate) || 16000;
+        } else if (data.toString('latin1', 0, 4) === 'RIFF') {
+            ({ pcm, sampleRate } = pcmFromResponse(data, ''));
+        } else {
+            ({ pcm, sampleRate } = await this.decodeAudioBufferToPcm(data, 16000));
+        }
+        const audioMs = Math.round((pcm.length / 2 / sampleRate) * 1000);
+        const language = msg.language || engines.language;
+        const start = Date.now();
+        const text = (await engines.stt.transcribe(pcm, sampleRate, language, await this.buildSttHints())).trim();
+        return { text, sttMs: Date.now() - start, audioMs };
+    }
+
+    /** Reply to a voice message in which speech recognition found nothing. */
+    private nothingHeardText(): string {
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        return lang === 'ru'
+            ? 'В голосовом сообщении я ничего не разобрала.'
+            : lang === 'de'
+              ? 'In der Sprachnachricht habe ich nichts verstanden.'
+              : "I couldn't make out anything in the voice message.";
     }
 
     /**
@@ -3067,15 +4027,49 @@ class Assistant extends Adapter {
      * is applied to the cloud LLM tier; every completed exchange (whichever tier answered) is recorded so
      * later turns have the full thread.
      */
-    private answer(question: string, source = '', origin: JournalOrigin = {}): Promise<string> {
-        return this.requestOrigin.run({ source, room: origin.room || '' }, () =>
+    private answer(
+        question: string,
+        source = '',
+        origin: JournalOrigin = {},
+        attachments: Attachments = NO_ATTACHMENTS,
+        /** The answer is read aloud although the request came by `ask` (dialog mode of the admin chat). */
+        spoken = false,
+    ): Promise<string> {
+        if (!question.trim() && !attachments.video) {
+            // Nothing to answer — and a model asked with nothing but the time context still costs a request.
+            return Promise.resolve('');
+        }
+        const fromSatellite = VOICE_TRANSPORTS.has(origin.transport || '');
+        const voice = fromSatellite || spoken;
+        const satellite = fromSatellite ? this.knownSatelliteId(origin.satellite || source, origin.room || '') : '';
+        // The journal shows "[picture] What is in this picture?", like the conversation history
+        const shown = historyText(question, attachments.images.length, !!attachments.video);
+        return this.requestOrigin.run({ source, room: origin.room || '', voice, satellite, attachments }, () =>
             this.journal
-                ? this.journal.run(question, source, origin, () => {
+                ? this.journal.run(shown, source, origin, () => {
                       this.traceSpeechInput(question, origin);
+                      this.traceAttachments(attachments);
                       return this.answerTracked(question, source);
                   })
                 : this.answerTracked(question, source),
         );
+    }
+
+    /** Pictures and video of the request at the head of its trace (sizes only, not the base64). */
+    private traceAttachments({ images, video }: Attachments): void {
+        if (!images.length && !video) {
+            return;
+        }
+        const kb = (base64: string): number => Math.round((base64.length * 3) / 4 / 1024);
+        const parts = [
+            images.length ? `${images.length} picture(s), ${images.reduce((n, i) => n + kb(i.data), 0)} KB` : '',
+            video ? `video ${video.adapter}/${video.path}` : '',
+        ].filter(Boolean);
+        this.journal?.step({
+            stage: 'request',
+            title: `Attachments: ${parts.join(', ')}`,
+            data: { images: images.map(i => ({ mimeType: i.mimeType, kb: kb(i.data) })), video: video || undefined },
+        });
     }
 
     /** Speech recognition happened before the request: put it at the head of its trace. */
@@ -3096,6 +4090,7 @@ class Assistant extends Adapter {
                 model:
                     (provider === 'openrouter' ? cfg.openrouterSttModel : cfg.sttModel || cfg.voskModel || '').trim() ||
                     undefined,
+                server: (provider === 'openai' && cfg.sttBaseUrl?.trim()) || undefined,
                 language: cfg.voiceLanguage || this.language || '',
                 audioMs: origin.audioMs,
                 wakeWord: origin.wakeWord,
@@ -3115,12 +4110,19 @@ class Assistant extends Adapter {
                 data: history,
             });
         }
-        const raw = await this.produceAnswer(question, history, source);
+        const cloudOnly = this.cloudOnlyReason(question, source);
+        const raw = await this.produceAnswer(question, history, source, cloudOnly);
         // The LLM signals "I'm waiting for the user's reply" by appending the [[LISTEN]] control marker
         // (see followUpHint). Strip it here so it's neither stored, shown nor spoken, and keep it per source:
         // two satellites answered at the same time must not hand each other their mic-on.
         const followUp = /\[\[LISTEN\]\]/i.test(raw);
         this.followUps.set(source, followUp);
+        // A script conversation goes on while the cloud model asks back: the reply goes to it as well.
+        if ((cloudOnly === 'script' || cloudOnly === 'scriptReply') && followUp) {
+            this.scriptTopics.set(source, Date.now());
+        } else {
+            this.scriptTopics.delete(source);
+        }
         if (followUp) {
             this.journal?.note({ followUp: true });
         }
@@ -3144,7 +4146,9 @@ class Assistant extends Adapter {
             data: { answer: result, raw: raw !== result ? raw : undefined, followUp, tone: toned || undefined },
         });
         if (useCtx && (result || toned)) {
-            this.context.add(source, question, result || this.doneText());
+            // The pictures are not sent again in later turns; a marker says there were some
+            const { images, video } = this.attachments();
+            this.context.add(source, historyText(question, images.length, !!video), result || this.doneText());
         }
         return result;
     }
@@ -3182,6 +4186,19 @@ class Assistant extends Adapter {
         return 'Always answer in the language the question was asked in, even if these instructions, the device names or the data are in another language.';
     }
 
+    /**
+     * Length instruction for a request that came in by voice: the answer is cut at `ttsMaxChars` before it is
+     * spoken, so the model is asked to stay within it. Empty for text requests (chat, Telegram, scripts) and
+     * when the limit is off.
+     */
+    private spokenLengthHint(): string {
+        if (!this.config.voiceEnabled || !this.requestOrigin.getStore()?.voice) {
+            return '';
+        }
+        const limit = parseTtsMaxChars(this.config.ttsMaxChars) ?? MAX_TTS_CHARS;
+        return spokenLengthHint(limit, String(this.config.voiceLanguage || this.language || 'en'));
+    }
+
     /** What [[DONE]] says where no beep can be played */
     private doneText(): string {
         const lang = String(this.config.voiceLanguage || this.language || 'en');
@@ -3190,6 +4207,30 @@ class Assistant extends Adapter {
 
     /** Per source: whether its last {@link answer} asked the user something (LLM-signalled via [[LISTEN]]). */
     private readonly followUps = new Map<string, boolean>();
+
+    /** Per source: when the cloud model last asked back about a script (see {@link cloudOnlyReason}). */
+    private readonly scriptTopics = new Map<string, number>();
+
+    /**
+     * Whether a request skips routines, YouTube, the rule NLU and the local model: when it is about a script, or answers
+     * a question the cloud model asked about one. Writing or changing a script is work for the cloud model, and the
+     * rules would read its details as commands of their own ("… that switches the kitchen light every hour" was answered
+     * with the time). Without a cloud tier the local ones are all there is, so nothing is skipped.
+     */
+    private cloudOnlyReason(question: string, source: string): CloudOnly {
+        if (!this.agent && !this.piAgent) {
+            return null;
+        }
+        if (mentionsScript(question)) {
+            return 'script';
+        }
+        const since = this.scriptTopics.get(source);
+        if (since !== undefined && Date.now() - since < SCRIPT_TOPIC_MS) {
+            return 'scriptReply';
+        }
+        // Rules and the local model are blind: the caption of a photo is about the photo, not a command
+        return this.attachments().images.length ? 'image' : null;
+    }
 
     /**
      * Should the satellite behind `source` re-open its mic after this reply? Primarily the LLM's own
@@ -3288,8 +4329,86 @@ class Assistant extends Adapter {
         return lang === 'ru' ? `Сейчас ${time}.` : lang === 'de' ? `Es ist ${time} Uhr.` : `It's ${time}.`;
     }
 
-    private async produceAnswer(question: string, history: ConversationTurn[], source = ''): Promise<string> {
+    /**
+     * The tiers that answer without a model: routines, YouTube and the rule NLU. Null when none of them understood the
+     * request.
+     */
+    private async answerLocally(question: string, source: string): Promise<string | null> {
+        // A routine is a macro the user wrote down, so it wins over everything that interprets: the NLU
+        // would find "Licht" in "Gute Nacht, Licht aus" and do half of it, and the LLM would cost a
+        // round-trip for a decision that has already been made.
+        const routine = matchRoutine(question, this.routines);
+        if (routine) {
+            this.log.info(`Routine '${routine.name}' triggered (source='${source}').`);
+            this.journal?.note({ tier: 'routine', detail: routine.name });
+            this.journal?.step({ stage: 'routine', title: `Routine "${routine.name}" matched`, data: routine });
+            await this.runRoutine(routine, source);
+            return routine.reply;
+        }
+        if (this.routines.length) {
+            this.journal?.step({
+                stage: 'routine',
+                title: `No routine matched (${this.routines.length} configured)`,
+                data: { phrases: this.routines.map(r => ({ name: r.name, phrases: r.phrases })) },
+            });
+        }
+        // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
+        if (!this.config.useLocalNlu) {
+            this.journal?.step({ stage: 'nlu', title: 'Rule-based NLU is switched off (useLocalNlu)' });
+            return null;
+        }
+        // "Spiele den Kanal X ab" first: the device NLU would find the TV in "… auf dem Fernseher" and
+        // answer with its power state.
+        const yt = this.youtubePlayers.length ? parseYouTubeCommand(question, this.youtubePlayers) : null;
+        if (yt) {
+            this.log.info(`YouTube request understood locally: ${yt.kind} "${yt.query}" (source='${source}').`);
+            this.journal?.note({ tier: 'nlu', detail: `youtube ${yt.kind}` });
+            const start = Date.now();
+            const res = await this.playYouTube(yt.query, yt.kind, yt.player);
+            this.journal?.step({
+                stage: 'youtube',
+                title: `YouTube ${yt.kind} "${yt.query}"${yt.player ? ` on "${yt.player}"` : ''}`,
+                ms: Date.now() - start,
+                data: { parsed: yt, result: res },
+            });
+            return res.text;
+        }
+        if (this.youtubePlayers.length) {
+            this.journal?.step({ stage: 'youtube', title: 'Not a YouTube command' });
+        }
+        try {
+            const handled = await this.tryLocalNlu(question, source);
+            if (handled !== null) {
+                this.log.info(`Answered by rule-based NLU (source='${source}').`);
+                return handled;
+            }
+        } catch (e) {
+            this.log.debug(`NLU skipped: ${(e as Error).message}`);
+            this.journal?.step({
+                stage: 'nlu',
+                level: 'warn',
+                title: `NLU gave up, the request goes on: ${(e as Error).message}`,
+                data: errorInfo(e),
+            });
+        }
+        return null;
+    }
+
+    private async produceAnswer(
+        question: string,
+        history: ConversationTurn[],
+        source = '',
+        cloudOnly: CloudOnly = null,
+    ): Promise<string> {
         this.log.debug(`answer: source='${source}', context=${history.length} turn(s)`);
+        const { images, video } = this.attachments();
+        if (!question.trim() && video) {
+            // A video without a question: nothing looks at videos yet
+            this.log.info(`Video from '${source}' (${video.adapter}/${video.path}) not looked at: not supported yet.`);
+            this.journal?.note({ tier: 'none' });
+            this.journal?.step({ stage: 'none', title: 'A video without a question: videos are not looked at yet' });
+            return videoNotSupportedText(this.answerLanguage());
+        }
         // A ringing timer/alarm is silenced by a stop word ("stop"/"halt"/"aufhören"/…) — checked first so
         // it always wins over the normal pipeline while something is ringing.
         if (this.rings.length && isStopCommand(question)) {
@@ -3316,62 +4435,39 @@ class Assistant extends Adapter {
                 return '';
             }
         }
-        // A routine is a macro the user wrote down, so it wins over everything that interprets: the NLU
-        // would find "Licht" in "Gute Nacht, Licht aus" and do half of it, and the LLM would cost a
-        // round-trip for a decision that has already been made.
-        const routine = matchRoutine(question, this.routines);
-        if (routine) {
-            this.log.info(`Routine '${routine.name}' triggered (source='${source}').`);
-            this.journal?.note({ tier: 'routine', detail: routine.name });
-            this.journal?.step({ stage: 'routine', title: `Routine "${routine.name}" matched`, data: routine });
-            await this.runRoutine(routine, source);
-            return routine.reply;
+        // "Dialogmodus an/aus": before the tiers, which would take it for a device ("Modus") or ask the cloud model
+        const dialog = this.switchDialog(question, source);
+        if (dialog !== null) {
+            return dialog;
         }
-        if (this.routines.length) {
+        if (images.length && !this.agent && !this.piAgent) {
+            this.log.info(`Pictures from '${source}' not looked at: no cloud model is configured.`);
+            this.journal?.note({ tier: 'none' });
             this.journal?.step({
-                stage: 'routine',
-                title: `No routine matched (${this.routines.length} configured)`,
-                data: { phrases: this.routines.map(r => ({ name: r.name, phrases: r.phrases })) },
+                stage: 'none',
+                level: 'warn',
+                title: 'Pictures came with the request, but no cloud model is configured to look at them',
             });
+            return noVisionText(this.answerLanguage());
         }
-        // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
-        if (this.config.useLocalNlu) {
-            // "Spiele den Kanal X ab" first: the device NLU would find the TV in "… auf dem Fernseher" and
-            // answer with its power state.
-            const yt = this.youtubePlayers.length ? parseYouTubeCommand(question, this.youtubePlayers) : null;
-            if (yt) {
-                this.log.info(`YouTube request understood locally: ${yt.kind} "${yt.query}" (source='${source}').`);
-                this.journal?.note({ tier: 'nlu', detail: `youtube ${yt.kind}` });
-                const start = Date.now();
-                const res = await this.playYouTube(yt.query, yt.kind, yt.player);
-                this.journal?.step({
-                    stage: 'youtube',
-                    title: `YouTube ${yt.kind} "${yt.query}"${yt.player ? ` on "${yt.player}"` : ''}`,
-                    ms: Date.now() - start,
-                    data: { parsed: yt, result: res },
-                });
-                return res.text;
-            }
-            if (this.youtubePlayers.length) {
-                this.journal?.step({ stage: 'youtube', title: 'Not a YouTube command' });
-            }
-            try {
-                const handled = await this.tryLocalNlu(question, source);
-                if (handled !== null) {
-                    this.log.info(`Answered by rule-based NLU (source='${source}').`);
-                    return handled;
-                }
-            } catch (e) {
-                this.log.debug(`NLU skipped: ${(e as Error).message}`);
-                this.journal?.step({
-                    stage: 'nlu',
-                    level: 'warn',
-                    title: `NLU gave up, the request goes on: ${(e as Error).message}`,
-                    data: errorInfo(e),
-                });
-            }
+        if (cloudOnly) {
+            const why =
+                cloudOnly === 'script'
+                    ? 'it is about a script'
+                    : cloudOnly === 'scriptReply'
+                      ? 'it answers a question of the cloud model about a script'
+                      : 'pictures came with it, only the cloud model can see them';
+            this.log.info(`Routines, NLU and local LLM skipped (source='${source}'): ${why}.`);
+            this.journal?.step({
+                stage: 'nlu',
+                title: `Routines, NLU and local LLM skipped: ${why}`,
+                data: { reason: cloudOnly },
+            });
         } else {
-            this.journal?.step({ stage: 'nlu', title: 'Rule-based NLU is switched off (useLocalNlu)' });
+            const local = await this.answerLocally(question, source);
+            if (local !== null) {
+                return local;
+            }
         }
         // Current weather from the configured adapter — prepended to the user turn of BOTH LLM tiers so
         // "how's the weather?" is answered from real data (the local model has no tools and would otherwise
@@ -3385,7 +4481,8 @@ class Assistant extends Adapter {
         // so it would answer a follow-up like "yes" context-free and swallow it — let the cloud LLM (which has
         // the thread and the tools) handle follow-ups instead. Without a cloud LLM there is nobody to hand
         // follow-ups to, so the local model takes them too.
-        const useLocal = !!(this.config.useLocalLlm && this.localLlm);
+        // A script request does not even fall back to it: a model without tools cannot write a script.
+        const useLocal = !cloudOnly && !!(this.config.useLocalLlm && this.localLlm);
         const cloud = !!(this.agent || this.piAgent);
         const localFirst = useLocal && (!cloud || !!this.config.localLlmFirst);
         if (localFirst && (!history.length || !cloud)) {
@@ -3433,9 +4530,15 @@ class Assistant extends Adapter {
             `Cloud LLM [${this.agent.model || 'auto'}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}${weather ? ', weather' : ''}${this.presence?.configured ? ', presence' : ''}) — running tool loop…`,
         );
         // Prepend the current date/time (and the weather line, if a source is configured) to the user turn —
-        // cache-safe, see buildTimeContext. The stored history keeps the untouched question.
+        // cache-safe, see buildTimeContext. The stored history keeps the untouched question. A spoken request
+        // also gets the length limit, after the question: in the system prompt it would bust the prompt cache
+        // every time voice and text requests alternate.
         const time = this.buildTimeContext();
-        const questionForLlm = [time, weather, question].filter(Boolean).join('\n\n');
+        const lengthHint = this.spokenLengthHint();
+        // The pictures themselves go along; only a video needs a word, the model gets nothing of it
+        const questionForLlm = [time, weather, question, attachmentNote(0, !!video), lengthHint]
+            .filter(Boolean)
+            .join('\n\n');
         this.journal?.note({
             tier: 'cloud',
             detail: `${this.llm?.provider || this.config.provider || 'openai'} · ${this.agent.model || 'auto'}`,
@@ -3445,19 +4548,22 @@ class Assistant extends Adapter {
         const deviceLines = ctx ? ctx.split('\n').length - 1 : 0;
         this.journal?.step({
             stage: 'context',
-            title: `Prompt: ${deviceLines} devices${mem ? ', memory' : ''}${weather ? ', weather' : ''}${followUp ? ', follow-up marker' : ''}`,
+            title: `Prompt: ${deviceLines} devices${mem ? ', memory' : ''}${weather ? ', weather' : ''}${followUp ? ', follow-up marker' : ''}${lengthHint ? ', length limit' : ''}`,
             data: {
                 systemPrompt: this.config.systemPrompt || '',
                 followUpHint: followUp || undefined,
                 doneHint: done || undefined,
+                lengthHint: lengthHint || undefined,
                 memory: mem || undefined,
                 devices: deviceLines,
                 time,
                 weather: weather || undefined,
+                images: images.length || undefined,
+                video: video ? `${video.adapter}/${video.path}` : undefined,
             },
         });
         try {
-            return await this.agent.ask(questionForLlm, sys, history);
+            return await this.agent.ask(questionForLlm, sys, history, images);
         } catch (e) {
             // Offline, quota, outage: the local model is the fallback — unless it was already asked above.
             if (useLocal && !localFirst) {
@@ -3493,19 +4599,34 @@ class Assistant extends Adapter {
         // The device list maps names to state ids, so pi-agent can act without searching first. It is the
         // first to go when the instructions get too long — pi-agent can still search.
         const { text: instructions, dropped } = composeInstructions(
-            [this.config.systemPrompt || '', this.languageHint(), followUp, this.doneHint()],
+            [this.config.systemPrompt || '', this.languageHint(), followUp, this.doneHint(), this.spokenLengthHint()],
             [this.buildMemoryContext(), await this.buildDeviceContext()],
         );
         if (dropped) {
             this.log.debug(`pi-agent: ${dropped} context block(s) left out, the instructions would be too long.`);
         }
-        const text = [this.buildTimeContext(), weather, this.buildPresenceContext(), question]
+        // An older pi-agent drops the pictures: the note at least tells the model that there were some
+        const { images, video } = this.attachments();
+        const text = [
+            this.buildTimeContext(),
+            weather,
+            this.buildPresenceContext(),
+            question,
+            attachmentNote(images.length, !!video),
+        ]
             .filter(Boolean)
             .join('\n\n');
         this.log.info(`Cloud tier ${harness.instance} (source='${source}') — asking pi-agent…`);
         this.journal?.note({ tier: 'cloud', detail: harness.instance });
         try {
-            return await harness.ask({ text, conversation: source, instructions });
+            // pi-agent asks its questions to confirm a write ("… Say yes or no.") in this language, not in the system
+            // language: a satellite listening in Russian does not hear a German "Ja"
+            const language = String(this.config.voiceLanguage || this.language || '');
+            // From a satellite: where pi-agent can speak later on its own (a reminder, the end of a background
+            // task) — its `tts` state says it there.
+            const satellite = this.requestOrigin.getStore()?.satellite || '';
+            const tts = satellite ? `${this.namespace}.satellites.${satellite}.tts` : '';
+            return await harness.ask({ text, conversation: source, instructions, language, images, satellite, tts });
         } catch (e) {
             if (localFallback) {
                 this.log.warn(`pi-agent failed (${(e as Error).message}) — asking the local LLM instead.`);
@@ -3693,7 +4814,7 @@ class Assistant extends Adapter {
      * usually not open at all. Nothing to free on shutdown: the host unblocks our entries when the process exits
      * and drops them on the next start. Best effort — the registry is a hint, it must never keep a server down.
      */
-    private declarePort(type: 'tcpPort' | 'udpPort', port: number, bind: string, family?: 4): void {
+    private declarePort(type: 'tcpPort' | 'udpPort', port: number, bind: string, family?: 4 | 6): void {
         const api = this as unknown as {
             supportsFeature(feature: string): boolean;
             registerUsedResource?(
@@ -4062,6 +5183,50 @@ class Assistant extends Adapter {
      * @param command `addEvent`, `listEvents`, `deleteEvent`, …
      * @param message the parameters
      */
+    /** `sendTo` an instance that must be running; rejects when it is not or does not answer in `timeoutMs`. */
+    private async askInstance(
+        instance: string,
+        command: string,
+        message: Record<string, unknown>,
+        timeoutMs: number,
+    ): Promise<unknown> {
+        const alive = await this.getForeignStateAsync(`system.adapter.${instance}.alive`);
+        if (!alive?.val) {
+            throw new Error(`${instance} is not running`);
+        }
+        return this.sendToAsync(instance, command, message as ioBroker.MessagePayload, { timeout: timeoutMs });
+    }
+
+    /**
+     * Settings button: install pi-agent or ai-parakeet on this host if needed, create an instance if there is
+     * none, and put it into the form (`native`). Takes minutes on a Raspberry Pi; the log shows the steps.
+     */
+    private async installHelperAdapter(message: unknown): Promise<Record<string, unknown>> {
+        const adapterName = (message as { adapter?: unknown } | null)?.adapter;
+        const name = typeof adapterName === 'string' ? adapterName : '';
+        const field = HELPER_ADAPTERS.get(name);
+        if (!field) {
+            return { error: `Cannot install "${name}"` };
+        }
+        if (!this.host) {
+            return { error: 'The host of this instance is unknown' };
+        }
+        const adapter: InstallerAdapter = {
+            sendToHost: (host, command, msg) => this.sendToHost(host, command, msg),
+            getForeignObjectAsync: id => this.getForeignObjectAsync(id),
+            getObjectViewAsync: (design, search, params) => this.getObjectViewAsync(design, search, params),
+            log: this.log,
+        };
+        this.installer ??= new AdapterInstaller(adapter, this.host);
+        try {
+            const { instance, installed } = await this.installer.ensure(name);
+            return { native: { [field]: instance }, result: installed ? 'installed' : 'existing', args: [instance] };
+        } catch (e) {
+            this.log.warn(`Installing ${name}: ${(e as Error).message}`);
+            return { error: (e as Error).message };
+        }
+    }
+
     private async calendarCall<T extends object>(command: string, message: Record<string, unknown>): Promise<T> {
         const instance = (this.config.calendarInstance || '').trim().replace(/^system\.adapter\./, '');
         if (!instance) {
@@ -5024,13 +6189,26 @@ class Assistant extends Adapter {
         await this.setStateAsync(`${base}.fireAt`, { val: t.fireAt, ack: true });
     }
 
+    /**
+     * The `source` a timer of a satellite gets (the device name, like a timer set there by voice), from the satellite
+     * a script named: '' when it named none, null when the name is unknown.
+     */
+    private timerSatellite(name: unknown): string | null {
+        if (typeof name !== 'string' || !name.trim()) {
+            return '';
+        }
+        const id = this.resolveSatelliteId(name);
+        return id ? this.satDeviceById.get(id) || id : null;
+    }
+
     /** A timer expired: record it, play the jingle (if any) and speak the announcement on the origin satellite. */
     private onTimerFired(t: TimerInfo): void {
         this.log.info(`Timer fired: "${t.label || '(no label)'}"${t.room ? ` (${t.room})` : ''}`);
         this.setStateAsync('timers.lastFired', { val: t.label || t.id, ack: true }).catch(() => {});
-        const announce = this.config.timerAnnounce !== false;
+        // A text a script gave for this timer (a reminder) is said even when timer announcements are off
+        const announce = !!t.announce || this.config.timerAnnounce !== false;
         const target = this.announceTargetForSource(t.source);
-        this.fireEffects(this.config.timerSound || '', announce, this.timerAnnounceMessage(t), target);
+        this.fireEffects(this.config.timerSound || '', announce, t.announce || this.timerAnnounceMessage(t), target);
     }
 
     /** Build the spoken expiry message ("Timer abgelaufen: die Nudeln.") in the interaction language. */
@@ -5230,6 +6408,9 @@ class Assistant extends Adapter {
      * because a confirmation nobody hears is worse than one that costs a TTS call.
      */
     private async playConfirmationTone(source: string): Promise<boolean> {
+        if (this.esphome?.dialog(source)) {
+            return true; // in dialog mode the satellite plays it as the reply and listens again after it
+        }
         const target = this.announceTargetForSource(source);
         if (!target) {
             return false; // chat/telegram/unknown origin: there is no speaker to beep on
@@ -7345,6 +8526,7 @@ class Assistant extends Adapter {
         } catch {
             // ignore
         }
+        this.installer?.stop();
         try {
             this.timers?.dispose();
         } catch {

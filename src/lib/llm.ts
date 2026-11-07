@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import type { Tool } from './tools';
 import { errorInfo, type JournalTokens, type TraceFn } from './journal';
+import { redactImages, type ImageInput } from './media';
 
 /** All selectable LLM providers. gemini/deepseek/openrouter/custom all use the OpenAI-compatible SDK path. */
 export type Provider = 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'openrouter' | 'custom';
@@ -187,14 +188,18 @@ export class LlmAgent {
     /**
      * `systemPrompt` overrides the configured one for this call (e.g. to inject a device list).
      * `history` are prior turns (user/assistant) prepended so the model can resolve follow-ups.
+     * `images` go with the question (a photo from Telegram); the model must be able to see.
      */
     public async ask(
         question: string,
         systemPrompt?: string,
         history: { role: 'user' | 'assistant'; content: string }[] = [],
+        images: ImageInput[] = [],
     ): Promise<string> {
         await this.ensureModel();
-        this.log.debug(`llm ask [${this.provider}/${this.model}] (${history.length} history): ${question}`);
+        this.log.debug(
+            `llm ask [${this.provider}/${this.model}] (${history.length} history${images.length ? `, ${images.length} picture(s)` : ''}): ${question}`,
+        );
         const started = Date.now();
         const sys = systemPrompt ?? this.systemPrompt;
         this.trace?.({
@@ -209,12 +214,13 @@ export class LlmAgent {
                 maxRounds: this.maxRounds,
                 system: sys,
                 tools: this.tools.map(t => t.name),
+                images: images.length ? images.map(i => i.mimeType) : undefined,
             },
         });
         const answer =
             this.provider === 'anthropic'
-                ? await this.askAnthropic(question, sys, history)
-                : await this.askOpenAI(question, sys, history);
+                ? await this.askAnthropic(question, sys, history, images)
+                : await this.askOpenAI(question, sys, history, images);
         this.log.debug(`llm answer (${Date.now() - started} ms): ${answer}`);
         return answer;
     }
@@ -227,7 +233,8 @@ export class LlmAgent {
         const max = this.log.level === 'silly' ? 8000 : 1500;
         let text: string;
         try {
-            text = JSON.stringify(payload);
+            // base64 of a picture would fill the whole excerpt
+            text = JSON.stringify(redactImages(payload));
         } catch {
             text = String(payload);
         }
@@ -418,7 +425,7 @@ export class LlmAgent {
                 level: 'error',
                 title: `Round ${round + 1} failed: ${(e as Error).message}`,
                 ms: Date.now() - start,
-                data: { sent, error: errorInfo(e) },
+                data: { sent: redactImages(sent), error: errorInfo(e) },
             });
             throw e;
         }
@@ -449,6 +456,7 @@ export class LlmAgent {
         question: string,
         systemPrompt: string,
         history: { role: 'user' | 'assistant'; content: string }[] = [],
+        images: ImageInput[] = [],
     ): Promise<string> {
         const client = this.openai as OpenAI;
         const tools = this.tools.map(t => ({
@@ -463,7 +471,7 @@ export class LlmAgent {
         for (const t of history) {
             messages.push({ role: t.role, content: t.content });
         }
-        messages.push({ role: 'user', content: question });
+        messages.push({ role: 'user', content: openAiUserContent(question, images) });
         // Messages the trace has shown already: the system prompt is part of the opening step.
         let shown = systemPrompt ? 1 : 0;
 
@@ -490,7 +498,7 @@ export class LlmAgent {
                 ms,
                 tokens: tokensOf(resp.usage),
                 data: {
-                    sent,
+                    sent: redactImages(sent),
                     response: { finish_reason: resp.choices[0].finish_reason, message: msg },
                     model: resp.model,
                     usage: resp.usage,
@@ -548,6 +556,7 @@ export class LlmAgent {
         question: string,
         systemPrompt: string,
         history: { role: 'user' | 'assistant'; content: string }[] = [],
+        images: ImageInput[] = [],
     ): Promise<string> {
         const client = this.anthropic as Anthropic;
         const tools: any[] = this.tools.map(t => ({
@@ -566,7 +575,7 @@ export class LlmAgent {
 
         const messages: any[] = [
             ...history.map(t => ({ role: t.role, content: t.content })),
-            { role: 'user', content: question },
+            { role: 'user', content: anthropicUserContent(question, images) },
         ];
         // Messages the trace has shown already (the system prompt is part of the opening step).
         let shown = 0;
@@ -597,7 +606,7 @@ export class LlmAgent {
                 ms,
                 tokens: tokensOf(resp.usage),
                 data: {
-                    sent,
+                    sent: redactImages(sent),
                     response: { stop_reason: resp.stop_reason, content: resp.content },
                     model: resp.model,
                     usage: resp.usage,
@@ -622,4 +631,38 @@ export class LlmAgent {
         }
         return this.tooManyRounds();
     }
+}
+
+/**
+ * The user turn of the OpenAI Chat Completions API (also Gemini, OpenRouter …): the plain question, or text and
+ * pictures as data URLs.
+ *
+ * @param question the question
+ * @param images pictures that came with it
+ */
+export function openAiUserContent(question: string, images: ImageInput[] = []): string | unknown[] {
+    if (!images.length) {
+        return question;
+    }
+    return [
+        { type: 'text', text: question },
+        ...images.map(i => ({ type: 'image_url', image_url: { url: `data:${i.mimeType};base64,${i.data}` } })),
+    ];
+}
+
+/**
+ * The user turn of the Anthropic Messages API: the plain question, or the pictures first and then the text (what
+ * Anthropic recommends).
+ *
+ * @param question the question
+ * @param images pictures that came with it
+ */
+export function anthropicUserContent(question: string, images: ImageInput[] = []): string | unknown[] {
+    if (!images.length) {
+        return question;
+    }
+    return [
+        ...images.map(i => ({ type: 'image', source: { type: 'base64', media_type: i.mimeType, data: i.data } })),
+        { type: 'text', text: question },
+    ];
 }

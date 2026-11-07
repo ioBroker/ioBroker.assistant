@@ -90,6 +90,10 @@ export interface SelectCommandRequest extends PbMessage {
     setKey(value: number): void;
     setState(value: string): void;
 }
+export interface TextCommandRequest extends PbMessage {
+    setKey(value: number): void;
+    setState(value: string): void;
+}
 export interface UpdateCommandRequest extends PbMessage {
     setKey(value: number): void;
     setCommand(value: number): void;
@@ -100,6 +104,10 @@ export interface MediaPlayerCommandRequest extends PbMessage {
     setCommand(value: number): void;
     setHasVolume(value: boolean): void;
     setVolume(value: number): void;
+    setHasMediaUrl(value: boolean): void;
+    setMediaUrl(value: string): void;
+    setHasAnnouncement(value: boolean): void;
+    setAnnouncement(value: boolean): void;
 }
 /** Mirrors an assistant timer onto the device, which drives its own LED ring and gong. */
 export interface VoiceAssistantTimerEventResponse extends PbMessage {
@@ -123,6 +131,8 @@ export interface AuthenticationResponse {
 }
 export interface DeviceInfoResponse {
     getName(): string;
+    /** What the device is called in the UI; entities without a name of their own are named after it. */
+    getFriendlyName(): string;
     getModel(): string;
     getEsphomeVersion(): string;
     getMacAddress(): string;
@@ -168,6 +178,7 @@ interface ApiPb {
     SwitchCommandRequest: Ctor<SwitchCommandRequest>;
     NumberCommandRequest: Ctor<NumberCommandRequest>;
     SelectCommandRequest: Ctor<SelectCommandRequest>;
+    TextCommandRequest: Ctor<TextCommandRequest>;
     UpdateCommandRequest: Ctor<UpdateCommandRequest>;
     MediaPlayerCommandRequest: Ctor<MediaPlayerCommandRequest>;
     VoiceAssistantResponse: Ctor<VoiceAssistantResponseMsg>;

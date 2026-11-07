@@ -10,6 +10,7 @@ import {
     DialogContent,
     DialogTitle,
     IconButton,
+    LinearProgress,
     MenuItem,
     Paper,
     Select,
@@ -27,6 +28,7 @@ import {
     PlayArrow as PlayIcon,
     Info as DetailsOnIcon,
     InfoOutlined as DetailsOffIcon,
+    RecordVoiceOver as DialogIcon,
 } from '@mui/icons-material';
 import { ConfigGeneric, type ConfigGenericProps, type ConfigGenericState } from '@iobroker/json-config';
 import { I18n } from '@iobroker/gui-components';
@@ -41,6 +43,7 @@ import {
     type JournalEntry,
 } from './journal';
 import RequestDetailsDialog, { type TraceResponse } from './RequestDetailsDialog';
+import { DIALOG_RATE, VoiceDialog, pcmToBase64 } from './voiceDialog';
 
 // Register this component's translations into the shared admin I18n so the `custom_assistant_*`
 // keys resolve (instance-config custom components don't auto-load admin/custom/i18n).
@@ -89,6 +92,19 @@ interface ChatState extends ConfigGenericState {
     ttsPlaying: string;
     /** Backend TTS is usable (a voice key is configured) — hides the play button when false. */
     ttsAvailable: boolean;
+    /** Dialog mode: '' = off, else what it is doing. */
+    dialog: '' | 'listening' | 'hearing' | 'thinking' | 'speaking';
+    /** Microphone level in dialog mode, 0…1 of the speech threshold. */
+    dialogLevel: number;
+}
+
+/** Answer of the `ask` command */
+interface AskResult {
+    answer?: string;
+    error?: string;
+    /** What speech recognition made of a recording ('' = nothing). */
+    heard?: string;
+    journaled?: boolean;
 }
 
 /** Minimal shape of the browser SpeechRecognition instance we use (no DOM lib types for it). */
@@ -120,6 +136,11 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
     private aliveSubId = '';
     private journalSubId = '';
     private recognition: SpeechRecognitionLike | null = null;
+    private voiceDialog: VoiceDialog | null = null;
+    /** Ends the answer being read aloud in dialog mode. */
+    private stopSpeaking: (() => void) | null = null;
+    private levelAt = 0;
+    private scrollTimeout: ReturnType<typeof setTimeout> | null = null;
 
     constructor(props: ConfigGenericProps) {
         super(props);
@@ -145,6 +166,8 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             speak: false,
             ttsPlaying: '',
             ttsAvailable: false,
+            dialog: '',
+            dialogLevel: 0,
         };
     }
 
@@ -173,8 +196,10 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             for (const e of res.entries || []) {
                 entries[e.id] = e;
             }
-            this.setState(prev => ({ journalEnabled: !!res.enabled, entries: { ...entries, ...prev.entries } }));
-            this.scrollToBottom();
+            this.setState(
+                prev => ({ journalEnabled: !!res.enabled, entries: { ...entries, ...prev.entries } }),
+                () => this.scrollToBottom(),
+            );
         } catch {
             this.setState({ journalEnabled: false });
         }
@@ -191,8 +216,8 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         return typeof window !== 'undefined' && 'speechSynthesis' in window;
     }
 
-    /** Admin UI language → a BCP-47 tag for the speech APIs (e.g. 'de' → 'de-DE'). */
-    private speechLang(): string {
+    /** A language ('de'; default: the admin's) → a BCP-47 tag for the speech APIs ('de-DE'). */
+    private speechLang(language?: string): string {
         const map: Record<string, string> = {
             de: 'de-DE',
             en: 'en-US',
@@ -206,7 +231,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             uk: 'uk-UA',
             'zh-cn': 'zh-CN',
         };
-        const l = I18n.getLanguage();
+        const l = language || I18n.getLanguage();
         return map[l] || 'en-US';
     }
 
@@ -216,7 +241,7 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
     }
 
     async componentDidMount(): Promise<void> {
-        super.componentDidMount();
+        await super.componentDidMount();
         this.aliveSubId = `system.adapter.${this.instanceId}.alive`;
         this.journalSubId = `${this.instanceId}.journal.last`;
 
@@ -234,9 +259,9 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         }
 
         // Live-track the instance's alive flag so the composer enables/disables without a reload.
-        this.props.oContext.socket.subscribeState(this.aliveSubId, this.onAliveChange);
+        await this.props.oContext.socket.subscribeState(this.aliveSubId, this.onAliveChange);
         // Every started and every finished request lands here — that is what makes the view live.
-        this.props.oContext.socket.subscribeState(this.journalSubId, this.onJournalChange);
+        await this.props.oContext.socket.subscribeState(this.journalSubId, this.onJournalChange);
     }
 
     componentWillUnmount(): void {
@@ -246,11 +271,16 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         if (this.journalSubId) {
             this.props.oContext.socket.unsubscribeState(this.journalSubId, this.onJournalChange);
         }
+        if (this.scrollTimeout) {
+            clearTimeout(this.scrollTimeout);
+            this.scrollTimeout = null;
+        }
         try {
             this.recognition?.stop();
         } catch {
             /* ignore */
         }
+        this.stopDialog();
         if (this.ttsSupported) {
             window.speechSynthesis.cancel();
         }
@@ -271,10 +301,10 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             return;
         }
         const stick = this.isNearBottom();
-        this.setState(prev => ({ entries: { ...prev.entries, [entry.id]: entry } }));
-        if (stick) {
-            this.scrollToBottom();
-        }
+        this.setState(
+            prev => ({ entries: { ...prev.entries, [entry.id]: entry } }),
+            () => stick && this.scrollToBottom(),
+        );
     };
 
     /** Start/stop browser speech recognition; the final transcript is sent as a message. */
@@ -310,6 +340,185 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         } catch {
             this.setState({ listening: false });
         }
+    }
+
+    /** Voice settings of the form (the chat only works with the saved ones, so they are the same). */
+    private get voiceSettings(): { enabled: boolean; language: string } {
+        const data = (this.props.data || {}) as { voiceEnabled?: boolean; voiceLanguage?: string };
+        return { enabled: !!data.voiceEnabled, language: data.voiceLanguage || '' };
+    }
+
+    /** Start or end the dialog mode: the microphone stays open and everything said becomes a question. */
+    private async toggleDialog(): Promise<void> {
+        if (this.voiceDialog) {
+            this.stopDialog();
+            return;
+        }
+        try {
+            this.recognition?.stop();
+        } catch {
+            /* ignore */
+        }
+        if (this.ttsSupported) {
+            window.speechSynthesis.cancel();
+        }
+        const dialog = new VoiceDialog({
+            onUtterance: pcm => this.dialogTurn(pcm),
+            onLevel: (level, hearing) => this.onDialogLevel(level, hearing),
+        });
+        this.voiceDialog = dialog;
+        this.setState({ dialog: 'listening', dialogLevel: 0 });
+        try {
+            await dialog.start();
+        } catch (e) {
+            if (this.voiceDialog === dialog) {
+                this.stopDialog();
+            }
+            this.addMessage({
+                role: 'error',
+                text: `${I18n.t('custom_assistant_The microphone could not be opened:')} ${(e as Error).message}`,
+                ts: Date.now(),
+            });
+        }
+    }
+
+    private stopDialog(): void {
+        this.voiceDialog?.stop();
+        this.voiceDialog = null;
+        this.stopSpeaking?.();
+        if (this.state.dialog) {
+            this.setState({ dialog: '', dialogLevel: 0 });
+        }
+    }
+
+    private onDialogLevel(level: number, hearing: boolean): void {
+        const now = Date.now();
+        // ten updates a second are plenty for the meter
+        if (now - this.levelAt < 100 && hearing === (this.state.dialog === 'hearing')) {
+            return;
+        }
+        this.levelAt = now;
+        this.setState(prev =>
+            prev.dialog === 'listening' || prev.dialog === 'hearing'
+                ? { dialogLevel: level, dialog: hearing ? 'hearing' : 'listening' }
+                : null,
+        );
+    }
+
+    /**
+     * One turn of the dialog: the utterance goes to the assistant as PCM (recognised there by the STT engine of the
+     * Voice tab, answered like a typed question of this chat), the answer is read aloud, then it listens again.
+     */
+    private async dialogTurn(pcm: Int16Array): Promise<void> {
+        const dialog = this.voiceDialog;
+        if (!dialog || !this.ready) {
+            return;
+        }
+        const journal = !!this.state.journalEnabled;
+        const filter = this.state.filter && this.state.filter !== 'chat' ? '' : this.state.filter;
+        this.setState({ dialog: 'thinking', dialogLevel: 0, sending: true, filter });
+        try {
+            const res = (await this.props.oContext.socket.sendTo(this.instanceId, 'ask', {
+                audio: pcmToBase64(pcm),
+                format: 'pcm',
+                sampleRate: DIALOG_RATE,
+                spoken: true,
+            })) as AskResult | undefined;
+            if (this.voiceDialog !== dialog) {
+                return; // ended meanwhile
+            }
+            if (!res) {
+                this.addMessage({ role: 'error', text: 'no answer from the adapter', ts: Date.now() });
+                return;
+            }
+            if (res.heard === '') {
+                return; // a noise, nothing recognised: listen on
+            }
+            if (!journal || !res.journaled) {
+                if (res.heard) {
+                    this.addMessage({ role: 'user', text: res.heard, ts: Date.now() });
+                }
+                this.addMessage(
+                    res.error !== undefined
+                        ? { role: 'error', text: res.error, ts: Date.now() }
+                        : { role: 'assistant', text: res.answer ?? '', ts: Date.now() },
+                );
+            }
+            if (res.answer) {
+                this.setState({ dialog: 'speaking' });
+                await this.speakAndWait(res.answer);
+            }
+        } catch (e) {
+            this.addMessage({ role: 'error', text: (e as Error).message, ts: Date.now() });
+        } finally {
+            this.setState({ sending: false });
+            if (this.voiceDialog === dialog) {
+                this.setState({ dialog: 'listening', dialogLevel: 0 });
+            }
+        }
+    }
+
+    /**
+     * Read an answer aloud with the voice of the satellites (the browser's if there is none) and resolve when it was
+     * spoken — or the dialog ended.
+     */
+    private speakAndWait(text: string): Promise<void> {
+        return new Promise(resolve => {
+            let done = false;
+            let audio: HTMLAudioElement | null = null;
+            const finish = (): void => {
+                if (!done) {
+                    done = true;
+                    clearTimeout(guard);
+                    this.stopSpeaking = null;
+                    resolve();
+                }
+            };
+            // a browser voice sometimes never reports its end
+            const guard = setTimeout(finish, 15_000 + text.length * 120);
+            this.stopSpeaking = (): void => {
+                audio?.pause();
+                if (this.ttsSupported) {
+                    window.speechSynthesis.cancel();
+                }
+                finish();
+            };
+            const browserVoice = (): void => {
+                if (done || !this.ttsSupported) {
+                    finish();
+                    return;
+                }
+                const u = new SpeechSynthesisUtterance(text);
+                u.lang = this.speechLang(this.voiceSettings.language);
+                u.onend = finish;
+                u.onerror = finish;
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.speak(u);
+            };
+            if (!this.state.ttsAvailable) {
+                browserVoice();
+                return;
+            }
+            void (async () => {
+                try {
+                    const res = (await this.props.oContext.socket.sendTo(this.instanceId, 'tts', { text })) as
+                        { audio?: string; mime?: string } | undefined;
+                    if (done) {
+                        return;
+                    }
+                    if (res?.audio) {
+                        audio = new Audio(`data:${res.mime || 'audio/wav'};base64,${res.audio}`);
+                        audio.onended = finish;
+                        audio.onerror = finish;
+                        await audio.play();
+                        return;
+                    }
+                } catch {
+                    /* the browser's voice then */
+                }
+                browserVoice();
+            })();
+        });
     }
 
     /** Speak a text aloud via the browser (cancels any ongoing utterance first). */
@@ -349,6 +558,9 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         const alive = !!state?.val;
         const wasAlive = this.state.alive;
         this.setState({ alive });
+        if (!alive) {
+            this.stopDialog();
+        }
         if (alive && !wasAlive) {
             void this.checkTtsAvailable(); // re-probe (a voice key may have just been saved)
             void this.loadJournal(); // the retention may have changed with the restart
@@ -360,14 +572,24 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
         return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     }
 
-    private scrollToBottom(): void {
-        // Defer to after the DOM has rendered the new message.
-        setTimeout(() => {
-            const el = this.scrollRef.current;
-            if (el) {
-                el.scrollTop = el.scrollHeight;
+    /**
+     * Call it from the callback of the setState that adds the messages: only then are they in the DOM. A setTimeout
+     * is not enough: an update after an await (loading the journal, a state change from the socket) is rendered in
+     * its own task, and the timer often ran first, so the chat opened at the oldest entries.
+     */
+    private scrollToBottom(counter?: number): void {
+        counter ||= 0;
+        const el = this.scrollRef.current;
+        if (el) {
+            el.scrollTop = el.scrollHeight;
+        } else {
+            if (counter < 15) {
+                this.scrollTimeout = setTimeout(() => {
+                    this.scrollTimeout = null;
+                    this.scrollToBottom(counter + 1);
+                }, 100);
             }
-        }, 0);
+        }
     }
 
     /** The chat may only talk to a running instance that reflects the *saved* config. */
@@ -376,8 +598,10 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
     }
 
     private addMessage(msg: ChatMessage): void {
-        this.setState(prev => ({ messages: [...prev.messages, msg] }));
-        this.scrollToBottom();
+        this.setState(
+            prev => ({ messages: [...prev.messages, msg] }),
+            () => this.scrollToBottom(),
+        );
     }
 
     private async send(): Promise<void> {
@@ -386,15 +610,12 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
             return;
         }
         const journal = !!this.state.journalEnabled;
-        this.setState({ input: '', sending: true });
+        // Whatever filter is set, the user wants to see their own message.
+        const filter = this.state.filter && this.state.filter !== 'chat' ? '' : this.state.filter;
+        this.setState({ input: '', sending: true, filter }, () => this.scrollToBottom());
         if (!journal) {
             this.addMessage({ role: 'user', text, ts: Date.now() });
         }
-        // Whatever filter is set, the user wants to see their own message.
-        if (this.state.filter && this.state.filter !== 'chat') {
-            this.setState({ filter: '' });
-        }
-        this.scrollToBottom();
 
         try {
             const res = (await this.props.oContext.socket.sendTo(this.instanceId, 'ask', { text })) as
@@ -804,7 +1025,8 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
 
     renderItem(): React.JSX.Element {
         const dark = this.props.oContext.themeType === 'dark';
-        const { alive, messages, entries, sending, input, listening, speak, journalEnabled, showDetails } = this.state;
+        const { alive, messages, entries, sending, input, listening, speak, journalEnabled, showDetails, dialog } =
+            this.state;
         const ready = this.ready;
         const timeline = this.renderTimeline();
         const empty = !messages.length && !Object.keys(entries).length;
@@ -940,8 +1162,37 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
                     ) : null}
                 </Box>
 
+                {dialog ? (
+                    <LinearProgress
+                        sx={{ mb: 0.5, height: 3, borderRadius: 1 }}
+                        variant={dialog === 'thinking' || dialog === 'speaking' ? 'indeterminate' : 'determinate'}
+                        color={dialog === 'hearing' ? 'error' : dialog === 'speaking' ? 'secondary' : 'primary'}
+                        value={Math.round(this.state.dialogLevel * 100)}
+                    />
+                ) : null}
                 <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 1 }}>
-                    {this.speechSupported ? (
+                    {VoiceDialog.supported ? (
+                        <Tooltip
+                            title={I18n.t(
+                                dialog
+                                    ? 'custom_assistant_End the dialog'
+                                    : this.voiceSettings.enabled
+                                      ? 'custom_assistant_Dialog: everything you say becomes a question'
+                                      : 'custom_assistant_The dialog needs speech recognition: enable voice on the Voice tab.',
+                            )}
+                        >
+                            <span>
+                                <IconButton
+                                    color={dialog ? 'error' : 'primary'}
+                                    disabled={!dialog && (!ready || sending || !this.voiceSettings.enabled)}
+                                    onClick={() => void this.toggleDialog()}
+                                >
+                                    <DialogIcon />
+                                </IconButton>
+                            </span>
+                        </Tooltip>
+                    ) : null}
+                    {this.speechSupported && !dialog ? (
                         <Tooltip
                             title={I18n.t(listening ? 'custom_assistant_Stop listening' : 'custom_assistant_Speak')}
                         >
@@ -963,16 +1214,26 @@ export default class ChatComponent extends ConfigGeneric<ConfigGenericProps, Cha
                         size="small"
                         variant="outlined"
                         placeholder={I18n.t(
-                            listening ? 'custom_assistant_Listening…' : 'custom_assistant_Type a message…',
+                            dialog === 'listening'
+                                ? 'custom_assistant_Dialog: listening…'
+                                : dialog === 'hearing'
+                                  ? 'custom_assistant_Dialog: hearing you…'
+                                  : dialog === 'thinking'
+                                    ? 'custom_assistant_Dialog: thinking…'
+                                    : dialog === 'speaking'
+                                      ? 'custom_assistant_Dialog: speaking…'
+                                      : listening
+                                        ? 'custom_assistant_Listening…'
+                                        : 'custom_assistant_Type a message…',
                         )}
                         value={input}
-                        disabled={!ready || sending}
+                        disabled={!ready || sending || !!dialog}
                         onChange={e => this.setState({ input: e.target.value })}
                         onKeyDown={this.onKeyDown}
                     />
                     <IconButton
                         color="primary"
-                        disabled={!ready || sending || !input.trim()}
+                        disabled={!ready || sending || !!dialog || !input.trim()}
                         onClick={() => void this.send()}
                     >
                         <SendIcon />
