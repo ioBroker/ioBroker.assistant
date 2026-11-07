@@ -237,7 +237,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.4.13 (2026-11-07)
 * (@GermanBluefox) If fullcalendar is installed, it must be 3.1.0 or later (the version with the event API that commands for later use)
 * (@GermanBluefox) Devices renamed in the device list keep their room, type and all their states again (`@iobroker/mcp-server` 1.9.2): before, such a device lost its room, so "the light in the kitchen" was not understood, and a light lost the switch next to its level
 * (@GermanBluefox) Devices in a room hidden from the smart home (iot, `smartName: false`) are no longer listed without a room
