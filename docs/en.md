@@ -493,7 +493,9 @@ dialog mode on?") switches nothing.
   listening. A command that is otherwise only confirmed with the confirmation tone plays the tone and then keeps
   listening.
 - **It ends by itself** after 5 minutes without an understood request, when the device is stopped (stop button,
-  wake word during the answer), when it goes offline or when the voice pipeline fails.
+  wake word during the answer), when it goes offline or when the voice pipeline fails — and when the device does
+  not listen again after an answer, e.g. because it stopped the answer itself (its stop word, a tap). The log then
+  says how much of the answer was played.
 - **The state `satellites.<id>.dialog`** shows the mode and switches it too (script, VIS): `true` on an idle
   satellite plays the confirmation tone and opens the microphone after it.
 - The microphone is open all the time: everything in the room that is detected as speech goes to the speech

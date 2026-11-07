@@ -513,7 +513,9 @@ dazu („Wie schalte ich den Dialogmodus an?“) schaltet nichts.
   Satellit hört einfach weiter zu. Ein Befehl, der sonst nur mit dem Bestätigungston quittiert wird, spielt den
   Ton und hört danach weiter zu.
 - **Ende von selbst** nach 5 Minuten ohne verstandene Anfrage, wenn das Gerät gestoppt wird (Stopp-Knopf,
-  Wake-Word während der Antwort), wenn es offline geht oder die Sprachverarbeitung fehlschlägt.
+  Wake-Word während der Antwort), wenn es offline geht oder die Sprachverarbeitung fehlschlägt — und wenn das Gerät
+  nach einer Antwort nicht wieder zuhört, etwa weil es die Antwort selbst abgebrochen hat (sein Stoppwort, ein
+  Tippen). Das Log sagt dann, wie viel von der Antwort gespielt wurde.
 - **State `satellites.<id>.dialog`** zeigt den Modus und schaltet ihn auch (Skript, VIS): `true` an einem
   wartenden Satelliten spielt den Bestätigungston und öffnet danach das Mikrofon.
 - Das Mikrofon ist die ganze Zeit offen: alles, was im Raum als Sprache erkannt wird, geht an die

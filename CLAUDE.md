@@ -37,6 +37,19 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   schließt ein Mikro, das nichts hört, sofort. Tests: `esphome.test.js` (Fake-Gerät `speak()`/`position()`/
   `maxStreamMs`), `nlu.test.js` (`dialogCommand`). ⚠️ Nicht am Gerät: ob ESPHome/linux-voice-assistant nach dem
   stillen Clip das Mikro wirklich wieder öffnet, ist aus dem Quellcode abgeleitet (gleicher Weg wie Rückfragen).
+  **Erster Test auf vitanova (1.4.12, ThirdReality, 2026-11-05):** „Включи режим диалога“ → Modus an, Antwort (12,2 s
+  WAV) geholt, aber `AnnounceFinished` schon nach 1,6 s, danach **keine** neue Pipeline → LED aus, State blieb `true`.
+  Beim ersten Versuch (1.4.11+Dialog, ungecachte Antwort) fiel das Gerät 44 s nach der Antwort aus (Keepalive,
+  EHOSTUNREACH, ECONNREFUSED, nach 43 s wieder da). Firmware (`linux-voice-assistant-cpp/src/satellite/
+  Satellite.cpp`, GitHub thirdreality/voice-music-assistant): `FinishSpeech()` schickt `AnnounceFinished` (im
+  Pipeline-Pfad immer `success:false`) und öffnet mit `continue_conversation_` nach `continue_conversation_delay`
+  (0,5 s) per `BeginListening()` — **ohne** Wake-Ton, mit der alten Phrase. Gelöscht wird das Flag u. a. vom
+  **Stoppwort während TTS** (`ProcessStopDetected`, seit „Support wake and stop during TTS“ 2026-10-26), Tippen,
+  Wake-Word (startet aber eine neue Runde → wir sähen sie) und `PrepareForMediaAnnouncement`. Passt am besten:
+  Stoppwort-Fehlauslösung durch die eigene Antwort — **nicht verifiziert** (die Firmware kennt kein
+  `SubscribeLogsRequest`, Geräte-Logs gibt es nur am Gerät). Darauf: `onReplyPlayed()` — im Dialog nach
+  `AnnounceFinished` `DIALOG_REOPEN_MS` 6 s auf eine neue Pipeline warten, sonst Modus aus (`'no-listen'`), Log
+  „stopped the reply after X of Y s“ (früher als `REPLY_CUT_MS` vor dem Ende) bzw. „did not open its microphone“.
 - **Dialog-Modus im Chat-Tab** (Nutzerwunsch 2026-11-05): Knopf `RecordVoiceOver` links vom Eingabefeld, nur bei
   `VoiceDialog.supported` (Secure Context + getUserMedia), aktiv nur mit `voiceEnabled`. `src-admin/src/voiceDialog.ts`:
   `VoiceDialog` (getUserMedia mit AEC/NS/AGC, ScriptProcessor 2048 → `Resampler` linear auf 16 kHz),
