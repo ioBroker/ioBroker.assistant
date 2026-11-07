@@ -141,6 +141,7 @@ import {
     noVisionText,
     parseAskImages,
     parseAskVideo,
+    videoLocation,
     videoNotSupportedText,
     type ImageInput,
     type VideoRef,
@@ -232,7 +233,10 @@ interface AskMessage {
     spoken?: boolean;
     /** Pictures for the cloud model: `[{ data: base64, mimeType }]`, at most 4 (see lib/media). */
     images?: unknown;
-    /** A video, never as content: `{ adapter, path, mimeType?, durationSec?, size? }` of the ioBroker file storage. */
+    /**
+     * A video, never as content: `{ url, mimeType?, durationSec?, size? }` with an `iobdisk://` URL, or
+     * `{ adapter, path, ... }` of the ioBroker file storage.
+     */
     video?: unknown;
 }
 
@@ -3909,7 +3913,7 @@ class Assistant extends Adapter {
         }
         const shown = historyText(question, attachments.images.length, !!attachments.video);
         this.log.info(
-            `${heard ? 'Voice Q' : 'Q'} (${obj.command} from ${caller}): ${shown}${attachments.video ? ` (video ${attachments.video.adapter}/${attachments.video.path})` : ''}`,
+            `${heard ? 'Voice Q' : 'Q'} (${obj.command} from ${caller}): ${shown}${attachments.video ? ` (video ${videoLocation(attachments.video)})` : ''}`,
         );
         this.setStateAsync('text.request', { val: shown, ack: true }).catch(() => {});
         this.setQuerySource(source);
@@ -4063,7 +4067,7 @@ class Assistant extends Adapter {
         const kb = (base64: string): number => Math.round((base64.length * 3) / 4 / 1024);
         const parts = [
             images.length ? `${images.length} picture(s), ${images.reduce((n, i) => n + kb(i.data), 0)} KB` : '',
-            video ? `video ${video.adapter}/${video.path}` : '',
+            video ? `video ${videoLocation(video)}` : '',
         ].filter(Boolean);
         this.journal?.step({
             stage: 'request',
@@ -4404,7 +4408,7 @@ class Assistant extends Adapter {
         const { images, video } = this.attachments();
         if (!question.trim() && video) {
             // A video without a question: nothing looks at videos yet
-            this.log.info(`Video from '${source}' (${video.adapter}/${video.path}) not looked at: not supported yet.`);
+            this.log.info(`Video from '${source}' (${videoLocation(video)}) not looked at: not supported yet.`);
             this.journal?.note({ tier: 'none' });
             this.journal?.step({ stage: 'none', title: 'A video without a question: videos are not looked at yet' });
             return videoNotSupportedText(this.answerLanguage());
@@ -4559,7 +4563,7 @@ class Assistant extends Adapter {
                 time,
                 weather: weather || undefined,
                 images: images.length || undefined,
-                video: video ? `${video.adapter}/${video.path}` : undefined,
+                video: video ? videoLocation(video) : undefined,
             },
         });
         try {

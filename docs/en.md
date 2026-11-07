@@ -160,8 +160,10 @@ satellites stay simple. See §7.
   under 3.75 MB. Rules, routines and the local model are skipped (they cannot see), so it needs a cloud provider
   whose model takes pictures (or pi-agent with picture support); without one the answer says so. Later turns of
   the conversation only know that there was a picture, they do not get it again.
-- **Videos** are never sent as content: Telegram stores them in its file storage, and `ask` only gets
-  `video: { adapter, path, mimeType, durationSec, size }`. The assistant does not look at videos yet — a video
+- **Videos** are never sent as content: Telegram stores them and `ask` only gets where -
+  `video: { url, mimeType, durationSec, size }` with an `iobdisk://` URL (on the disk of Telegram's host,
+  js-controller 8.0+, readable from any host), or `video: { adapter, path, ... }` of the file storage with an
+  older js-controller. The assistant does not look at videos yet — a video
   without a question gets a short answer saying so, with a question the model is told about it.
 
 The chat shows every request live — also those from satellites, Telegram and scripts. **Click a question

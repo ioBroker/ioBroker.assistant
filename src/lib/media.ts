@@ -2,8 +2,9 @@
  * Pictures and videos that come with a question (`ask` with `images` / `video`, e.g. from Telegram).
  *
  * Pictures go to the cloud model as they are (base64, the vendors take JPEG/PNG/GIF/WebP). Videos are not looked at
- * yet: the sender keeps them in the ioBroker file storage and only says where, so a video never travels through the
- * message bus as base64.
+ * yet: the sender keeps them and only says where, so a video never travels through the message bus as base64 - on its
+ * disk as an `iobdisk://` URL (js-controller 8.0+, read with `adapter.readDiskFile(url)` from any host), or in the
+ * ioBroker file storage as `{ adapter, path }`.
  */
 
 /** A picture for the model: base64 without a `data:` prefix and its type. */
@@ -12,11 +13,16 @@ export interface ImageInput {
     mimeType: string;
 }
 
-/** Where the sender stored a video (ioBroker file storage), with what it knows about it. */
+/** Where the sender stored a video, with what it knows about it. */
 export interface VideoRef {
-    /** File storage namespace, e.g. `telegram.0` */
+    /**
+     * The file on the disk of the sender's host, e.g. `iobdisk://pi4/telegram.0/assistant/video_1.mp4`
+     * (js-controller 8.0+: `adapter.readDiskFile(url)` reads it from any host). Empty `adapter` and `path` then.
+     */
+    url?: string;
+    /** File storage namespace, e.g. `telegram.0` (empty with `url`) */
     adapter: string;
-    /** Path in it, e.g. `assistant/video_2026-11-04_10-00-00.mp4` */
+    /** Path in it, e.g. `assistant/video_2026-11-04_10-00-00.mp4` (empty with `url`) */
     path: string;
     mimeType?: string;
     durationSec?: number;
@@ -93,7 +99,8 @@ export function parseAskImages(raw: unknown): { images: ImageInput[]; error?: st
 }
 
 /**
- * Check the `video` of an `ask`: only a reference into the ioBroker file storage, never the content.
+ * Check the `video` of an `ask`: only a reference - an `iobdisk://` URL or a file of the ioBroker file storage -,
+ * never the content.
  *
  * @param raw the `video` field
  * @returns the reference, `null` without one, or the reason it is refused (e.g. base64 content)
@@ -103,27 +110,41 @@ export function parseAskVideo(raw: unknown): VideoRef | null | { error: string }
         return null;
     }
     if (typeof raw !== 'object' || Array.isArray(raw)) {
-        return { error: 'video must be { adapter, path } of the ioBroker file storage' };
+        return { error: 'video must be { url } (iobdisk://) or { adapter, path } of the ioBroker file storage' };
     }
     const v = raw as Record<string, unknown>;
     if ('data' in v) {
-        return { error: 'a video is not sent as content - store it and send { adapter, path }' };
+        return { error: 'a video is not sent as content - store it and send { url } or { adapter, path }' };
     }
     const str = (x: unknown): string => (typeof x === 'string' ? x.trim() : '');
     const num = (x: unknown): number | undefined =>
         typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : undefined;
+    const url = str(v.url);
+    if (url && !/^iobdisk:\/\/[^/]+\/[^/]+\/.+/.test(url)) {
+        return { error: 'video url must be iobdisk://<host>/<namespace>/<path>' };
+    }
     const ref: VideoRef = {
-        adapter: str(v.adapter),
-        path: str(v.path).replace(/^\/+/, ''),
+        url: url || undefined,
+        adapter: url ? '' : str(v.adapter),
+        path: url ? '' : str(v.path).replace(/^\/+/, ''),
         mimeType: str(v.mimeType) || undefined,
         durationSec: num(v.durationSec),
         size: num(v.size),
         error: str(v.error) || undefined,
     };
-    if ((!ref.adapter || !ref.path) && !ref.error) {
-        return { error: 'video without adapter and path' };
+    if (!ref.url && (!ref.adapter || !ref.path) && !ref.error) {
+        return { error: 'video without url or adapter and path' };
     }
     return ref;
+}
+
+/**
+ * Where a video is, for the log, the journal and the trace: the `iobdisk://` URL or `adapter/path`.
+ *
+ * @param video the reference
+ */
+export function videoLocation(video: VideoRef): string {
+    return video.url || (video.adapter ? `${video.adapter}/${video.path}` : `not stored: ${video.error || 'unknown'}`);
 }
 
 /** Whether {@link parseAskVideo} refused the video */

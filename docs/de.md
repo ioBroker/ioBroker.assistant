@@ -168,8 +168,10 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
   3,75 MB. Regeln, Routinen und das lokale Modell werden übersprungen (sie sehen nichts), es braucht also einen
   Cloud-Anbieter, dessen Modell Bilder nimmt (oder pi-agent mit Bild-Unterstützung); sonst sagt die Antwort das.
   Spätere Runden des Gesprächs wissen nur, dass es ein Bild gab, sie bekommen es nicht noch einmal.
-- **Videos** werden nie als Inhalt geschickt: Telegram legt sie in seinem Dateispeicher ab, und `ask` bekommt nur
-  `video: { adapter, path, mimeType, durationSec, size }`. Videos sieht sich der Assistent noch nicht an — ein
+- **Videos** werden nie als Inhalt geschickt: Telegram legt sie ab, und `ask` bekommt nur, wo -
+  `video: { url, mimeType, durationSec, size }` mit einer `iobdisk://`-URL (auf der Platte des Hosts von Telegram,
+  js-controller 8.0+, von jedem Host lesbar), oder `video: { adapter, path, ... }` im Dateispeicher bei einem
+  älteren js-controller. Videos sieht sich der Assistent noch nicht an — ein
   Video ohne Frage bekommt eine kurze Antwort, die das sagt, mit Frage erfährt das Modell davon.
 
 Der Chat zeigt live alle Anfragen — auch die von Satelliten, Telegram und Skripten. **Ein Klick auf eine
