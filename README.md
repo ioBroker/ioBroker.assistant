@@ -237,6 +237,9 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) OpenAI: use `max_completion_tokens` so newer (reasoning) models like gpt-5-mini work (#21)
+
 ### 1.4.14 (2026-11-07)
 * (@GermanBluefox) ESPHome satellites, dialog mode: a satellite that does not listen again after an answer (it stopped the answer itself — stop word, tap) ends the mode instead of leaving it on while nobody listens; the log says how much of the answer was played
 
