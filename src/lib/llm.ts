@@ -34,6 +34,9 @@ export const PROVIDER_PRESETS: Record<Provider, ProviderPreset> = {
 /** OpenRouter shows the calling app in its statistics (same attribution as `@iobroker/ai-core`) */
 export const OPENROUTER_HEADERS = { 'HTTP-Referer': 'https://www.iobroker.net', 'X-Title': 'ioBroker' };
 
+/** Lowest `max_completion_tokens` sent to OpenAI (see {@link LlmAgent.openAiLimit}). */
+const MIN_OPENAI_COMPLETION_TOKENS = 1024;
+
 /** Resolve the effective SDK, base URL and default model for a provider (custom uses `configBaseUrl`). */
 export function resolveProvider(
     provider: string | undefined,
@@ -242,6 +245,21 @@ export class LlmAgent {
     }
 
     /**
+     * Token limit for an OpenAI-SDK request. OpenAI itself rejects `max_tokens` on newer (reasoning)
+     * models and wants `max_completion_tokens`; the OpenAI-compatible providers (Gemini, DeepSeek,
+     * OpenRouter, custom/Ollama …) keep `max_tokens`, which they may only know under that name.
+     * Reasoning tokens count against `max_completion_tokens`, so the tiny limits of the side jobs
+     * (classify 8, translate 64 …) would leave no room for the answer — OpenAI gets at least
+     * {@link MIN_OPENAI_COMPLETION_TOKENS}.
+     */
+    private openAiLimit(tokens: number): Record<string, number> {
+        if (this.providerName === 'openai') {
+            return { max_completion_tokens: Math.max(tokens, MIN_OPENAI_COMPLETION_TOKENS) };
+        }
+        return { max_tokens: tokens };
+    }
+
+    /**
      * One prompt in, one line out — no tools, no history, no system prompt. The small side jobs
      * (translate/rephrase/classify) all run through here.
      */
@@ -261,11 +279,12 @@ export class LlmAgent {
                 .trim();
         }
         const client = this.openai as OpenAI;
-        const resp: any = await client.chat.completions.create({
+        const request: any = {
             model: this.model,
-            max_tokens: maxTokens,
+            ...this.openAiLimit(maxTokens),
             messages: [{ role: 'user', content: prompt }],
-        });
+        };
+        const resp: any = await client.chat.completions.create(request);
         return String(resp.choices[0].message.content || '').trim();
     }
 
@@ -476,11 +495,11 @@ export class LlmAgent {
         let shown = systemPrompt ? 1 : 0;
 
         for (let round = 0; round < this.maxRounds; round++) {
-            const request = {
+            const request: any = {
                 model: this.model,
                 messages,
                 tools: tools.length ? tools : undefined,
-                max_tokens: this.maxTokens,
+                ...this.openAiLimit(this.maxTokens),
             };
             this.dump(`llm → openai round ${round}`, request);
             const sent = messages.slice(shown);
