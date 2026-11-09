@@ -1,0 +1,120 @@
+{
+    "$schema": "https://raw.githubusercontent.com/ioBroker/web-components/main/schemas/manifest.json",
+    "manifestVersion": 1,
+    "tag": "iob-assistant-satellites",
+    "name": {
+        "en": "Voice satellites",
+        "de": "Sprach-Satelliten",
+        "ru": "Голосовые сателлиты",
+        "pt": "Satélites de voz",
+        "nl": "Spraaksatellieten",
+        "fr": "Satellites vocaux",
+        "it": "Satelliti vocali",
+        "es": "Satélites de voz",
+        "pl": "Satelity głosowe",
+        "uk": "Голосові сателіти",
+        "zh-cn": "语音卫星"
+    },
+    "description": {
+        "en": "The voice satellites of the assistant live - status, room, last seen - with announcements on one or all of them",
+        "de": "Die Sprach-Satelliten des Assistenten live - Status, Raum, zuletzt gesehen - mit Ansagen auf einem oder allen",
+        "ru": "Голосовые сателлиты ассистента в реальном времени — статус, комната, последняя активность — с объявлениями на одном или на всех",
+        "pt": "Os satélites de voz do assistente ao vivo - estado, divisão, última vez visto - com anúncios num ou em todos",
+        "nl": "De spraaksatellieten van de assistent live - status, kamer, laatst gezien - met aankondigingen op één of alle",
+        "fr": "Les satellites vocaux de l'assistant en direct - état, pièce, dernière activité - avec des annonces sur un ou tous",
+        "it": "I satelliti vocali dell'assistente in tempo reale - stato, stanza, ultimo contatto - con annunci su uno o su tutti",
+        "es": "Los satélites de voz del asistente en directo - estado, habitación, última conexión - con anuncios en uno o en todos",
+        "pl": "Satelity głosowe asystenta na żywo - stan, pokój, ostatnio widziany - z ogłoszeniami na jednym lub wszystkich",
+        "uk": "Голосові сателіти асистента в реальному часі — стан, кімната, остання активність — з оголошеннями на одному або на всіх",
+        "zh-cn": "实时显示助手的语音卫星——状态、房间、最后在线——可向单个或全部卫星播报"
+    },
+    "icon": "../assistant.svg",
+    "module": "assistant-satellites.js",
+    "size": {
+        "width": 440,
+        "height": 300
+    },
+    "settings": {
+        "type": "panel",
+        "items": {
+            "instance": {
+                "type": "instance",
+                "adapter": "assistant",
+                "default": "assistant.0",
+                "label": {
+                    "en": "Instance",
+                    "de": "Instanz",
+                    "ru": "Экземпляр",
+                    "pt": "Instância",
+                    "nl": "Instantie",
+                    "fr": "Instance",
+                    "it": "Istanza",
+                    "es": "Instancia",
+                    "pl": "Instancja",
+                    "uk": "Екземпляр",
+                    "zh-cn": "实例"
+                }
+            },
+            "announce": {
+                "type": "checkbox",
+                "default": true,
+                "label": {
+                    "en": "Announcement",
+                    "de": "Ansage",
+                    "ru": "Объявление",
+                    "pt": "Anúncio",
+                    "nl": "Aankondiging",
+                    "fr": "Annonce",
+                    "it": "Annuncio",
+                    "es": "Anuncio",
+                    "pl": "Ogłoszenie",
+                    "uk": "Оголошення",
+                    "zh-cn": "公告"
+                },
+                "help": {
+                    "en": "Speak a text on one satellite or on all of them",
+                    "de": "Einen Text auf einem Satelliten oder auf allen ansagen",
+                    "ru": "Произнести текст на одном или на всех сателлитах",
+                    "pt": "Dizer um texto num satélite ou em todos",
+                    "nl": "Een tekst uitspreken op één satelliet of op alle",
+                    "fr": "Prononcer un texte sur un satellite ou sur tous",
+                    "it": "Pronunciare un testo su un satellite o su tutti",
+                    "es": "Decir un texto en un satélite o en todos",
+                    "pl": "Wypowiedz tekst na jednym satelicie lub na wszystkich",
+                    "uk": "Промовити текст на одному або на всіх сателітах",
+                    "zh-cn": "在一个或全部卫星上播报一段文字"
+                }
+            },
+            "showHost": {
+                "type": "checkbox",
+                "default": false,
+                "label": {
+                    "en": "Show host",
+                    "de": "Host anzeigen",
+                    "ru": "Показывать хост",
+                    "pt": "Mostrar host",
+                    "nl": "Host tonen",
+                    "fr": "Afficher l'hôte",
+                    "it": "Mostra host",
+                    "es": "Mostrar host",
+                    "pl": "Pokaż host",
+                    "uk": "Показувати хост",
+                    "zh-cn": "显示主机"
+                },
+                "help": {
+                    "en": "The address the satellite runs on",
+                    "de": "Die Adresse, unter der der Satellit läuft",
+                    "ru": "Адрес, на котором работает сателлит",
+                    "pt": "O endereço em que o satélite funciona",
+                    "nl": "Het adres waarop de satelliet draait",
+                    "fr": "L'adresse sur laquelle tourne le satellite",
+                    "it": "L'indirizzo su cui funziona il satellite",
+                    "es": "La dirección en la que funciona el satélite",
+                    "pl": "Adres, pod którym działa satelita",
+                    "uk": "Адреса, на якій працює сателіт",
+                    "zh-cn": "卫星运行所在的地址"
+                }
+            }
+        }
+    }
+}

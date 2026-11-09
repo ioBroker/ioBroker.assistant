@@ -15,6 +15,7 @@ export default [
     {
         ignores: [
             'src-admin/**/*',
+            'src-webcomponents/**/*',
             'admin/**/*',
             'node_modules/**/*',
             'test/**/*',

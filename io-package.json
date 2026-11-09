@@ -151,6 +151,10 @@
     "adminUI": {
       "config": "json"
     },
+    "webComponents": [
+      "webcomponents/assistant-chat.json",
+      "webcomponents/assistant-satellites.json"
+    ],
     "dependencies": [
       {
         "js-controller": ">=6.0.11"

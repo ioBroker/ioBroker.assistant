@@ -237,6 +237,9 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) Added an assistant chat and a live view of the voice satellites for Aura and other dashboards
+
 ### 1.4.15 (2026-11-08)
 * (@GermanBluefox) OpenAI: use `max_completion_tokens` so newer (reasoning) models like gpt-5-mini work (#21)
 

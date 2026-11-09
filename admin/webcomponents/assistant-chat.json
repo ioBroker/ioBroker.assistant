@@ -1,0 +1,150 @@
+{
+    "$schema": "https://raw.githubusercontent.com/ioBroker/web-components/main/schemas/manifest.json",
+    "manifestVersion": 1,
+    "tag": "iob-assistant-chat",
+    "name": {
+        "en": "Assistant chat",
+        "de": "Assistent-Chat",
+        "ru": "Чат ассистента",
+        "pt": "Chat do assistente",
+        "nl": "Assistent-chat",
+        "fr": "Chat de l'assistant",
+        "it": "Chat dell'assistente",
+        "es": "Chat del asistente",
+        "pl": "Czat asystenta",
+        "uk": "Чат асистента",
+        "zh-cn": "助手聊天"
+    },
+    "description": {
+        "en": "Talk to the assistant from a dashboard: type a question or speak it, with the answers live",
+        "de": "Mit dem Assistenten vom Dashboard aus sprechen: Frage tippen oder sagen, die Antworten live",
+        "ru": "Общайтесь с ассистентом с панели: напечатайте или произнесите вопрос, ответы в реальном времени",
+        "pt": "Fale com o assistente a partir de um painel: escreva ou diga uma pergunta, com as respostas ao vivo",
+        "nl": "Praat vanaf een dashboard met de assistent: typ of spreek een vraag in, met de antwoorden live",
+        "fr": "Parlez à l'assistant depuis un tableau de bord : tapez ou dites une question, avec les réponses en direct",
+        "it": "Parla con l'assistente da una dashboard: scrivi o pronuncia una domanda, con le risposte in tempo reale",
+        "es": "Hable con el asistente desde un panel: escriba o diga una pregunta, con las respuestas en directo",
+        "pl": "Rozmawiaj z asystentem z pulpitu: wpisz lub wypowiedz pytanie, odpowiedzi na żywo",
+        "uk": "Спілкуйтеся з асистентом з панелі: надрукуйте або промовте запитання, відповіді в реальному часі",
+        "zh-cn": "在仪表板上与助手对话：输入或说出问题，实时显示回答"
+    },
+    "icon": "../assistant.svg",
+    "module": "assistant-chat.js",
+    "size": {
+        "width": 400,
+        "height": 500
+    },
+    "settings": {
+        "type": "panel",
+        "items": {
+            "instance": {
+                "type": "instance",
+                "adapter": "assistant",
+                "default": "assistant.0",
+                "label": {
+                    "en": "Instance",
+                    "de": "Instanz",
+                    "ru": "Экземпляр",
+                    "pt": "Instância",
+                    "nl": "Instantie",
+                    "fr": "Instance",
+                    "it": "Istanza",
+                    "es": "Instancia",
+                    "pl": "Instancja",
+                    "uk": "Екземпляр",
+                    "zh-cn": "实例"
+                }
+            },
+            "allRequests": {
+                "type": "checkbox",
+                "default": false,
+                "label": {
+                    "en": "Show all requests",
+                    "de": "Alle Anfragen zeigen",
+                    "ru": "Показывать все запросы",
+                    "pt": "Mostrar todos os pedidos",
+                    "nl": "Alle verzoeken tonen",
+                    "fr": "Afficher toutes les requêtes",
+                    "it": "Mostra tutte le richieste",
+                    "es": "Mostrar todas las solicitudes",
+                    "pl": "Pokaż wszystkie zapytania",
+                    "uk": "Показувати всі запити",
+                    "zh-cn": "显示所有请求"
+                },
+                "help": {
+                    "en": "Also the requests of the satellites, Telegram and scripts - not only those of the chat",
+                    "de": "Auch die Anfragen der Satelliten, von Telegram und Skripten - nicht nur die des Chats",
+                    "ru": "Также запросы сателлитов, Telegram и скриптов, а не только чата",
+                    "pt": "Também os pedidos dos satélites, do Telegram e de scripts - não só os do chat",
+                    "nl": "Ook de verzoeken van de satellieten, Telegram en scripts - niet alleen die van de chat",
+                    "fr": "Aussi les requêtes des satellites, de Telegram et des scripts - pas seulement celles du chat",
+                    "it": "Anche le richieste dei satelliti, di Telegram e degli script - non solo quelle della chat",
+                    "es": "También las solicitudes de los satélites, Telegram y scripts, no solo las del chat",
+                    "pl": "Także zapytania satelitów, Telegrama i skryptów - nie tylko czatu",
+                    "uk": "Також запити сателітів, Telegram і скриптів, а не лише чату",
+                    "zh-cn": "也包括卫星、Telegram 和脚本的请求，而不仅是聊天的请求"
+                }
+            },
+            "details": {
+                "type": "checkbox",
+                "default": false,
+                "label": {
+                    "en": "Show processing details",
+                    "de": "Verarbeitungsdetails anzeigen",
+                    "ru": "Показывать детали обработки",
+                    "pt": "Mostrar detalhes do processamento",
+                    "nl": "Verwerkingsdetails tonen",
+                    "fr": "Afficher les détails du traitement",
+                    "it": "Mostra i dettagli di elaborazione",
+                    "es": "Mostrar detalles del procesamiento",
+                    "pl": "Pokaż szczegóły przetwarzania",
+                    "uk": "Показувати деталі обробки",
+                    "zh-cn": "显示处理详情"
+                },
+                "help": {
+                    "en": "Who answered (rule-based NLU, local or cloud model), how long it took and which states it wrote",
+                    "de": "Wer geantwortet hat (Regel-NLU, lokales oder Cloud-Modell), wie lange es dauerte und welche Datenpunkte geschrieben wurden",
+                    "ru": "Кто ответил (NLU по правилам, локальная или облачная модель), сколько это заняло и какие состояния были записаны",
+                    "pt": "Quem respondeu (NLU por regras, modelo local ou na nuvem), quanto tempo demorou e que estados escreveu",
+                    "nl": "Wie antwoordde (regelgebaseerde NLU, lokaal of cloudmodel), hoe lang het duurde en welke datapunten werden geschreven",
+                    "fr": "Qui a répondu (NLU à règles, modèle local ou cloud), combien de temps cela a pris et quels états ont été écrits",
+                    "it": "Chi ha risposto (NLU a regole, modello locale o cloud), quanto tempo ha impiegato e quali stati ha scritto",
+                    "es": "Quién respondió (NLU por reglas, modelo local o en la nube), cuánto tardó y qué estados escribió",
+                    "pl": "Kto odpowiedział (NLU oparte na regułach, model lokalny lub w chmurze), ile to trwało i jakie stany zapisano",
+                    "uk": "Хто відповів (NLU за правилами, локальна чи хмарна модель), скільки це тривало і які стани записано",
+                    "zh-cn": "由谁回答（基于规则的 NLU、本地或云端模型）、耗时多久以及写入了哪些状态"
+                }
+            },
+            "speak": {
+                "type": "checkbox",
+                "default": false,
+                "label": {
+                    "en": "Read answers aloud",
+                    "de": "Antworten vorlesen",
+                    "ru": "Читать ответы вслух",
+                    "pt": "Ler as respostas em voz alta",
+                    "nl": "Antwoorden voorlezen",
+                    "fr": "Lire les réponses à voix haute",
+                    "it": "Leggere le risposte ad alta voce",
+                    "es": "Leer las respuestas en voz alta",
+                    "pl": "Czytaj odpowiedzi na głos",
+                    "uk": "Читати відповіді вголос",
+                    "zh-cn": "朗读回答"
+                },
+                "help": {
+                    "en": "With the voice of the satellites if one is configured, else with the voice of the browser",
+                    "de": "Mit der Stimme der Satelliten, wenn eine eingerichtet ist, sonst mit der des Browsers",
+                    "ru": "Голосом сателлитов, если он настроен, иначе голосом браузера",
+                    "pt": "Com a voz dos satélites, se estiver configurada, senão com a voz do navegador",
+                    "nl": "Met de stem van de satellieten als die is ingesteld, anders met die van de browser",
+                    "fr": "Avec la voix des satellites si elle est configurée, sinon avec celle du navigateur",
+                    "it": "Con la voce dei satelliti se configurata, altrimenti con quella del browser",
+                    "es": "Con la voz de los satélites si está configurada, si no con la del navegador",
+                    "pl": "Głosem satelitów, jeśli jest skonfigurowany, w przeciwnym razie głosem przeglądarki",
+                    "uk": "Голосом сателітів, якщо його налаштовано, інакше голосом браузера",
+                    "zh-cn": "若已配置则使用卫星的语音，否则使用浏览器的语音"
+                }
+            }
+        }
+    }
+}

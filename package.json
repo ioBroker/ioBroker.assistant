@@ -40,17 +40,20 @@
     "test:integration": "tsc -p tsconfig.build.json && node --test \"test/integration/*.test.js\"",
     "test:package": "mocha test/testPackageFiles.ts --exit",
     "test": "npm run test:integration",
-    "build": "npm run build:backend && npm run build:gui",
+    "build": "npm run build:backend && npm run build:gui && npm run build:wc",
     "build:backend": "tsc -p tsconfig.build.json",
     "build:gui": "cd src-admin && npm install && npm run build",
+    "build:wc": "cd src-webcomponents && npm install && npm run build",
     "lint": "eslint -c eslint.config.mjs",
-    "npm": "npm i && cd src-admin && npm i",
+    "lint:wc": "cd src-webcomponents && npm run lint",
+    "check:wc": "cd src-webcomponents && npm run check-ts",
+    "npm": "npm i && cd src-admin && npm i && cd ../src-webcomponents && npm i",
     "prepublishOnly": "npm run build",
     "release-patch": "release-script patch --yes",
     "release-minor": "release-script minor --yes",
     "release-major": "release-script major --yes",
     "release": "release-script",
-    "update-packages": "npx -y npm-check-updates --upgrade && cd src-admin && npx -y npm-check-updates --upgrade"
+    "update-packages": "npx -y npm-check-updates --upgrade && cd src-admin && npx -y npm-check-updates --upgrade && cd ../src-webcomponents && npx -y npm-check-updates --upgrade"
   },
   "bugs": {
     "url": "https://github.com/ioBroker/ioBroker.assistant/issues"
