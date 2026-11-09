@@ -197,6 +197,14 @@ const DIALOG_CHECK_MS = 5000;
  * open its microphone again — an ESPHome device does that only after a reply has played.
  */
 const DIALOG_PAUSE_MS = 250;
+/**
+ * Dialog mode: once its reply has played, the device opens the microphone again by itself (ThirdReality after its
+ * "continue conversation delay", 0.5 s by default). Nothing within this time: it does not listen, and the mode goes off
+ * — its stop word or a tap ended the reply, or it lost the flag.
+ */
+const DIALOG_REOPEN_MS = 6000;
+/** A reply that ended this much earlier than its length was cut on the device. */
+const REPLY_CUT_MS = 500;
 
 /** "Yes" and "no" as a button answer is passed on: the words of the satellite's language, which pi-agent also takes. */
 const YES_NO: Record<string, [yes: string, no: string]> = {
@@ -386,7 +394,7 @@ export interface EsphomeSatellitesOptions {
 }
 
 /** Why the dialog mode of a satellite changed. */
-export type DialogChange = 'command' | 'idle' | 'stop' | 'offline' | 'error';
+export type DialogChange = 'command' | 'idle' | 'stop' | 'no-listen' | 'offline' | 'error';
 
 /** A custom wake word as offered to the devices; the files are on the media server under `path`. */
 export interface ExternalWakeWordOffer {
@@ -652,6 +660,11 @@ class EsphomeConnection {
     /** Dialog mode: when something was last recognised (or the mode was switched on). */
     private dialogHeardAt = 0;
     private dialogTimer: NodeJS.Timeout | null = null;
+    /** Dialog mode: when the last reply went out (0 = none pending) and how long it is. */
+    private dialogReplyAt = 0;
+    private dialogReplyMs = 0;
+    /** Dialog mode: waits for the device to listen again after its reply, see {@link onReplyPlayed}. */
+    private dialogReopenTimer: NodeJS.Timeout | null = null;
 
     constructor(
         device: EsphomeDevice,
@@ -766,6 +779,7 @@ class EsphomeConnection {
             clearInterval(this.dialogTimer);
             this.dialogTimer = null;
         }
+        this.cancelDialogReopen();
     }
 
     private setOffline(): void {
@@ -940,6 +954,7 @@ class EsphomeConnection {
                     `ESPHome ${this.deviceName}: playback finished (success=${(message as VoiceAssistantAnnounceFinished).getSuccess()})`,
                 );
                 this.status('idle');
+                this.onReplyPlayed();
                 return;
 
             case 'PingRequest':
@@ -1151,6 +1166,7 @@ class EsphomeConnection {
             this.opts.log.debug(`ESPHome ${this.deviceName}: pipeline already running — ignoring wake`);
             return;
         }
+        this.cancelDialogReopen();
         const phrase = request.getWakeWordPhrase();
         if (Date.now() < this.ignoreFollowUpUntil) {
             // The microphone for the question a button already answered: close it at once. In this state the device
@@ -1264,6 +1280,8 @@ class EsphomeConnection {
         }
         this.dialogOn = on;
         this.dialogHeardAt = Date.now();
+        this.dialogReplyAt = 0;
+        this.cancelDialogReopen();
         if (this.dialogTimer) {
             clearInterval(this.dialogTimer);
             this.dialogTimer = null;
@@ -1273,17 +1291,20 @@ class EsphomeConnection {
                 ? ` (nothing said for ${DIALOG_IDLE_MS / 60_000} min)`
                 : reason === 'stop'
                   ? ' (the device was stopped)'
-                  : reason === 'offline'
-                    ? ' (offline)'
-                    : reason === 'error'
-                      ? ' (the voice pipeline failed)'
-                      : '';
+                  : reason === 'no-listen'
+                    ? ' (the device did not listen again after the reply)'
+                    : reason === 'offline'
+                      ? ' (offline)'
+                      : reason === 'error'
+                        ? ' (the voice pipeline failed)'
+                        : '';
         this.opts.log.info(`ESPHome ${this.deviceName}: dialog mode ${on ? 'on' : 'off'}${why}`);
         this.opts.onDialog?.(this.deviceName, this.room, on, reason);
         if (on) {
             this.dialogTimer = setInterval(() => this.checkDialogIdle(), DIALOG_CHECK_MS);
             this.dialogTimer.unref();
             if (open && this.online && !this.capture && !this.runOpen) {
+                this.noteDialogReply((open.pcm.length / 2 / open.sampleRate) * 1000);
                 void this.announce(open.pcm, open.sampleRate, true, '', false).catch(e =>
                     this.opts.log.warn(
                         `ESPHome ${this.deviceName}: opening the microphone failed — ${(e as Error).message}`,
@@ -1312,6 +1333,51 @@ class EsphomeConnection {
             return;
         }
         this.setDialog(false, 'idle');
+    }
+
+    /** Dialog mode: a reply went out after which the device should listen again. */
+    private noteDialogReply(ms: number): void {
+        if (this.dialogOn) {
+            this.dialogReplyAt = Date.now();
+            this.dialogReplyMs = ms;
+        }
+    }
+
+    /**
+     * Dialog mode: the device reports that its reply has played (or was stopped). It should open the microphone again
+     * now; one that does not — its stop word or a tap ended the reply, or it dropped the conversation flag — would
+     * leave the mode on while nobody listens. A wake word during the reply starts a new run in time and keeps it.
+     */
+    private onReplyPlayed(): void {
+        if (!this.dialogOn || !this.dialogReplyAt || this.capture) {
+            return;
+        }
+        const playedMs = Date.now() - this.dialogReplyAt;
+        const replyMs = this.dialogReplyMs;
+        this.dialogReplyAt = 0;
+        this.cancelDialogReopen();
+        this.dialogReopenTimer = setTimeout(() => {
+            this.dialogReopenTimer = null;
+            if (!this.dialogOn || this.capture || this.runOpen) {
+                return;
+            }
+            const s = (ms: number): string => (ms / 1000).toFixed(1);
+            this.opts.log.info(
+                playedMs + REPLY_CUT_MS < replyMs
+                    ? `ESPHome ${this.deviceName}: the device stopped the reply after ${s(playedMs)} of ${s(replyMs)} s ` +
+                          `(its stop word, a tap or its wake word) and does not listen again`
+                    : `ESPHome ${this.deviceName}: the device played the reply but did not open its microphone again`,
+            );
+            this.setDialog(false, 'no-listen');
+        }, DIALOG_REOPEN_MS);
+        this.dialogReopenTimer.unref();
+    }
+
+    private cancelDialogReopen(): void {
+        if (this.dialogReopenTimer) {
+            clearTimeout(this.dialogReopenTimer);
+            this.dialogReopenTimer = null;
+        }
     }
 
     /**
@@ -1615,6 +1681,7 @@ class EsphomeConnection {
             this.event(EVENT.TTS_END, { url });
             // linux-voice-assistant reads the flag here (ignoring "0"), ESPHome at INTENT_END
             this.event(EVENT.RUN_END, conversation);
+            this.noteDialogReply((ttsPcm.length / 2 / sampleRate) * 1000);
             this.questionUntil = followUp ? Date.now() + (ttsPcm.length / 2 / sampleRate) * 1000 + QUESTION_OPEN_MS : 0;
             this.armPlaybackTimeout();
         } catch (e) {
@@ -1647,6 +1714,7 @@ class EsphomeConnection {
             this.event(EVENT.TTS_START, { text: '' });
             this.event(EVENT.TTS_END, { url });
             this.event(EVENT.RUN_END, { continue_conversation: '1' });
+            this.noteDialogReply((clip.length / 2 / sampleRate) * 1000);
             this.armPlaybackTimeout();
         } catch (e) {
             this.opts.log.warn(`ESPHome ${this.deviceName}: dialog cannot go on — ${(e as Error).message}`);

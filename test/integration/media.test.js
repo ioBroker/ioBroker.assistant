@@ -12,6 +12,7 @@ const {
     noVisionText,
     parseAskImages,
     parseAskVideo,
+    videoLocation,
     redactImages,
     sniffImageType,
     videoNotSupportedText,
@@ -81,6 +82,7 @@ test('a video only as a reference into the file storage, never as content', () =
     });
     assert.ok(!isVideoError(ref));
     assert.deepEqual(ref, {
+        url: undefined,
         adapter: 'telegram.0',
         path: 'assistant/video_1.mp4',
         mimeType: 'video/mp4',
@@ -95,10 +97,27 @@ test('a video only as a reference into the file storage, never as content', () =
 
     assert.ok(isVideoError(parseAskVideo('AAAA')));
     assert.ok(isVideoError(parseAskVideo({ adapter: 'telegram.0' })));
+    assert.equal(videoLocation(ref), 'telegram.0/assistant/video_1.mp4');
     // the sender could not store it (bigger than 20 MB): still a video, with the reason
     const failed = parseAskVideo({ error: 'too big to download (52 MB)', durationSec: 300 });
     assert.ok(!isVideoError(failed));
     assert.equal(failed.error, 'too big to download (52 MB)');
+});
+
+test('a video as iobdisk:// URL on the disk of the sender (js-controller 8.0+)', () => {
+    const url = 'iobdisk://pi4/telegram.0/assistant/video_1.mp4';
+    const ref = parseAskVideo({ url, adapter: 'telegram.0', path: 'assistant/video_1.mp4', mimeType: 'video/mp4' });
+    assert.ok(!isVideoError(ref));
+    assert.equal(ref.url, url);
+    // the URL wins, the file storage is not looked at
+    assert.equal(ref.adapter, '');
+    assert.equal(ref.path, '');
+    assert.equal(videoLocation(ref), url);
+
+    assert.ok(!isVideoError(parseAskVideo({ url })));
+    assert.ok(isVideoError(parseAskVideo({ url: 'file:///etc/passwd' })));
+    assert.ok(isVideoError(parseAskVideo({ url: '/opt/iobroker/iobroker-data/telegram_0/video.mp4' })));
+    assert.ok(isVideoError(parseAskVideo({ url: 'iobdisk://pi4/telegram.0' })));
 });
 
 test('the user turn for OpenAI and Anthropic', () => {

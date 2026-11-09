@@ -141,6 +141,7 @@ import {
     noVisionText,
     parseAskImages,
     parseAskVideo,
+    videoLocation,
     videoNotSupportedText,
     type ImageInput,
     type VideoRef,
@@ -232,7 +233,10 @@ interface AskMessage {
     spoken?: boolean;
     /** Pictures for the cloud model: `[{ data: base64, mimeType }]`, at most 4 (see lib/media). */
     images?: unknown;
-    /** A video, never as content: `{ adapter, path, mimeType?, durationSec?, size? }` of the ioBroker file storage. */
+    /**
+     * A video, never as content: `{ url, mimeType?, durationSec?, size? }` with an `iobdisk://` URL, or
+     * `{ adapter, path, ... }` of the ioBroker file storage.
+     */
     video?: unknown;
 }
 
@@ -3909,7 +3913,7 @@ class Assistant extends Adapter {
         }
         const shown = historyText(question, attachments.images.length, !!attachments.video);
         this.log.info(
-            `${heard ? 'Voice Q' : 'Q'} (${obj.command} from ${caller}): ${shown}${attachments.video ? ` (video ${attachments.video.adapter}/${attachments.video.path})` : ''}`,
+            `${heard ? 'Voice Q' : 'Q'} (${obj.command} from ${caller}): ${shown}${attachments.video ? ` (video ${videoLocation(attachments.video)})` : ''}`,
         );
         this.setStateAsync('text.request', { val: shown, ack: true }).catch(() => {});
         this.setQuerySource(source);
@@ -4063,7 +4067,7 @@ class Assistant extends Adapter {
         const kb = (base64: string): number => Math.round((base64.length * 3) / 4 / 1024);
         const parts = [
             images.length ? `${images.length} picture(s), ${images.reduce((n, i) => n + kb(i.data), 0)} KB` : '',
-            video ? `video ${video.adapter}/${video.path}` : '',
+            video ? `video ${videoLocation(video)}` : '',
         ].filter(Boolean);
         this.journal?.step({
             stage: 'request',
@@ -4169,6 +4173,21 @@ class Assistant extends Adapter {
             return 'Wenn die Anfrage nur ein Befehl war, Geräte ein- oder auszuschalten oder auf einen Wert zu stellen, und alles geklappt hat, antworte ausschließlich mit dem Steuer-Marker [[DONE]] (statt eines Satzes ertönt ein kurzer Bestätigungston). Bei Fragen, bei Fehlern oder wenn du etwas mitteilen musst, antworte normal.';
         }
         return 'If the request was only a command to switch devices on or off or to set them to a value, and everything worked, answer with the control marker [[DONE]] alone (a short beep plays instead of a sentence). For questions, errors or when you have something to tell, answer normally.';
+    }
+
+    /**
+     * System-prompt instruction to answer in the language of the question: the system prompt, the device names and
+     * the time/weather lines are in the configured language, and the model followed them instead of the question.
+     */
+    private languageHint(): string {
+        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        if (lang === 'ru') {
+            return 'Всегда отвечай на том языке, на котором задан вопрос, даже если эти инструкции, имена устройств или данные на другом языке.';
+        }
+        if (lang === 'de') {
+            return 'Antworte immer in der Sprache, in der die Frage gestellt wurde, auch wenn diese Anweisungen, die Gerätenamen oder die Daten in einer anderen Sprache sind.';
+        }
+        return 'Always answer in the language the question was asked in, even if these instructions, the device names or the data are in another language.';
     }
 
     /**
@@ -4389,7 +4408,7 @@ class Assistant extends Adapter {
         const { images, video } = this.attachments();
         if (!question.trim() && video) {
             // A video without a question: nothing looks at videos yet
-            this.log.info(`Video from '${source}' (${video.adapter}/${video.path}) not looked at: not supported yet.`);
+            this.log.info(`Video from '${source}' (${videoLocation(video)}) not looked at: not supported yet.`);
             this.journal?.note({ tier: 'none' });
             this.journal?.step({ stage: 'none', title: 'A video without a question: videos are not looked at yet' });
             return videoNotSupportedText(this.answerLanguage());
@@ -4509,7 +4528,7 @@ class Assistant extends Adapter {
         // Only ask the model to emit the follow-up marker when satellites can actually re-open the mic.
         const followUp = this.config.voiceEnabled ? this.followUpHint() : '';
         const done = this.doneHint();
-        const parts = [this.config.systemPrompt || '', followUp, done, mem, ctx].filter(Boolean);
+        const parts = [this.config.systemPrompt || '', this.languageHint(), followUp, done, mem, ctx].filter(Boolean);
         const sys = parts.length ? parts.join('\n\n') : undefined;
         this.log.info(
             `Cloud LLM [${this.agent.model || 'auto'}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}${weather ? ', weather' : ''}${this.presence?.configured ? ', presence' : ''}) — running tool loop…`,
@@ -4544,7 +4563,7 @@ class Assistant extends Adapter {
                 time,
                 weather: weather || undefined,
                 images: images.length || undefined,
-                video: video ? `${video.adapter}/${video.path}` : undefined,
+                video: video ? videoLocation(video) : undefined,
             },
         });
         try {
@@ -4584,7 +4603,7 @@ class Assistant extends Adapter {
         // The device list maps names to state ids, so pi-agent can act without searching first. It is the
         // first to go when the instructions get too long — pi-agent can still search.
         const { text: instructions, dropped } = composeInstructions(
-            [this.config.systemPrompt || '', followUp, this.doneHint(), this.spokenLengthHint()],
+            [this.config.systemPrompt || '', this.languageHint(), followUp, this.doneHint(), this.spokenLengthHint()],
             [this.buildMemoryContext(), await this.buildDeviceContext()],
         );
         if (dropped) {
@@ -4712,7 +4731,7 @@ class Assistant extends Adapter {
                 continue; // hidden from the LLM
             }
             const room = d.room ? `${d.room}, ` : '';
-            lines.push(`- ${d.name} (${room}${d.type}): ${ids.join(', ')}`);
+            lines.push(`- ${d.name} (${room}${d.type}): ${this.describeControls(d)}`);
         }
         const lang = String(this.config.voiceLanguage || this.language || 'en');
         lines.push(...this.satelliteVolumeLines(lang));
@@ -4721,11 +4740,36 @@ class Assistant extends Adapter {
         }
         const header =
             lang === 'ru'
-                ? 'Известные устройства — «имя (комната, тип): stateId». Используй эти stateId напрямую с set_state/get_states; вызывай list_devices только если нужного устройства здесь нет.'
+                ? 'Известные устройства — «имя (комната, тип): элемент stateId [вид]; …». Используй эти stateId напрямую с set_state/get_states; вызывай list_devices только если нужного устройства здесь нет. Если у устройства есть выключатель [on/off] и уровень [number], то «включи» — это выключатель = true (уровень — только если его назвали): один уровень устройство не включает.'
                 : lang === 'de'
-                  ? 'Bekannte Geräte — "Name (Raum, Typ): stateId". Nutze diese stateIds direkt mit set_state/get_states; rufe list_devices nur, wenn ein Gerät hier fehlt.'
-                  : 'Known devices — "name (room, type): stateId". Use these stateIds directly with set_state/get_states; only call list_devices if a needed device is missing here.';
+                  ? 'Bekannte Geräte — "Name (Raum, Typ): Element stateId [Art]; …". Nutze diese stateIds direkt mit set_state/get_states; rufe list_devices nur, wenn ein Gerät hier fehlt. Hat ein Gerät einen Schalter [on/off] und einen Level [number], heißt "einschalten" Schalter = true (den Level nur, wenn er genannt wurde): der Level allein schaltet das Gerät nicht ein.'
+                  : 'Known devices — "name (room, type): element stateId [kind]; …". Use these stateIds directly with set_state/get_states; only call list_devices if a needed device is missing here. If a device has a switch [on/off] and a level [number], "turn on" means switch = true (the level only if one was asked for): the level alone does not switch the device on.';
         return `${header}\n${lines.join('\n')}`;
+    }
+
+    /**
+     * The controls of a device for the LLM: element, state id and what it is. A bare list of ids did not tell the
+     * level from the switch next to it, and the model set only the level of a light, so it stayed off.
+     */
+    private describeControls(d: NluDevice): string {
+        const seen = new Set<string>();
+        const parts: string[] = [];
+        for (const [key, id] of Object.entries(d.controls)) {
+            if (seen.has(id)) {
+                continue;
+            }
+            seen.add(id);
+            const kind =
+                d.writable[key] === false
+                    ? 'read-only'
+                    : d.types[key] === 'boolean'
+                      ? 'on/off'
+                      : d.types[key] === 'number'
+                        ? 'number'
+                        : '';
+            parts.push(kind ? `${key} ${id} [${kind}]` : `${key} ${id}`);
+        }
+        return parts.join('; ');
     }
 
     /**

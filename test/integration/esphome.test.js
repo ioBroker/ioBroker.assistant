@@ -1651,6 +1651,21 @@ test('dialog mode: nothing recognised listens on, a wordless command answers wit
     ]);
 });
 
+test('dialog mode: a device that does not listen again after its reply ends the mode', async t => {
+    const { device, satellites, changes, name } = await dialogSatellite(t);
+    satellites.setDialog(name, true);
+    device.startPipeline('okay nabu');
+    await waitFor(() => device.responses === 2, 'the dialog microphone');
+    await waitFor(() => device.position() > 2400, 'a moment of silence');
+    device.speak();
+    await waitFor(() => device.fetched.length === 2, 'the reply played');
+    // Field report 2026-11-05: the speaker stopped the reply itself and went idle — no microphone, the mode stayed on.
+    await sleep(1000);
+    assert.equal(satellites.dialog(name), true, 'the device gets a moment to open the microphone');
+    await waitFor(() => !satellites.dialog(name), 'the dialog mode ending', 9000);
+    assert.deepEqual(changes.at(-1), { on: false, reason: 'no-listen' });
+});
+
 // ── wake words ──────────────────────────────────────────────────────────────
 
 /** Bring up a satellite against a fake device and wait until the handshake reported its wake words. */

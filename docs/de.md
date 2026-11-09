@@ -168,8 +168,10 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
   3,75 MB. Regeln, Routinen und das lokale Modell werden übersprungen (sie sehen nichts), es braucht also einen
   Cloud-Anbieter, dessen Modell Bilder nimmt (oder pi-agent mit Bild-Unterstützung); sonst sagt die Antwort das.
   Spätere Runden des Gesprächs wissen nur, dass es ein Bild gab, sie bekommen es nicht noch einmal.
-- **Videos** werden nie als Inhalt geschickt: Telegram legt sie in seinem Dateispeicher ab, und `ask` bekommt nur
-  `video: { adapter, path, mimeType, durationSec, size }`. Videos sieht sich der Assistent noch nicht an — ein
+- **Videos** werden nie als Inhalt geschickt: Telegram legt sie ab, und `ask` bekommt nur, wo -
+  `video: { url, mimeType, durationSec, size }` mit einer `iobdisk://`-URL (auf der Platte des Hosts von Telegram,
+  js-controller 8.0+, von jedem Host lesbar), oder `video: { adapter, path, ... }` im Dateispeicher bei einem
+  älteren js-controller. Videos sieht sich der Assistent noch nicht an — ein
   Video ohne Frage bekommt eine kurze Antwort, die das sagt, mit Frage erfährt das Modell davon.
 
 Der Chat zeigt live alle Anfragen — auch die von Satelliten, Telegram und Skripten. **Ein Klick auf eine
@@ -511,7 +513,9 @@ dazu („Wie schalte ich den Dialogmodus an?“) schaltet nichts.
   Satellit hört einfach weiter zu. Ein Befehl, der sonst nur mit dem Bestätigungston quittiert wird, spielt den
   Ton und hört danach weiter zu.
 - **Ende von selbst** nach 5 Minuten ohne verstandene Anfrage, wenn das Gerät gestoppt wird (Stopp-Knopf,
-  Wake-Word während der Antwort), wenn es offline geht oder die Sprachverarbeitung fehlschlägt.
+  Wake-Word während der Antwort), wenn es offline geht oder die Sprachverarbeitung fehlschlägt — und wenn das Gerät
+  nach einer Antwort nicht wieder zuhört, etwa weil es die Antwort selbst abgebrochen hat (sein Stoppwort, ein
+  Tippen). Das Log sagt dann, wie viel von der Antwort gespielt wurde.
 - **State `satellites.<id>.dialog`** zeigt den Modus und schaltet ihn auch (Skript, VIS): `true` an einem
   wartenden Satelliten spielt den Bestätigungston und öffnet danach das Mikrofon.
 - Das Mikrofon ist die ganze Zeit offen: alles, was im Raum als Sprache erkannt wird, geht an die
