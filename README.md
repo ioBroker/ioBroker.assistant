@@ -238,7 +238,8 @@ train it twice.
     ### **WORK IN PROGRESS**
 -->
 ### **WORK IN PROGRESS**
-* (GermanBluefox) OpenAI reasoning models: reasoning effort from the system AI settings, automatic fallback to effort 'none' or the Responses API when function tools are rejected (#25)
+* (@GermanBluefox) OpenAI reasoning models: reasoning effort from the system AI settings; when function tools are rejected, a chosen effort is kept over the Responses API, otherwise the request is retried with effort 'none' (#25)
+* (@GermanBluefox) A cloud model that runs out of tokens without a word (e.g. in its reasoning) is reported as an error instead of an empty answer that read as "done"
 
 ### 1.5.0 (2026-11-09)
 * (@GermanBluefox) Added an assistant chat and a live view of the voice satellites for Aura and other dashboards

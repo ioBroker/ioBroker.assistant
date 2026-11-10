@@ -112,8 +112,8 @@ test('openai: the configured reasoning effort goes with the request, not to othe
     assert.equal('reasoning_effort' in request, false);
 });
 
-test('openai: function tools refused with reasoning → retried with "none", remembered for the model', async () => {
-    const { agent, steps, ran } = toolAgent('none-model', { reasoningEffort: 'medium' });
+test('openai: function tools refused with the default reasoning → retried with "none", remembered', async () => {
+    const { agent, steps, ran } = toolAgent('none-model');
     const sent = [];
     agent.openai.chat.completions.create = async req => {
         sent.push(req.reasoning_effort);
@@ -138,12 +138,16 @@ test('openai: function tools refused with reasoning → retried with "none", rem
         return { choices: [{ message: { role: 'assistant', content: 'It is 42.' } }] };
     };
     assert.equal(await agent.ask('value?'), 'It is 42.');
-    assert.deepEqual(sent, ['medium', 'none', 'none']);
+    assert.deepEqual(sent, [undefined, 'none', 'none']);
     assert.deepEqual(ran, ['get_value']);
     const retries = steps.filter(s => s.level === 'warn');
     assert.equal(retries.length, 1, 'the retry is its own step');
     assert.match(retries[0].title, /"none"/);
-    assert.equal(steps.some(s => s.level === 'error'), false, 'no failed round in the trace');
+    assert.equal(
+        steps.some(s => s.level === 'error'),
+        false,
+        'no failed round in the trace',
+    );
 
     // the next question sends "none" at once
     sent.length = 0;
@@ -151,16 +155,8 @@ test('openai: function tools refused with reasoning → retried with "none", rem
     assert.equal(sent[0], 'none');
 });
 
-test('openai: a model that refuses "none" too switches to the Responses API', async () => {
-    const { agent, steps, ran } = toolAgent('responses-model', { reasoningEffort: 'high', systemPrompt: 'be brief' });
-    let chatCalls = 0;
-    agent.openai.chat.completions.create = async req => {
-        chatCalls++;
-        throw apiError(
-            400,
-            req.reasoning_effort === 'none' ? "Unsupported value: 'none' for reasoning_effort" : TOOLS_WITH_EFFORT,
-        );
-    };
+/** A Responses API mock: first a reasoning item and a call of `get_value`, then the answer. */
+function responsesMock(agent) {
     const requests = [];
     agent.openai.responses.create = async req => {
         requests.push(JSON.parse(JSON.stringify(req)));
@@ -174,16 +170,35 @@ test('openai: a model that refuses "none" too switches to the Responses API', as
                 usage: { input_tokens: 10, output_tokens: 5 },
             };
         }
-        return { status: 'completed', output: [], output_text: ' It is 42. ', usage: { input_tokens: 20, output_tokens: 3 } };
+        return {
+            status: 'completed',
+            output: [],
+            output_text: ' It is 42. ',
+            usage: { input_tokens: 20, output_tokens: 3, input_tokens_details: { cached_tokens: 16 } },
+        };
     };
+    return requests;
+}
+
+test('openai: a model that refuses "none" too switches to the Responses API', async () => {
+    const { agent, steps, ran } = toolAgent('responses-model', { systemPrompt: 'be brief' });
+    let chatCalls = 0;
+    agent.openai.chat.completions.create = async req => {
+        chatCalls++;
+        throw apiError(
+            400,
+            req.reasoning_effort === 'none' ? "Unsupported value: 'none' for reasoning_effort" : TOOLS_WITH_EFFORT,
+        );
+    };
+    const requests = responsesMock(agent);
     assert.equal(await agent.ask('value?'), 'It is 42.');
     assert.equal(chatCalls, 2);
     assert.deepEqual(ran, ['get_value']);
     assert.equal(requests[0].instructions, 'be brief');
-    assert.deepEqual(requests[0].reasoning, { effort: 'high' });
+    assert.equal(requests[0].reasoning, undefined, 'no effort chosen: the model reasons with its default');
     assert.equal(requests[0].store, false);
     assert.deepEqual(requests[0].include, ['reasoning.encrypted_content']);
-    assert.ok(requests[0].max_output_tokens >= 1024);
+    assert.ok(requests[0].max_output_tokens >= 1024 + 25000, 'room for the reasoning on top of the answer');
     assert.deepEqual(requests[0].tools[0].name, 'get_value');
     assert.deepEqual(
         requests[1].input.slice(1).map(i => i.type),
@@ -192,7 +207,11 @@ test('openai: a model that refuses "none" too switches to the Responses API', as
     );
     assert.equal(requests[1].input[3].call_id, 'call1');
     assert.equal(steps.filter(s => s.level === 'warn').length, 2);
-    assert.equal(steps.some(s => s.level === 'error'), false);
+    assert.equal(
+        steps.some(s => s.level === 'error'),
+        false,
+    );
+    assert.equal(steps.find(s => s.title === 'Round 2 → answer').tokens.cacheRead, 16, 'cached input tokens');
 
     // the next question goes to the Responses API at once
     chatCalls = 0;
@@ -200,6 +219,63 @@ test('openai: a model that refuses "none" too switches to the Responses API', as
     assert.equal(await agent.ask('again?'), 'It is 42.');
     assert.equal(chatCalls, 0);
     assert.equal(requests.length, 2);
+});
+
+test('openai: a chosen reasoning effort is kept — tools refused with it go to the Responses API, not to "none"', async () => {
+    const { agent, steps, ran } = toolAgent('effort-kept-model', { reasoningEffort: 'medium' });
+    const sent = [];
+    agent.openai.chat.completions.create = async req => {
+        sent.push(req.reasoning_effort);
+        // like gpt-6-luna: "none" would be taken, but the effort the user chose would be lost
+        if (req.reasoning_effort !== 'none') {
+            throw apiError(400, TOOLS_WITH_EFFORT);
+        }
+        return { choices: [{ message: { role: 'assistant', content: 'without reasoning' } }] };
+    };
+    const requests = responsesMock(agent);
+    assert.equal(await agent.ask('value?'), 'It is 42.');
+    assert.deepEqual(sent, ['medium']);
+    assert.deepEqual(ran, ['get_value']);
+    assert.deepEqual(requests[0].reasoning, { effort: 'medium' });
+    assert.ok(requests[0].max_output_tokens >= 1024 + 25000);
+    const retries = steps.filter(s => s.level === 'warn');
+    assert.equal(retries.length, 1);
+    assert.match(retries[0].title, /"medium" only over the Responses API/);
+
+    // the next question goes to the Responses API at once
+    sent.length = 0;
+    requests.length = 0;
+    assert.equal(await agent.ask('again?'), 'It is 42.');
+    assert.deepEqual(sent, []);
+    assert.equal(requests.length, 2);
+});
+
+test('openai: an answer that ran out of tokens is an error, not an empty answer', async () => {
+    const { agent, steps } = toolAgent('incomplete-model', { reasoningEffort: 'high' });
+    agent.openai.chat.completions.create = async () => {
+        throw apiError(400, TOOLS_WITH_EFFORT);
+    };
+    let resp = {
+        status: 'incomplete',
+        incomplete_details: { reason: 'max_output_tokens' },
+        output: [{ type: 'reasoning', id: 'r1', encrypted_content: 'enc' }],
+        output_text: '',
+        usage: { input_tokens: 10, output_tokens: 26024 },
+    };
+    agent.openai.responses.create = async () => resp;
+    await assert.rejects(agent.ask('value?'), /stopped without an answer \(max_output_tokens\)/);
+
+    // cut off in the middle of the answer: given, with a warning
+    resp = { ...resp, output_text: 'It is' };
+    assert.equal(await agent.ask('value?'), 'It is');
+    assert.ok(steps.some(s => s.level === 'warn' && /cut off \(max_output_tokens\)/.test(s.title)));
+
+    // the same on Chat Completions (a reasoning model there, or any model with a tiny limit)
+    const chat = toolAgent('length-model').agent;
+    chat.openai.chat.completions.create = async () => ({
+        choices: [{ finish_reason: 'length', message: { role: 'assistant', content: '' } }],
+    });
+    await assert.rejects(chat.ask('value?'), /stopped without an answer \(length\)/);
 });
 
 test('openai: other errors are not retried', async () => {

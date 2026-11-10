@@ -37,6 +37,13 @@ export const OPENROUTER_HEADERS = { 'HTTP-Referer': 'https://www.iobroker.net', 
 /** Lowest `max_completion_tokens` sent to OpenAI (see {@link LlmAgent.openAiLimit}). */
 const MIN_OPENAI_COMPLETION_TOKENS = 1024;
 
+/**
+ * Room for the reasoning on top of the answer on the Responses API: reasoning tokens count against
+ * `max_output_tokens`, and a model that uses it up ends `incomplete` without a word. OpenAI recommends to reserve
+ * at least 25 000 tokens for reasoning and output; it is only a limit, billed is what the model uses.
+ */
+const REASONING_RESERVE_TOKENS = 25000;
+
 /** Reasoning effort of OpenAI reasoning models (`system.ai`); '' = the model's default. */
 export type ReasoningEffort = '' | 'none' | 'minimal' | 'low' | 'medium' | 'high';
 
@@ -110,7 +117,8 @@ function tokensOf(usage: any): JournalTokens | undefined {
         return {
             input: Number(usage.input_tokens) || 0,
             output: Number(usage.output_tokens) || 0,
-            cacheRead: Number(usage.cache_read_input_tokens) || undefined,
+            // Anthropic, or the Responses API of OpenAI
+            cacheRead: Number(usage.cache_read_input_tokens ?? usage.input_tokens_details?.cached_tokens) || undefined,
             cacheWrite: Number(usage.cache_creation_input_tokens) || undefined,
         };
     }
@@ -293,9 +301,12 @@ export class LlmAgent {
         return { max_tokens: tokens };
     }
 
-    /** Key of {@link needEffortNone}, {@link needResponsesApi} and {@link rejectsEffort}. */
+    /**
+     * Key of {@link needEffortNone}, {@link needResponsesApi} and {@link rejectsEffort}: the effort is part of it,
+     * a model may take tools with one effort and not with another.
+     */
     private get modelKey(): string {
-        return `${this.providerName}:${this.model}`;
+        return `${this.providerName}:${this.model}:${this.reasoningEffort}`;
     }
 
     /** Only OpenAI and the custom server (often a proxy to OpenAI) get a reasoning effort. */
@@ -321,6 +332,27 @@ export class LlmAgent {
     private traceRetry(title: string, e: unknown): void {
         this.log.info(`${title}: ${(e as Error).message}`);
         this.trace?.({ stage: 'cloud', level: 'warn', title, data: { error: errorInfo(e) } });
+    }
+
+    /**
+     * The answer of the last round. A model that ran out of tokens (a reasoning model mostly in its reasoning)
+     * or was stopped by the content filter may end without a word: that is an error, because an empty answer
+     * reads as "done". An answer that was cut off is given, with a warning.
+     *
+     * @param text the text of the last round
+     * @param cutBy why the model stopped early ('length', 'max_output_tokens', 'content_filter' …), '' if it did not
+     */
+    private finalAnswer(text: string, cutBy: string): string {
+        if (!cutBy) {
+            return text;
+        }
+        if (!text) {
+            throw new Error(`${this.model} stopped without an answer (${cutBy})`);
+        }
+        const title = `Answer of ${this.model} cut off (${cutBy})`;
+        this.log.info(title);
+        this.trace?.({ stage: 'cloud', level: 'warn', title });
+        return text;
     }
 
     /**
@@ -595,7 +627,11 @@ export class LlmAgent {
             });
 
             if (!msg.tool_calls || !msg.tool_calls.length) {
-                return String(msg.content || '').trim();
+                const reason = resp.choices[0].finish_reason;
+                return this.finalAnswer(
+                    String(msg.content || '').trim(),
+                    reason === 'length' || reason === 'content_filter' ? reason : '',
+                );
             }
 
             for (const tc of msg.tool_calls) {
@@ -614,11 +650,12 @@ export class LlmAgent {
 
     /**
      * One Chat Completions request. OpenAI reasoning models refuse function tools unless `reasoning_effort` is
-     * 'none' ("Function tools with reasoning_effort are not supported …"): retried with 'none', and if the model
-     * does not take that either, {@link USE_RESPONSES_API} says to ask over the Responses API instead — only in
-     * the first round (`mayFallback`), so no tool runs twice. A model that refuses the effort itself (no
-     * reasoning model) is asked again without it. Each model is remembered, so the next question goes the right
-     * way at once.
+     * 'none' ("Function tools with reasoning_effort are not supported …"). With an effort chosen in the settings,
+     * {@link USE_RESPONSES_API} says to ask over the Responses API, which keeps it. Without one (the model's own
+     * default) the request is retried with 'none', and if the model does not take that either, it goes to the
+     * Responses API too. Switching happens only in the first round (`mayFallback`), so no tool runs twice; later
+     * the request falls back to 'none'. A model that refuses the effort itself (no reasoning model) is asked again
+     * without it. Each model is remembered, so the next question goes the right way at once.
      */
     private async chatWithFallback(client: OpenAI, request: any, mayFallback: boolean): Promise<any> {
         try {
@@ -640,8 +677,11 @@ export class LlmAgent {
                 return this.chatWithFallback(client, request, mayFallback);
             }
             let error = e;
-            if (request.reasoning_effort !== 'none') {
-                needEffortNone.add(this.modelKey);
+            const chosen: ReasoningEffort = request.reasoning_effort === 'none' ? '' : request.reasoning_effort || '';
+            if (request.reasoning_effort !== 'none' && (!chosen || !mayFallback)) {
+                if (!chosen) {
+                    needEffortNone.add(this.modelKey);
+                }
                 this.traceRetry(`${this.model} refuses function tools with reasoning — retrying with "none"`, e);
                 request.reasoning_effort = 'none';
                 try {
@@ -658,7 +698,12 @@ export class LlmAgent {
             }
             needEffortNone.delete(this.modelKey);
             needResponsesApi.add(this.modelKey);
-            this.traceRetry(`${this.model} takes function tools only over the Responses API — switching`, error);
+            this.traceRetry(
+                chosen
+                    ? `${this.model} takes function tools with reasoning effort "${chosen}" only over the Responses API — switching`
+                    : `${this.model} takes function tools only over the Responses API — switching`,
+                error,
+            );
             return USE_RESPONSES_API;
         }
     }
@@ -689,12 +734,14 @@ export class LlmAgent {
 
         for (let round = 0; round < this.maxRounds; round++) {
             const effort = this.sendsReasoning && !rejectsEffort.has(this.modelKey) ? this.reasoningEffort : '';
+            const answerTokens = Math.max(this.maxTokens, MIN_OPENAI_COMPLETION_TOKENS);
             const request: any = {
                 model: this.model,
                 instructions: systemPrompt || undefined,
                 input,
                 tools: tools.length ? tools : undefined,
-                max_output_tokens: Math.max(this.maxTokens, MIN_OPENAI_COMPLETION_TOKENS),
+                // without an effort the model reasons with its default
+                max_output_tokens: effort === 'none' ? answerTokens : answerTokens + REASONING_RESERVE_TOKENS,
                 ...(effort ? { reasoning: { effort } } : {}),
                 // nothing is kept at OpenAI: the reasoning items go back to the model encrypted
                 store: false,
@@ -726,7 +773,10 @@ export class LlmAgent {
             });
 
             if (!calls.length) {
-                return responsesText(resp);
+                return this.finalAnswer(
+                    responsesText(resp),
+                    resp.status === 'incomplete' ? String(resp.incomplete_details?.reason || 'incomplete') : '',
+                );
             }
 
             for (const call of calls) {
