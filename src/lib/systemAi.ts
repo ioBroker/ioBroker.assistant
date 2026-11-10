@@ -10,13 +10,16 @@
  */
 import type { AdapterConfig } from '../types';
 import { readCentralKey, resolveApiKey } from './credentials';
-import { PROVIDER_PRESETS, effectiveApiKey, resolveProvider, type Provider } from './llm';
+import { PROVIDER_PRESETS, effectiveApiKey, resolveProvider, type Provider, type ReasoningEffort } from './llm';
 
 /** ID of the object with the system-wide AI settings */
 export const SYSTEM_AI_ID = 'system.ai';
 
 /** Fields of `system.ai` the assistant uses — a change of the others (like admin's chat button) needs no restart */
-const USED_FIELDS = ['provider', 'model', 'credentialId', 'baseUrl'] as const;
+const USED_FIELDS = ['provider', 'model', 'credentialId', 'baseUrl', 'reasoningEffort'] as const;
+
+/** Reasoning efforts OpenAI knows; '' = the model's default */
+const REASONING_EFFORTS: readonly ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high'];
 
 /** Where to set them up, for the log */
 const WHERE = 'admin → System settings → tab "AI"';
@@ -28,6 +31,8 @@ export interface SystemAiSelection {
     credentialId: string;
     /** Only for `custom` */
     baseUrl: string;
+    /** For OpenAI reasoning models; '' = the model's default */
+    reasoningEffort: ReasoningEffort;
 }
 
 /** The cloud LLM the instance works with, whether configured here or in `system.ai` */
@@ -36,12 +41,19 @@ export interface ResolvedLlm {
     apiKey: string;
     model: string;
     baseUrl: string;
+    /** For OpenAI reasoning models; '' = the model's default (always with an own configuration) */
+    reasoningEffort: ReasoningEffort;
     /** Taken from `system.ai` */
     system: boolean;
 }
 
 function text(value: unknown): string {
     return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+}
+
+function reasoningEffort(value: unknown): ReasoningEffort {
+    const effort = text(value) as ReasoningEffort;
+    return REASONING_EFFORTS.includes(effort) ? effort : '';
 }
 
 /**
@@ -59,6 +71,7 @@ export function systemAiSelection(native: Record<string, unknown> | null | undef
         model: text(native?.model),
         credentialId: text(native?.credentialId),
         baseUrl: provider === 'custom' ? text(native?.baseUrl) : '',
+        reasoningEffort: reasoningEffort(native?.reasoningEffort),
     };
 }
 
@@ -137,6 +150,7 @@ export async function resolveSystemLlm(
         apiKey,
         model: sel.model || preset.defaultModel,
         baseUrl: preset.baseUrl,
+        reasoningEffort: sel.reasoningEffort,
         system: true,
     };
 }
@@ -158,5 +172,12 @@ export async function resolveLlm(
     const provider = (cfg.provider || 'openai') as Provider;
     const apiKey = effectiveApiKey(provider, await resolveApiKey(adapter, cfg));
     const preset = resolveProvider(provider, cfg.baseUrl);
-    return { provider, apiKey, model: cfg.model || preset.defaultModel, baseUrl: preset.baseUrl, system: false };
+    return {
+        provider,
+        apiKey,
+        model: cfg.model || preset.defaultModel,
+        baseUrl: preset.baseUrl,
+        reasoningEffort: '',
+        system: false,
+    };
 }
