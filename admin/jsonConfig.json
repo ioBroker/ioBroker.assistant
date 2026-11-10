@@ -4,7 +4,7 @@
     "items": {
         "_main": {
             "type": "panel",
-            "label": "Settings",
+            "label": "AI",
             "items": {
                 "_header": {
                     "type": "header",
@@ -201,20 +201,97 @@
                     "lg": 12,
                     "xl": 12
                 },
-                "maxTokens": {
+                "_conversationHeader": {
                     "newLine": true,
-                    "type": "number",
-                    "label": "Max tokens",
-                    "hidden": "data.provider === 'none' || data.provider === 'pi-agent'",
-                    "default": 1024,
-                    "min": 64,
-                    "max": 8192,
+                    "type": "header",
+                    "size": 3,
+                    "text": "Conversation",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                },
+                "useConversationContext": {
+                    "type": "checkbox",
+                    "label": "Remember the conversation (follow-up questions)",
+                    "help": "Keep the last few turns per source (chat, telegram, satellite) for a few minutes so follow-ups like 'and the kitchen too' work. In-memory only.",
+                    "default": true,
                     "xs": 12,
                     "sm": 6,
-                    "md": 2,
-                    "lg": 2,
-                    "xl": 2
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4,
+                    "newLine": true
                 },
+                "useLongTermMemory": {
+                    "type": "checkbox",
+                    "label": "Long-term memory (remember facts across sessions)",
+                    "help": "Lets the assistant durably remember facts you tell it (names, preferences, where things are) and use them in later conversations. Stored in the memory.* states; the LLM gets remember/forget tools.",
+                    "default": true,
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "journalHours": {
+                    "type": "number",
+                    "label": "Chat history (hours)",
+                    "help": "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.",
+                    "min": 0,
+                    "max": 168,
+                    "default": 24,
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "_aiAdvanced": {
+                    "type": "panel",
+                    "collapsable": true,
+                    "label": "Advanced",
+                    "newLine": true,
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
+                    "items": {
+                        "maxTokens": {
+                            "newLine": true,
+                            "type": "number",
+                            "label": "Max tokens",
+                            "hidden": "data.provider === 'none' || data.provider === 'pi-agent'",
+                            "default": 1024,
+                            "min": 64,
+                            "max": 8192,
+                            "xs": 12,
+                            "sm": 6,
+                            "md": 2,
+                            "lg": 2,
+                            "xl": 2
+                        },
+                        "systemPrompt": {
+                            "newLine": true,
+                            "type": "text",
+                            "label": "System prompt",
+                            "minRows": 4,
+                            "xs": 12,
+                            "sm": 12,
+                            "md": 12,
+                            "lg": 12,
+                            "xl": 12
+                        }
+                    }
+                }
+            }
+        },
+        "_commands": {
+            "type": "panel",
+            "label": "Commands",
+            "items": {
                 "useLocalNlu": {
                     "type": "checkbox",
                     "label": "Answer simple commands locally (fast, offline)",
@@ -224,7 +301,8 @@
                     "sm": 6,
                     "md": 4,
                     "lg": 4,
-                    "xl": 4
+                    "xl": 4,
+                    "newLine": true
                 },
                 "confirmWithTone": {
                     "type": "checkbox",
@@ -252,7 +330,8 @@
                         { "type": "text", "attr": "from", "title": "Said or typed", "width": "40%" },
                         { "type": "text", "attr": "to", "title": "Canonical term", "width": "40%" },
                         { "type": "text", "attr": "language", "title": "Language (empty = all)", "width": "20%" }
-                    ]
+                    ],
+                    "newLine": true
                 },
                 "routines": {
                     "newLine": true,
@@ -270,245 +349,21 @@
                         { "type": "text", "attr": "actions", "title": "Actions (JSON)", "width": "35%" },
                         { "type": "text", "attr": "reply", "title": "Reply", "width": "20%" }
                     ]
-                },
-                "useConversationContext": {
-                    "type": "checkbox",
-                    "label": "Remember the conversation (follow-up questions)",
-                    "help": "Keep the last few turns per source (chat, telegram, satellite) for a few minutes so follow-ups like 'and the kitchen too' work. In-memory only.",
-                    "default": true,
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 4,
-                    "lg": 4,
-                    "xl": 4
-                },
-                "useLongTermMemory": {
-                    "type": "checkbox",
-                    "label": "Long-term memory (remember facts across sessions)",
-                    "help": "Lets the assistant durably remember facts you tell it (names, preferences, where things are) and use them in later conversations. Stored in the memory.* states; the LLM gets remember/forget tools.",
-                    "default": true,
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 4,
-                    "lg": 4,
-                    "xl": 4
-                },
-                "journalHours": {
-                    "type": "number",
-                    "label": "Chat history (hours)",
-                    "help": "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.",
-                    "min": 0,
-                    "max": 168,
-                    "default": 24,
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 4,
-                    "lg": 4,
-                    "xl": 4
-                },
-                "weatherInstance": {
-                    "newLine": true,
-                    "type": "selectSendTo",
-                    "command": "getWeatherInstances",
-                    "label": "Weather source",
-                    "help": "Pick an installed weather adapter to answer weather questions from (Open-Meteo, Weather Underground, OpenWeatherMap are fully understood; others are read best-effort). Start that adapter once so its data/locations appear here.",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 6,
-                    "lg": 6,
-                    "xl": 6
-                },
-                "calendarInstance": {
-                    "newLine": true,
-                    "type": "instance",
-                    "adapter": "fullcalendar",
-                    "allowDeactivate": true,
-                    "label": "Calendar for commands for later",
-                    "help": "A fullcalendar instance: \"turn off the light in 2 hours\" or \"blinds to 50 % at 10 pm\" becomes an event in this calendar, and the AI can plan, list and cancel events. Without it such commands go to the AI.",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 6,
-                    "lg": 6,
-                    "xl": 6
-                },
-                "presence": {
-                    "newLine": true,
-                    "type": "table",
-                    "label": "Presence",
-                    "help": "Which states tell the assistant who is at home - one row per person. Any state works: the residents adapter, a phone ping like ping.0.phone-denis.alive, a router client state or your own flag. Kind: empty or person, guest, pet (a pet never makes the house occupied). Home value: leave empty for the usual forms (true, 1, \"home\", \"anwesend\"), or enter the exact value that means at home. Used to tell the LLM who is around, to hold back announcements to an empty house (notify with onlyWhenHome) and as a trigger source via presence.anyoneHome.",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 12,
-                    "lg": 12,
-                    "xl": 12,
-                    "items": [
-                        { "type": "objectId", "attr": "id", "title": "State id", "width": "45%" },
-                        { "type": "text", "attr": "name", "title": "Name", "width": "25%" },
-                        {
-                            "type": "select",
-                            "attr": "kind",
-                            "title": "Kind (person/guest/pet)",
-                            "width": "15%",
-                            "options": [
-                                { "label": "Person", "value": "person" },
-                                { "label": "Guest", "value": "guest" },
-                                { "label": "Pet", "value": "pet" }
-                            ],
-                            "default": "person"
-                        },
-                        { "type": "text", "attr": "homeValue", "title": "Home value (empty = auto)", "width": "15%" }
-                    ]
-                },
-                "youtubePlayers": {
-                    "newLine": true,
-                    "type": "table",
-                    "label": "YouTube players",
-                    "help": "TVs and devices of the youtube-remote adapter the assistant may play on, e.g. \"play the channel Sailing OceanAir\". The first row is the default when no player is named; a request from a satellite in the room of a row goes to that row. Player: the youtube-remote instance - it finds its paired TV itself, also after the TV was paired again; with several TVs in one instance pick one of them. Power: optional state that switches the TV on (e.g. samsungtv.0.<tv>.control.power) - if it is off, the TV is switched on first and the video starts after the start delay. A power button (toggle) is never pressed, because it would switch a running TV off. Needs \"Allow writing states\".",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 12,
-                    "lg": 12,
-                    "xl": 12,
-                    "items": [
-                        { "type": "text", "attr": "name", "title": "Name", "width": "20%" },
-                        {
-                            "type": "selectSendTo",
-                            "attr": "id",
-                            "title": "Player",
-                            "command": "getYouTubeInstances",
-                            "width": "30%"
-                        },
-                        { "type": "objectId", "attr": "power", "title": "TV power (optional)", "width": "30%" },
-                        { "type": "text", "attr": "room", "title": "Room", "width": "12%" },
-                        {
-                            "type": "number",
-                            "attr": "delay",
-                            "title": "Start delay (s)",
-                            "width": "8%",
-                            "min": 0,
-                            "max": 120,
-                            "default": 8
-                        }
-                    ]
-                },
-                "timerAnnounce": {
-                    "newLine": true,
-                    "type": "checkbox",
-                    "label": "Announce when a timer expires",
-                    "help": "Speak an announcement on the satellite a countdown timer was set from (or on all satellites) when it runs out. Timers are always mirrored into the timers.* states for scripts and visualization.",
-                    "default": true,
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 4,
-                    "lg": 4,
-                    "xl": 4
-                },
-                "alarmAnnounce": {
-                    "type": "checkbox",
-                    "label": "Announce when an alarm goes off",
-                    "help": "Speak an announcement when an alarm at a fixed clock time fires. Alarms are always mirrored into the alarms.* states for scripts and visualization.",
-                    "default": true,
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 4,
-                    "lg": 4,
-                    "xl": 4
-                },
-                "notifyRephrase": {
-                    "newLine": true,
-                    "type": "checkbox",
-                    "label": "Reword system notifications",
-                    "help": "Spoken system notifications (notify.text / the ioBroker notification manager) are reworded by the LLM into one natural sentence first - their raw texts are written for a log viewer. Costs one small LLM call per notification; the original text is spoken if it fails. Urgent ones (notify.alert) are announced even when Do-Not-Disturb is on.",
-                    "default": true,
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 4,
-                    "lg": 4,
-                    "xl": 4
-                },
-                "_soundsHint": {
-                    "newLine": true,
+                }
+            }
+        },
+        "_localModels": {
+            "type": "panel",
+            "label": "Local models",
+            "items": {
+                "_localModelsInfo": {
                     "type": "staticText",
-                    "text": "Two default sounds (timer.wav, alarm.wav) are preinstalled — pick one below or upload your own mp3/wav. The selected sound plays before the spoken announcement. Needs ffmpeg on the host and at least one satellite.",
+                    "text": "Small models answer general questions without the cloud. Download several, compare them with the benchmark and switch between them here.",
                     "xs": 12,
                     "sm": 12,
                     "md": 12,
                     "lg": 12,
                     "xl": 12
-                },
-                "ringSeconds": {
-                    "newLine": true,
-                    "type": "number",
-                    "label": "Ring duration (seconds)",
-                    "help": "A fired timer/alarm keeps ringing (looping the sound) for up to this long, or until you say 'stop'/'halt'/'aufhören'/'cancel' (or write the stopRinging state). 0 = play the sound once.",
-                    "default": 60,
-                    "min": 0,
-                    "max": 600,
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 3,
-                    "lg": 3,
-                    "xl": 3
-                },
-                "timerSound": {
-                    "newLine": true,
-                    "type": "fileSelector",
-                    "objectID": "assistant.%INSTANCE%",
-                    "upload": "sounds",
-                    "pattern": "sounds/*",
-                    "fileTypes": "audio",
-                    "delete": true,
-                    "refresh": true,
-                    "maxSize": 5242880,
-                    "label": "Timer sound (mp3/wav, optional)",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 5,
-                    "lg": 5,
-                    "xl": 5
-                },
-                "_playTimerSound": {
-                    "type": "sendTo",
-                    "command": "playSound",
-                    "label": "Play",
-                    "variant": "outlined",
-                    "jsonData": "{\"name\":\"${data.timerSound}\"}",
-                    "disabled": "!data.timerSound",
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 2,
-                    "lg": 2,
-                    "xl": 2
-                },
-                "alarmSound": {
-                    "newLine": true,
-                    "type": "fileSelector",
-                    "objectID": "assistant.%INSTANCE%",
-                    "upload": "sounds",
-                    "pattern": "sounds/*",
-                    "fileTypes": "audio",
-                    "delete": true,
-                    "refresh": true,
-                    "maxSize": 5242880,
-                    "label": "Alarm sound (mp3/wav, optional)",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 5,
-                    "lg": 5,
-                    "xl": 5
-                },
-                "_playAlarmSound": {
-                    "type": "sendTo",
-                    "command": "playSound",
-                    "label": "Play",
-                    "variant": "outlined",
-                    "jsonData": "{\"name\":\"${data.alarmSound}\"}",
-                    "disabled": "!data.alarmSound",
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 2,
-                    "lg": 2,
-                    "xl": 2
                 },
                 "useLocalLlm": {
                     "newLine": true,
@@ -591,8 +446,56 @@
                     "lg": 8,
                     "xl": 8
                 },
-                "_accessHeader": {
+                "localLlmModel": {
                     "newLine": true,
+                    "type": "selectSendTo",
+                    "command": "getLocalModels",
+                    "jsonData": "{\"dir\":\"${data.localLlmModelDir}\"}",
+                    "alsoDependsOn": ["localLlmModelDir"],
+                    "noTranslation": true,
+                    "label": "Active model",
+                    "help": "Saving restarts the instance and loads this model. Download models below.",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 6,
+                    "lg": 6,
+                    "xl": 6,
+                    "hidden": "!data.useLocalLlm"
+                },
+                "localLlmModelDir": {
+                    "type": "diskSelector",
+                    "mode": "folder",
+                    "label": "Model folder",
+                    "help": "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 6,
+                    "lg": 6,
+                    "xl": 6,
+                    "hidden": "!data.useLocalLlm"
+                },
+                "_localModels": {
+                    "newLine": true,
+                    "type": "custom",
+                    "i18n": true,
+                    "url": "custom/customComponents.js",
+                    "name": "ConfigCustomAssistant/Components/LocalModelsComponent",
+                    "bundlerType": "module",
+                    "guiApi": 2,
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
+                    "hidden": "!data.useLocalLlm"
+                }
+            }
+        },
+        "_devices": {
+            "type": "panel",
+            "label": "Devices",
+            "items": {
+                "_accessHeader": {
                     "type": "header",
                     "size": 2,
                     "text": "Access / permissions",
@@ -703,78 +606,6 @@
                     "lg": 6,
                     "xl": 6
                 },
-                "systemPrompt": {
-                    "newLine": true,
-                    "type": "text",
-                    "label": "System prompt",
-                    "minRows": 4,
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 12,
-                    "lg": 12,
-                    "xl": 12
-                }
-            }
-        },
-        "_localModels": {
-            "type": "panel",
-            "label": "Local models",
-            "hidden": "!data.useLocalLlm",
-            "items": {
-                "_localModelsInfo": {
-                    "type": "staticText",
-                    "text": "Small models answer general questions without the cloud. Download several, compare them with the benchmark and switch between them here.",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 12,
-                    "lg": 12,
-                    "xl": 12
-                },
-                "localLlmModel": {
-                    "newLine": true,
-                    "type": "selectSendTo",
-                    "command": "getLocalModels",
-                    "jsonData": "{\"dir\":\"${data.localLlmModelDir}\"}",
-                    "alsoDependsOn": ["localLlmModelDir"],
-                    "noTranslation": true,
-                    "label": "Active model",
-                    "help": "Saving restarts the instance and loads this model. Download models below.",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 6,
-                    "lg": 6,
-                    "xl": 6
-                },
-                "localLlmModelDir": {
-                    "type": "text",
-                    "label": "Model folder",
-                    "help": "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 6,
-                    "lg": 6,
-                    "xl": 6
-                },
-                "_localModels": {
-                    "newLine": true,
-                    "type": "custom",
-                    "i18n": true,
-                    "url": "custom/customComponents.js",
-                    "name": "ConfigCustomAssistant/Components/LocalModelsComponent",
-                    "bundlerType": "module",
-                    "guiApi": 2,
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 12,
-                    "lg": 12,
-                    "xl": 12
-                }
-            }
-        },
-        "_devices": {
-            "type": "panel",
-            "label": "Devices",
-            "items": {
                 "_deviceAcl": {
                     "type": "custom",
                     "i18n": true,
@@ -786,7 +617,239 @@
                     "sm": 12,
                     "md": 12,
                     "lg": 12,
+                    "xl": 12,
+                    "newLine": true
+                }
+            }
+        },
+        "_services": {
+            "type": "panel",
+            "label": "Services",
+            "items": {
+                "weatherInstance": {
+                    "newLine": true,
+                    "type": "selectSendTo",
+                    "command": "getWeatherInstances",
+                    "label": "Weather source",
+                    "help": "Pick an installed weather adapter to answer weather questions from (Open-Meteo, Weather Underground, OpenWeatherMap are fully understood; others are read best-effort). Start that adapter once so its data/locations appear here.",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 6,
+                    "lg": 6,
+                    "xl": 6
+                },
+                "calendarInstance": {
+                    "type": "instance",
+                    "adapter": "fullcalendar",
+                    "allowDeactivate": true,
+                    "label": "Calendar for commands for later",
+                    "help": "A fullcalendar instance: \"turn off the light in 2 hours\" or \"blinds to 50 % at 10 pm\" becomes an event in this calendar, and the AI can plan, list and cancel events. Without it such commands go to the AI.",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 6,
+                    "lg": 6,
+                    "xl": 6
+                },
+                "presence": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "Presence",
+                    "help": "Which states tell the assistant who is at home - one row per person. Any state works: the residents adapter, a phone ping like ping.0.phone-denis.alive, a router client state or your own flag. Kind: empty or person, guest, pet (a pet never makes the house occupied). Home value: leave empty for the usual forms (true, 1, \"home\", \"anwesend\"), or enter the exact value that means at home. Used to tell the LLM who is around, to hold back announcements to an empty house (notify with onlyWhenHome) and as a trigger source via presence.anyoneHome.",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
+                    "items": [
+                        { "type": "objectId", "attr": "id", "title": "State id", "width": "45%" },
+                        { "type": "text", "attr": "name", "title": "Name", "width": "25%" },
+                        {
+                            "type": "select",
+                            "attr": "kind",
+                            "title": "Kind (person/guest/pet)",
+                            "width": "15%",
+                            "options": [
+                                { "label": "Person", "value": "person" },
+                                { "label": "Guest", "value": "guest" },
+                                { "label": "Pet", "value": "pet" }
+                            ],
+                            "default": "person"
+                        },
+                        { "type": "text", "attr": "homeValue", "title": "Home value (empty = auto)", "width": "15%" }
+                    ]
+                },
+                "youtubePlayers": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "YouTube players",
+                    "help": "TVs and devices of the youtube-remote adapter the assistant may play on, e.g. \"play the channel Sailing OceanAir\". The first row is the default when no player is named; a request from a satellite in the room of a row goes to that row. Player: the youtube-remote instance - it finds its paired TV itself, also after the TV was paired again; with several TVs in one instance pick one of them. Power: optional state that switches the TV on (e.g. samsungtv.0.<tv>.control.power) - if it is off, the TV is switched on first and the video starts after the start delay. A power button (toggle) is never pressed, because it would switch a running TV off. Needs \"Allow writing states\".",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
+                    "items": [
+                        { "type": "text", "attr": "name", "title": "Name", "width": "20%" },
+                        {
+                            "type": "selectSendTo",
+                            "attr": "id",
+                            "title": "Player",
+                            "command": "getYouTubeInstances",
+                            "width": "30%"
+                        },
+                        { "type": "objectId", "attr": "power", "title": "TV power (optional)", "width": "30%" },
+                        { "type": "text", "attr": "room", "title": "Room", "width": "12%" },
+                        {
+                            "type": "number",
+                            "attr": "delay",
+                            "title": "Start delay (s)",
+                            "width": "8%",
+                            "min": 0,
+                            "max": 120,
+                            "default": 8
+                        }
+                    ]
+                },
+                "_timersHeader": {
+                    "newLine": true,
+                    "type": "header",
+                    "size": 3,
+                    "text": "Timers and alarms",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
                     "xl": 12
+                },
+                "timerAnnounce": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Announce when a timer expires",
+                    "help": "Speak an announcement on the satellite a countdown timer was set from (or on all satellites) when it runs out. Timers are always mirrored into the timers.* states for scripts and visualization.",
+                    "default": true,
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "alarmAnnounce": {
+                    "type": "checkbox",
+                    "label": "Announce when an alarm goes off",
+                    "help": "Speak an announcement when an alarm at a fixed clock time fires. Alarms are always mirrored into the alarms.* states for scripts and visualization.",
+                    "default": true,
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "ringSeconds": {
+                    "newLine": true,
+                    "type": "number",
+                    "label": "Ring duration (seconds)",
+                    "help": "A fired timer/alarm keeps ringing (looping the sound) for up to this long, or until you say 'stop'/'halt'/'aufhören'/'cancel' (or write the stopRinging state). 0 = play the sound once.",
+                    "default": 60,
+                    "min": 0,
+                    "max": 600,
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "_soundsHint": {
+                    "newLine": true,
+                    "type": "staticText",
+                    "text": "Two default sounds (timer.wav, alarm.wav) are preinstalled — pick one below or upload your own mp3/wav. The selected sound plays before the spoken announcement. Needs ffmpeg on the host and at least one satellite.",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                },
+                "timerSound": {
+                    "newLine": true,
+                    "type": "fileSelector",
+                    "objectID": "assistant.%INSTANCE%",
+                    "upload": "sounds",
+                    "pattern": "sounds/*",
+                    "fileTypes": "audio",
+                    "delete": true,
+                    "refresh": true,
+                    "maxSize": 5242880,
+                    "label": "Timer sound (mp3/wav, optional)",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 5,
+                    "lg": 5,
+                    "xl": 5
+                },
+                "_playTimerSound": {
+                    "type": "sendTo",
+                    "command": "playSound",
+                    "label": "Play",
+                    "variant": "outlined",
+                    "jsonData": "{\"name\":\"${data.timerSound}\"}",
+                    "disabled": "!data.timerSound",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 2,
+                    "lg": 2,
+                    "xl": 2
+                },
+                "alarmSound": {
+                    "newLine": true,
+                    "type": "fileSelector",
+                    "objectID": "assistant.%INSTANCE%",
+                    "upload": "sounds",
+                    "pattern": "sounds/*",
+                    "fileTypes": "audio",
+                    "delete": true,
+                    "refresh": true,
+                    "maxSize": 5242880,
+                    "label": "Alarm sound (mp3/wav, optional)",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 5,
+                    "lg": 5,
+                    "xl": 5
+                },
+                "_playAlarmSound": {
+                    "type": "sendTo",
+                    "command": "playSound",
+                    "label": "Play",
+                    "variant": "outlined",
+                    "jsonData": "{\"name\":\"${data.alarmSound}\"}",
+                    "disabled": "!data.alarmSound",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 2,
+                    "lg": 2,
+                    "xl": 2
+                },
+                "_notificationsHeader": {
+                    "newLine": true,
+                    "type": "header",
+                    "size": 3,
+                    "text": "System notifications",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                },
+                "notifyRephrase": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Reword system notifications",
+                    "help": "Spoken system notifications (notify.text / the ioBroker notification manager) are reworded by the LLM into one natural sentence first - their raw texts are written for a log viewer. Costs one small LLM call per notification; the original text is spoken if it fails. Urgent ones (notify.alert) are announced even when Do-Not-Disturb is on.",
+                    "default": true,
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
                 }
             }
         },
@@ -852,18 +915,7 @@
             "type": "panel",
             "label": "Voice",
             "items": {
-                "_voiceHeader": {
-                    "type": "header",
-                    "size": 2,
-                    "text": "Voice satellites",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 12,
-                    "lg": 12,
-                    "xl": 12
-                },
                 "voiceEnabled": {
-                    "newLine": true,
                     "type": "checkbox",
                     "label": "Enable voice (STT/TTS for satellites)",
                     "help": "Enables speech recognition/synthesis. ioBroker-native satellites reach it over the message bus — no port needed. Turn on the UDP server below only for ESP / Hannah satellites.",
@@ -873,172 +925,6 @@
                     "md": 6,
                     "lg": 6,
                     "xl": 6
-                },
-                "udpServerEnabled": {
-                    "newLine": true,
-                    "type": "checkbox",
-                    "label": "Run the UDP voice server (ESP / Hannah satellites)",
-                    "help": "Opens a UDP port for streaming microphone satellites (Hannah-compatible / ESP). Not needed for ioBroker-native satellites.",
-                    "default": false,
-                    "hidden": "!data.voiceEnabled",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 6,
-                    "lg": 6,
-                    "xl": 6
-                },
-                "bind": {
-                    "newLine": true,
-                    "type": "ip",
-                    "label": "Bind address",
-                    "help": "Interface the UDP voice server listens on. 0.0.0.0 = all interfaces; pick a specific host IP so satellites on the LAN can reach it.",
-                    "default": "0.0.0.0",
-                    "listenOnAllPorts": true,
-                    "hidden": "!data.voiceEnabled || !data.udpServerEnabled",
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 3,
-                    "lg": 3,
-                    "xl": 3
-                },
-                "port": {
-                    "type": "number",
-                    "label": "UDP port",
-                    "default": 7775,
-                    "min": 1,
-                    "max": 65535,
-                    "hidden": "!data.voiceEnabled || !data.udpServerEnabled",
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 3,
-                    "lg": 3,
-                    "xl": 3
-                },
-                "wyomingEnabled": {
-                    "newLine": true,
-                    "type": "checkbox",
-                    "label": "Also accept Wyoming clients (TCP)",
-                    "help": "Home Assistant Voice PE / wyoming-satellite / ESPHome voice devices can stream to this adapter over the Wyoming protocol.",
-                    "default": false,
-                    "hidden": "!data.voiceEnabled",
-                    "xs": 12,
-                    "sm": 8,
-                    "md": 5,
-                    "lg": 5,
-                    "xl": 5
-                },
-                "wyomingPort": {
-                    "type": "number",
-                    "label": "Wyoming TCP port",
-                    "default": 10700,
-                    "min": 1,
-                    "max": 65535,
-                    "hidden": "!data.voiceEnabled || !data.wyomingEnabled",
-                    "xs": 12,
-                    "sm": 4,
-                    "md": 3,
-                    "lg": 3,
-                    "xl": 3
-                },
-                "esphomeEnabled": {
-                    "newLine": true,
-                    "type": "checkbox",
-                    "label": "Also drive ESPHome voice satellites",
-                    "help": "ThirdReality Voice & Music Assistant, Home Assistant Voice PE, linux-voice-assistant. These devices listen on TCP 6053 and the adapter dials them, so no port is opened for the audio itself — only the media server below, which they fetch the spoken reply from.",
-                    "default": false,
-                    "hidden": "!data.voiceEnabled",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 6,
-                    "lg": 6,
-                    "xl": 6
-                },
-                "esphomeDevices": {
-                    "newLine": true,
-                    "type": "table",
-                    "label": "ESPHome satellites",
-                    "help": "One row per device. Port empty = 6053. The room is what the assistant treats the satellite as being in. Speech threshold: the lowest microphone level (RMS) that counts as speech, empty = 250 — lower it (e.g. to 100) if the device reacts to the wake word but does not hear the command; the debug log shows the levels (\"peak RMS\", \"speech/silence gate\"). Leave the password empty unless the device really has an API password set — table values are stored unencrypted.",
-                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 12,
-                    "lg": 12,
-                    "xl": 12,
-                    "items": [
-                        { "type": "text", "attr": "ip", "title": "Address (IP or host name)", "width": "25%" },
-                        {
-                            "type": "number",
-                            "attr": "port",
-                            "title": "Port",
-                            "width": "12%",
-                            "min": 1,
-                            "max": 65535,
-                            "default": 6053
-                        },
-                        { "type": "text", "attr": "room", "title": "Room", "width": "23%" },
-                        {
-                            "type": "number",
-                            "attr": "speechLevel",
-                            "title": "Speech threshold",
-                            "width": "15%",
-                            "min": 10,
-                            "max": 5000
-                        },
-                        { "type": "text", "attr": "password", "title": "API password (usually empty)", "width": "25%" }
-                    ]
-                },
-                "esphomeMediaPort": {
-                    "newLine": true,
-                    "type": "number",
-                    "label": "Media server port",
-                    "help": "ESPHome satellites do not get the reply over their API socket — they fetch it as a URL. This is the port that small HTTP server listens on.",
-                    "default": 8099,
-                    "min": 1,
-                    "max": 65535,
-                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 3,
-                    "lg": 3,
-                    "xl": 3
-                },
-                "esphomeMediaHost": {
-                    "type": "text",
-                    "label": "Media server address for the devices",
-                    "help": "Host the satellites should fetch the audio from. Empty = use the address of each device connection automatically; set it only if the devices reach this machine under a different address (NAT, Docker, VLAN).",
-                    "default": "",
-                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 4,
-                    "lg": 4,
-                    "xl": 4
-                },
-                "esphomeSilenceMs": {
-                    "type": "number",
-                    "label": "End of speech after (ms of silence)",
-                    "help": "These devices stream until the server stops them, so the adapter decides when you stopped talking. Raise it if replies cut you off, lower it if the assistant waits too long. After 2.5 seconds of speech half as much again is allowed, so a pause for thought does not end a longer request.",
-                    "default": 900,
-                    "min": 200,
-                    "max": 5000,
-                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 3,
-                    "lg": 3,
-                    "xl": 3
-                },
-                "esphomeSaveCaptures": {
-                    "type": "checkbox",
-                    "label": "Keep dropped recordings for diagnosis",
-                    "help": "Recordings that were dropped as silence or that speech recognition returned empty are stored as WAV plus a JSON with the levels, under Files → assistant.N/captures (the newest 50). They contain audio from the room: only enable this for troubleshooting.",
-                    "default": false,
-                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
-                    "xs": 12,
-                    "sm": 6,
-                    "md": 4,
-                    "lg": 4,
-                    "xl": 4
                 },
                 "voiceLanguage": {
                     "newLine": true,
@@ -1066,38 +952,6 @@
                     "md": 3,
                     "lg": 3,
                     "xl": 3
-                },
-                "announceTargets": {
-                    "newLine": true,
-                    "type": "table",
-                    "label": "Announcement targets (groups and people)",
-                    "help": "Give a set of satellites a name, so an announcement, a question or a trigger can address it: a group of rooms (\"Upstairs\") or the speakers that belong to one person (\"Denis\", so \"tell Denis dinner is ready\" reaches them). Members: satellite ids, room names or device names, separated by commas. Kind: empty or group, or person. A real satellite or room of the same name always wins, so a group can never make a speaker unreachable.",
-                    "hidden": "!data.voiceEnabled",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 12,
-                    "lg": 12,
-                    "xl": 12,
-                    "items": [
-                        { "type": "text", "attr": "name", "title": "Name", "width": "25%" },
-                        {
-                            "type": "text",
-                            "attr": "members",
-                            "title": "Satellites, rooms or devices (comma separated)",
-                            "width": "60%"
-                        },
-                        {
-                            "type": "select",
-                            "attr": "kind",
-                            "title": "Kind (group/person)",
-                            "width": "15%",
-                            "options": [
-                                { "label": "Group", "value": "group" },
-                                { "label": "Person", "value": "person" }
-                            ],
-                            "default": "group"
-                        }
-                    ]
                 },
                 "sttProvider": {
                     "newLine": true,
@@ -1640,46 +1494,56 @@
                     "lg": 5,
                     "xl": 5
                 },
-                "ffmpegPath": {
+                "_ffmpegPanel": {
+                    "type": "panel",
+                    "collapsable": true,
+                    "label": "ffmpeg",
                     "newLine": true,
-                    "type": "text",
-                    "label": "Path to ffmpeg",
-                    "help": "Empty = the downloaded ffmpeg, otherwise ffmpeg from the search path. Needed for timer/alarm sounds, Telegram voice messages and MP3/Opus replies. Example: /usr/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe",
-                    "default": "",
-                    "hidden": "!data.voiceEnabled",
                     "xs": 12,
-                    "sm": 8,
-                    "md": 5,
-                    "lg": 5,
-                    "xl": 5
-                },
-                "_testFfmpeg": {
-                    "type": "sendTo",
-                    "command": "testFfmpeg",
-                    "label": "Check ffmpeg",
-                    "variant": "outlined",
-                    "jsonData": "{\"path\":\"${data.ffmpegPath}\"}",
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
                     "hidden": "!data.voiceEnabled",
-                    "xs": 12,
-                    "sm": 4,
-                    "md": 3,
-                    "lg": 3,
-                    "xl": 3
-                },
-                "_downloadFfmpeg": {
-                    "type": "sendTo",
-                    "command": "downloadFfmpeg",
-                    "label": "Download ffmpeg",
-                    "title": "Downloads a static ffmpeg (ffmpeg-static, 20-30 MB) into the data directory of the instance. It is used when no path is entered.",
-                    "variant": "outlined",
-                    "showProcess": true,
-                    "jsonData": "{\"path\":\"${data.ffmpegPath}\"}",
-                    "hidden": "!data.voiceEnabled",
-                    "xs": 12,
-                    "sm": 4,
-                    "md": 3,
-                    "lg": 3,
-                    "xl": 3
+                    "items": {
+                        "ffmpegPath": {
+                            "type": "text",
+                            "label": "Path to ffmpeg",
+                            "help": "Empty = the downloaded ffmpeg, otherwise ffmpeg from the search path. Needed for timer/alarm sounds, Telegram voice messages and MP3/Opus replies. Example: /usr/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe",
+                            "default": "",
+                            "xs": 12,
+                            "sm": 8,
+                            "md": 5,
+                            "lg": 5,
+                            "xl": 5
+                        },
+                        "_testFfmpeg": {
+                            "type": "sendTo",
+                            "command": "testFfmpeg",
+                            "label": "Check ffmpeg",
+                            "variant": "outlined",
+                            "jsonData": "{\"path\":\"${data.ffmpegPath}\"}",
+                            "xs": 12,
+                            "sm": 4,
+                            "md": 3,
+                            "lg": 3,
+                            "xl": 3
+                        },
+                        "_downloadFfmpeg": {
+                            "type": "sendTo",
+                            "command": "downloadFfmpeg",
+                            "label": "Download ffmpeg",
+                            "title": "Downloads a static ffmpeg (ffmpeg-static, 20-30 MB) into the data directory of the instance. It is used when no path is entered.",
+                            "variant": "outlined",
+                            "showProcess": true,
+                            "jsonData": "{\"path\":\"${data.ffmpegPath}\"}",
+                            "xs": 12,
+                            "sm": 4,
+                            "md": 3,
+                            "lg": 3,
+                            "xl": 3
+                        }
+                    }
                 },
                 "_voiceTest": {
                     "newLine": true,
@@ -1698,6 +1562,268 @@
                 }
             }
         },
+        "_satellites": {
+            "type": "panel",
+            "label": "Satellites",
+            "items": {
+                "_voiceHeader": {
+                    "type": "header",
+                    "size": 2,
+                    "text": "Voice satellites",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                },
+                "_voiceOffInfo": {
+                    "newLine": true,
+                    "type": "staticText",
+                    "text": "Voice is off. Turn it on in the tab \"Voice\" to connect satellites.",
+                    "hidden": "!!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                },
+                "udpServerEnabled": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Run the UDP voice server (ESP / Hannah satellites)",
+                    "help": "Opens a UDP port for streaming microphone satellites (Hannah-compatible / ESP). Not needed for ioBroker-native satellites.",
+                    "default": false,
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 6,
+                    "lg": 6,
+                    "xl": 6
+                },
+                "bind": {
+                    "newLine": true,
+                    "type": "ip",
+                    "label": "Bind address",
+                    "help": "Interface the UDP voice server listens on. 0.0.0.0 = all interfaces; pick a specific host IP so satellites on the LAN can reach it.",
+                    "default": "0.0.0.0",
+                    "listenOnAllPorts": true,
+                    "hidden": "!data.voiceEnabled || !data.udpServerEnabled",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "port": {
+                    "type": "number",
+                    "label": "UDP port",
+                    "default": 7775,
+                    "min": 1,
+                    "max": 65535,
+                    "hidden": "!data.voiceEnabled || !data.udpServerEnabled",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "wyomingEnabled": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Also accept Wyoming clients (TCP)",
+                    "help": "Home Assistant Voice PE / wyoming-satellite / ESPHome voice devices can stream to this adapter over the Wyoming protocol.",
+                    "default": false,
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 8,
+                    "md": 5,
+                    "lg": 5,
+                    "xl": 5
+                },
+                "wyomingPort": {
+                    "type": "number",
+                    "label": "Wyoming TCP port",
+                    "default": 10700,
+                    "min": 1,
+                    "max": 65535,
+                    "hidden": "!data.voiceEnabled || !data.wyomingEnabled",
+                    "xs": 12,
+                    "sm": 4,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "esphomeEnabled": {
+                    "newLine": true,
+                    "type": "checkbox",
+                    "label": "Also drive ESPHome voice satellites",
+                    "help": "ThirdReality Voice & Music Assistant, Home Assistant Voice PE, linux-voice-assistant. These devices listen on TCP 6053 and the adapter dials them, so no port is opened for the audio itself — only the media server below, which they fetch the spoken reply from.",
+                    "default": false,
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 6,
+                    "lg": 6,
+                    "xl": 6
+                },
+                "esphomeDevices": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "ESPHome satellites",
+                    "help": "One row per device. Port empty = 6053. The room is what the assistant treats the satellite as being in. Speech threshold: the lowest microphone level (RMS) that counts as speech, empty = 250 — lower it (e.g. to 100) if the device reacts to the wake word but does not hear the command; the debug log shows the levels (\"peak RMS\", \"speech/silence gate\"). Leave the password empty unless the device really has an API password set — table values are stored unencrypted.",
+                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
+                    "items": [
+                        { "type": "text", "attr": "ip", "title": "Address (IP or host name)", "width": "25%" },
+                        {
+                            "type": "number",
+                            "attr": "port",
+                            "title": "Port",
+                            "width": "12%",
+                            "min": 1,
+                            "max": 65535,
+                            "default": 6053
+                        },
+                        { "type": "text", "attr": "room", "title": "Room", "width": "23%" },
+                        {
+                            "type": "number",
+                            "attr": "speechLevel",
+                            "title": "Speech threshold",
+                            "width": "15%",
+                            "min": 10,
+                            "max": 5000
+                        },
+                        { "type": "text", "attr": "password", "title": "API password (usually empty)", "width": "25%" }
+                    ]
+                },
+                "esphomeMediaPort": {
+                    "newLine": true,
+                    "type": "number",
+                    "label": "Media server port",
+                    "help": "ESPHome satellites do not get the reply over their API socket — they fetch it as a URL. This is the port that small HTTP server listens on.",
+                    "default": 8099,
+                    "min": 1,
+                    "max": 65535,
+                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "esphomeMediaHost": {
+                    "type": "text",
+                    "label": "Media server address for the devices",
+                    "help": "Host the satellites should fetch the audio from. Empty = use the address of each device connection automatically; set it only if the devices reach this machine under a different address (NAT, Docker, VLAN).",
+                    "default": "",
+                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "_esphomeDiagnosis": {
+                    "type": "panel",
+                    "collapsable": true,
+                    "label": "End of speech and diagnosis",
+                    "newLine": true,
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
+                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
+                    "items": {
+                        "esphomeSilenceMs": {
+                            "type": "number",
+                            "label": "End of speech after (ms of silence)",
+                            "help": "These devices stream until the server stops them, so the adapter decides when you stopped talking. Raise it if replies cut you off, lower it if the assistant waits too long. After 2.5 seconds of speech half as much again is allowed, so a pause for thought does not end a longer request.",
+                            "default": 900,
+                            "min": 200,
+                            "max": 5000,
+                            "xs": 12,
+                            "sm": 6,
+                            "md": 4,
+                            "lg": 4,
+                            "xl": 4
+                        },
+                        "esphomeSaveCaptures": {
+                            "type": "checkbox",
+                            "label": "Keep dropped recordings for diagnosis",
+                            "help": "Recordings that were dropped as silence or that speech recognition returned empty are stored as WAV plus a JSON with the levels, under Files → assistant.N/captures (the newest 50). They contain audio from the room: only enable this for troubleshooting.",
+                            "default": false,
+                            "xs": 12,
+                            "sm": 6,
+                            "md": 6,
+                            "lg": 6,
+                            "xl": 6
+                        }
+                    }
+                },
+                "announceTargets": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "Announcement targets (groups and people)",
+                    "help": "Give a set of satellites a name, so an announcement, a question or a trigger can address it: a group of rooms (\"Upstairs\") or the speakers that belong to one person (\"Denis\", so \"tell Denis dinner is ready\" reaches them). Members: satellite ids, room names or device names, separated by commas. Kind: empty or group, or person. A real satellite or room of the same name always wins, so a group can never make a speaker unreachable.",
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
+                    "items": [
+                        { "type": "text", "attr": "name", "title": "Name", "width": "25%" },
+                        {
+                            "type": "text",
+                            "attr": "members",
+                            "title": "Satellites, rooms or devices (comma separated)",
+                            "width": "60%"
+                        },
+                        {
+                            "type": "select",
+                            "attr": "kind",
+                            "title": "Kind (group/person)",
+                            "width": "15%",
+                            "options": [
+                                { "label": "Group", "value": "group" },
+                                { "label": "Person", "value": "person" }
+                            ],
+                            "default": "group"
+                        }
+                    ]
+                },
+                "_satellitesStatusHeader": {
+                    "newLine": true,
+                    "type": "header",
+                    "size": 3,
+                    "text": "Status",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                },
+                "_satellitesComponent": {
+                    "type": "custom",
+                    "i18n": true,
+                    "url": "custom/customComponents.js",
+                    "name": "ConfigCustomAssistant/Components/SatellitesComponent",
+                    "guiApi": 2,
+                    "bundlerType": "module",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
+                    "newLine": true
+                }
+            }
+        },
         "_chat": {
             "type": "panel",
             "label": "Chat",
@@ -1707,25 +1833,6 @@
                     "i18n": true,
                     "url": "custom/customComponents.js",
                     "name": "ConfigCustomAssistant/Components/ChatComponent",
-                    "guiApi": 2,
-                    "bundlerType": "module",
-                    "xs": 12,
-                    "sm": 12,
-                    "md": 12,
-                    "lg": 12,
-                    "xl": 12
-                }
-            }
-        },
-        "_satellites": {
-            "type": "panel",
-            "label": "Satellites",
-            "items": {
-                "_satellitesComponent": {
-                    "type": "custom",
-                    "i18n": true,
-                    "url": "custom/customComponents.js",
-                    "name": "ConfigCustomAssistant/Components/SatellitesComponent",
                     "guiApi": 2,
                     "bundlerType": "module",
                     "xs": 12,

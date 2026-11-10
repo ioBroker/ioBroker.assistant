@@ -207,5 +207,7 @@
     "custom_assistant_fast": "szybko",
     "custom_assistant_medium": "średnio",
     "custom_assistant_slow": "wolno",
-    "custom_assistant_llm_benchmark": "test w toku"
+    "custom_assistant_llm_benchmark": "test w toku",
+    "Model folder": "Folder modeli",
+    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Ścieżka bezwzględna, np. /mnt/ssd/llm. Puste = folder danych instancji. Modele pobrane już gdzie indziej nie są przenoszone."
 }

@@ -207,5 +207,7 @@
     "custom_assistant_fast": "быстро",
     "custom_assistant_medium": "средне",
     "custom_assistant_slow": "медленно",
-    "custom_assistant_llm_benchmark": "идёт тест"
+    "custom_assistant_llm_benchmark": "идёт тест",
+    "Model folder": "Папка моделей",
+    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Абсолютный путь, например /mnt/ssd/llm. Пусто = папка данных инстанции. Уже скачанные в другое место модели не переносятся."
 }

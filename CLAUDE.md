@@ -39,7 +39,11 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   (Nutzerwunsch). `src/lib/llmBenchmark.ts`: je 3 Zuhause-Fragen (→ HANDOFF) + 3 Fakten (Regex) pro Sprache, Sprache
   des Assistenten + en; läuft nur auf dem **geladenen** Modell (zwei Modelle = doppelter RAM), wartet, solange eine echte
   Frage läuft, zählt nicht in die Nutzungsstatistik. GUI `src-admin/src/LocalModelsComponent.tsx` (Reiter
-  `_localModels`, `hidden: !data.useLocalLlm`): Kopf (Ordner, Summe, freier Platz, Status), Tabelle mit „Verwenden“
+  `_localModels`, immer sichtbar, `useLocalLlm` oben, der Rest `hidden: !data.useLocalLlm`): **Ordnerwähler**
+  `localLlmModelDir` = jsonConfig `type:"diskSelector"`, `mode:"folder"` (json-config ≥ 10.1.19 / Admin 8.3.11; der Host
+  braucht `CONTROLLER_READ_DISK_DIR`/`readDiskDir`, js-controller ≥ 8.0.0-alpha.17 — alpha.15 meldet „kann seine
+  Festplatte nicht auflisten“); die Komponente zeigt bei Admin < 8.3.11 ein Textfeld als Ersatz (`socket.getVersion()`,
+  `DISK_SELECTOR_ADMIN`). Kopf (Ordner, Summe, freier Platz, Status), Tabelle mit „Verwenden“
   (schreibt `localLlmModel` ins Formular), Test, Statistik zurücksetzen, Löschen mit Bestätigung, Downloads mit
   Fortschritt/Abbruch, Vorlagen-Karten (Sprachwarnung, Platz), eigener Link, Testdetails-Dialog; pollt 1 s während
   Downloads/Test, sonst 10 s. **Echt geprüft** in der Cloud-Sandbox (x86, node-llama-cpp 3.22.3, nicht auf dem Pi):
@@ -869,7 +873,13 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   gefahrlos (telegram routet die Antwort selbst). → nur `assistantInstance=assistant.0` konfigurieren. Fallback-
   Skript-Rezept für Chat-Adapter OHNE native Integration (Matrix/WhatsApp/Discord …) in `docs/TODO.md`.
 - Admin-Config — `admin/jsonConfig.json` (`i18n: true`), Icon `admin/assistant.svg`,
-  Übersetzungen `admin/i18n/{en,de}.json`.
+  Übersetzungen `admin/i18n/{en,de}.json`. **Reiter nach Themen** (2026-11-10): `_main` KI (Anbieter, Gespräch,
+  aufklappbar „Advanced“ = maxTokens/systemPrompt) · `_commands` Befehle (NLU, Ton, Synonyme, Routinen) ·
+  `_localModels` · `_devices` (Rechte + `_deviceAcl`) · `_services` Dienste (Wetter/Kalender, Präsenz, YouTube,
+  Timer/Wecker, Systemmeldungen) · `_triggers` · `_voice` (inkl. aufklappbar ffmpeg, `_voiceTest`) · `_satellites`
+  (UDP/Wyoming/ESPHome, aufklappbar Sprachende/Diagnose, Durchsage-Ziele, Status) · `_chat` zuletzt. json-config kann
+  **keine verschachtelten Tabs** (`tabs` in einem Panel zeigt nur die Beschriftung) — Unterteilung nur per `header`
+  oder `panel` mit `collapsable: true` (Zustand in localStorage).
 - `io-package.json` `instanceObjects`: `info.connection`, `text.request`, `text.response`.
 
 **Config-Felder aktuell:** `provider` (openai|anthropic|custom), `credentialType` (manual|manager),

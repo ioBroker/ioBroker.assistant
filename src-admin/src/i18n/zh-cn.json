@@ -207,5 +207,7 @@
     "custom_assistant_fast": "快",
     "custom_assistant_medium": "中等",
     "custom_assistant_slow": "慢",
-    "custom_assistant_llm_benchmark": "测试中"
+    "custom_assistant_llm_benchmark": "测试中",
+    "Model folder": "模型文件夹",
+    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "绝对路径，例如 /mnt/ssd/llm。为空 = 实例的数据文件夹。已下载到其他位置的模型不会被移动。"
 }

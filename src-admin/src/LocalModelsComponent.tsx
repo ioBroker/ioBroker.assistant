@@ -140,6 +140,25 @@ interface LocalModelsState extends ConfigGenericState {
     progress: number;
     confirmDelete: string;
     details: ModelInfo | null;
+    /** Admin without the control `diskSelector` (it shows only the label): edit the folder here instead. */
+    folderField: boolean;
+}
+
+/** First admin version whose json-config has `diskSelector` (8.3.11 = json-config 10.1.19). */
+const DISK_SELECTOR_ADMIN = [8, 3, 11];
+
+function versionBelow(version: string, min: number[]): boolean {
+    const m = /^(\d+)\.(\d+)\.(\d+)/.exec(version || '');
+    if (!m) {
+        return false;
+    }
+    for (let i = 0; i < 3; i++) {
+        const part = Number(m[i + 1]);
+        if (part !== min[i]) {
+            return part < min[i];
+        }
+    }
+    return false;
 }
 
 function formatBytes(n: number): string {
@@ -199,6 +218,7 @@ export default class LocalModelsComponent extends ConfigGeneric<ConfigGenericPro
             progress: 0,
             confirmDelete: '',
             details: null,
+            folderField: false,
         };
     }
 
@@ -233,6 +253,38 @@ export default class LocalModelsComponent extends ConfigGeneric<ConfigGenericPro
         await socket.subscribeState(this.statusId, this.onStatus);
         await socket.subscribeState(this.progressId, this.onProgress);
         void this.refresh();
+        void this.checkAdmin();
+    }
+
+    /** An admin older than 8.3.11 does not know `diskSelector` → offer the folder as a text field here. */
+    private async checkAdmin(): Promise<void> {
+        try {
+            const info = await this.props.oContext.socket.getVersion();
+            if (!this.unmounted && info?.serverName === 'admin' && versionBelow(info.version, DISK_SELECTOR_ADMIN)) {
+                this.setState({ folderField: true });
+            }
+        } catch {
+            /* unknown version: keep the control of the form */
+        }
+    }
+
+    private renderFolderField(): React.JSX.Element | null {
+        if (!this.state.folderField) {
+            return null;
+        }
+        return (
+            <TextField
+                variant="standard"
+                fullWidth
+                sx={{ mb: 2 }}
+                label={t('Model folder')}
+                helperText={t(
+                    'Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.',
+                )}
+                value={this.form.localLlmModelDir || ''}
+                onChange={e => void this.onChange('localLlmModelDir', e.target.value)}
+            />
+        );
     }
 
     componentWillUnmount(): void {
@@ -819,14 +871,25 @@ export default class LocalModelsComponent extends ConfigGeneric<ConfigGenericPro
 
     renderItem(): React.JSX.Element {
         if (!this.state.alive) {
-            return <Alert severity="info">{t('Start the instance to manage the local models.')}</Alert>;
+            return (
+                <Box sx={{ width: '100%' }}>
+                    {this.renderFolderField()}
+                    <Alert severity="info">{t('Start the instance to manage the local models.')}</Alert>
+                </Box>
+            );
         }
         const list = this.state.list;
         if (!list) {
-            return this.state.error ? <Alert severity="error">{this.state.error}</Alert> : <LinearProgress />;
+            return (
+                <Box sx={{ width: '100%' }}>
+                    {this.renderFolderField()}
+                    {this.state.error ? <Alert severity="error">{this.state.error}</Alert> : <LinearProgress />}
+                </Box>
+            );
         }
         return (
             <Box sx={{ width: '100%' }}>
+                {this.renderFolderField()}
                 {this.state.error ? (
                     <Alert
                         severity="error"

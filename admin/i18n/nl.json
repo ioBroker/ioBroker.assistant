@@ -248,5 +248,16 @@
   "Active model": "Actief model",
   "Saving restarts the instance and loads this model. Download models below.": "Opslaan herstart de instantie en laadt dit model. Download modellen hieronder.",
   "Model folder": "Modelmap",
-  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Absoluut pad, bijv. /mnt/ssd/llm. Leeg = gegevensmap van de instantie. Elders gedownloade modellen worden niet verplaatst."
+  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Absoluut pad, bijv. /mnt/ssd/llm. Leeg = gegevensmap van de instantie. Elders gedownloade modellen worden niet verplaatst.",
+  "AI": "AI",
+  "Commands": "Opdrachten",
+  "Services": "Diensten",
+  "Conversation": "Gesprek",
+  "Advanced": "Geavanceerd",
+  "Timers and alarms": "Timers en wekkers",
+  "System notifications": "Systeemmeldingen",
+  "End of speech and diagnosis": "Einde van spraak en diagnose",
+  "Voice is off. Turn it on in the tab \"Voice\" to connect satellites.": "Spraak staat uit. Zet het aan op het tabblad ‘Stem’ om satellieten te verbinden.",
+  "Status": "Status",
+  "ffmpeg": "ffmpeg"
 }

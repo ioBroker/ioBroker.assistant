@@ -248,5 +248,16 @@
   "Active model": "当前模型",
   "Saving restarts the instance and loads this model. Download models below.": "保存后实例将重新启动并加载此模型。请在下方下载模型。",
   "Model folder": "模型文件夹",
-  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "绝对路径，例如 /mnt/ssd/llm。为空 = 实例的数据文件夹。已下载到其他位置的模型不会被移动。"
+  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "绝对路径，例如 /mnt/ssd/llm。为空 = 实例的数据文件夹。已下载到其他位置的模型不会被移动。",
+  "AI": "人工智能",
+  "Commands": "命令",
+  "Services": "服务",
+  "Conversation": "对话",
+  "Advanced": "高级",
+  "Timers and alarms": "计时器和闹钟",
+  "System notifications": "系统通知",
+  "End of speech and diagnosis": "语音结束检测与诊断",
+  "Voice is off. Turn it on in the tab \"Voice\" to connect satellites.": "语音已关闭。请在“嗓音”选项卡中开启，以连接卫星。",
+  "Status": "状态",
+  "ffmpeg": "ffmpeg"
 }

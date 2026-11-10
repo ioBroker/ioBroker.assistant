@@ -207,5 +207,7 @@
     "custom_assistant_fast": "rápido",
     "custom_assistant_medium": "media",
     "custom_assistant_slow": "lento",
-    "custom_assistant_llm_benchmark": "probando"
+    "custom_assistant_llm_benchmark": "probando",
+    "Model folder": "Carpeta de modelos",
+    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Ruta absoluta, p. ej. /mnt/ssd/llm. Vacío = carpeta de datos de la instancia. Los modelos ya descargados en otro sitio no se mueven."
 }

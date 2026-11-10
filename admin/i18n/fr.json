@@ -248,5 +248,16 @@
   "Active model": "Modèle actif",
   "Saving restarts the instance and loads this model. Download models below.": "L'enregistrement redémarre l'instance et charge ce modèle. Téléchargez des modèles ci-dessous.",
   "Model folder": "Dossier des modèles",
-  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Chemin absolu, p. ex. /mnt/ssd/llm. Vide = dossier de données de l'instance. Les modèles déjà téléchargés ailleurs ne sont pas déplacés."
+  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Chemin absolu, p. ex. /mnt/ssd/llm. Vide = dossier de données de l'instance. Les modèles déjà téléchargés ailleurs ne sont pas déplacés.",
+  "AI": "IA",
+  "Commands": "Commandes",
+  "Services": "Services",
+  "Conversation": "Conversation",
+  "Advanced": "Avancé",
+  "Timers and alarms": "Minuteurs et alarmes",
+  "System notifications": "Notifications système",
+  "End of speech and diagnosis": "Fin de la parole et diagnostic",
+  "Voice is off. Turn it on in the tab \"Voice\" to connect satellites.": "La voix est désactivée. Activez-la dans l’onglet « Voix » pour connecter des satellites.",
+  "Status": "État",
+  "ffmpeg": "ffmpeg"
 }

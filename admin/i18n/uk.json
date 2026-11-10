@@ -248,5 +248,16 @@
   "Active model": "Активна модель",
   "Saving restarts the instance and loads this model. Download models below.": "Під час збереження інстанція перезапуститься й завантажить цю модель. Завантажити моделі можна нижче.",
   "Model folder": "Папка моделей",
-  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Абсолютний шлях, наприклад /mnt/ssd/llm. Порожньо = папка даних інстанції. Уже завантажені в інше місце моделі не переносяться."
+  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Абсолютний шлях, наприклад /mnt/ssd/llm. Порожньо = папка даних інстанції. Уже завантажені в інше місце моделі не переносяться.",
+  "AI": "ШІ",
+  "Commands": "Команди",
+  "Services": "Сервіси",
+  "Conversation": "Розмова",
+  "Advanced": "Додатково",
+  "Timers and alarms": "Таймери та будильники",
+  "System notifications": "Системні сповіщення",
+  "End of speech and diagnosis": "Кінець мовлення та діагностика",
+  "Voice is off. Turn it on in the tab \"Voice\" to connect satellites.": "Голос вимкнено. Увімкніть його на вкладці «Голос», щоб підключити супутники.",
+  "Status": "Стан",
+  "ffmpeg": "ffmpeg"
 }

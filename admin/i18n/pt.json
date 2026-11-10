@@ -248,5 +248,16 @@
   "Active model": "Modelo ativo",
   "Saving restarts the instance and loads this model. Download models below.": "Salvar reinicia a instância e carrega este modelo. Baixe modelos abaixo.",
   "Model folder": "Pasta dos modelos",
-  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Caminho absoluto, p. ex. /mnt/ssd/llm. Vazio = pasta de dados da instância. Modelos já baixados em outro lugar não são movidos."
+  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Caminho absoluto, p. ex. /mnt/ssd/llm. Vazio = pasta de dados da instância. Modelos já baixados em outro lugar não são movidos.",
+  "AI": "IA",
+  "Commands": "Comandos",
+  "Services": "Serviços",
+  "Conversation": "Conversa",
+  "Advanced": "Avançado",
+  "Timers and alarms": "Temporizadores e alarmes",
+  "System notifications": "Notificações do sistema",
+  "End of speech and diagnosis": "Fim da fala e diagnóstico",
+  "Voice is off. Turn it on in the tab \"Voice\" to connect satellites.": "A voz está desativada. Ative-a no separador «Voz» para ligar satélites.",
+  "Status": "Estado",
+  "ffmpeg": "ffmpeg"
 }

@@ -248,5 +248,16 @@
   "Active model": "Active model",
   "Saving restarts the instance and loads this model. Download models below.": "Saving restarts the instance and loads this model. Download models below.",
   "Model folder": "Model folder",
-  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved."
+  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.",
+  "AI": "AI",
+  "Commands": "Commands",
+  "Services": "Services",
+  "Conversation": "Conversation",
+  "Advanced": "Advanced",
+  "Timers and alarms": "Timers and alarms",
+  "System notifications": "System notifications",
+  "End of speech and diagnosis": "End of speech and diagnosis",
+  "Voice is off. Turn it on in the tab \"Voice\" to connect satellites.": "Voice is off. Turn it on in the tab \"Voice\" to connect satellites.",
+  "Status": "Status",
+  "ffmpeg": "ffmpeg"
 }

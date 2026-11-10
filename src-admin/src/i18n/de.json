@@ -207,5 +207,7 @@
     "custom_assistant_fast": "schnell",
     "custom_assistant_medium": "mittel",
     "custom_assistant_slow": "langsam",
-    "custom_assistant_llm_benchmark": "Test läuft"
+    "custom_assistant_llm_benchmark": "Test läuft",
+    "Model folder": "Modellordner",
+    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Absoluter Pfad, z. B. /mnt/ssd/llm. Leer = Datenordner der Instanz. Schon anderswo geladene Modelle werden nicht verschoben."
 }
