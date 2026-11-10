@@ -132,7 +132,7 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
 ## 4. Installation & Grundeinrichtung (Text)
 
 1. Installiere den **ioBroker.assistant**-Adapter aus dem ioBroker-Admin und lege eine Instanz an.
-2. Öffne die Instanz-Einstellungen → Reiter **Settings**:
+2. Öffne die Instanz-Einstellungen → Reiter **KI**:
    - **Anbieter** — *Systemweite KI-Einstellungen (Admin)*, wenn Anbieter und Schlüssel in den
      Systemeinstellungen von Admin (Reiter „KI“) eingerichtet sind; dann ist sonst nichts nötig. Andernfalls
      wähle deinen LLM-Anbieter.
@@ -142,10 +142,39 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
    - **API-Schlüssel** (oder die Zugangsdaten auswählen).
    - **Verbindung testen** klicken. Bei Erfolg ein **Modell** wählen (das Dropdown lädt die Modelle des
      Anbieters; du kannst auch eine Modell-ID eintippen).
-3. *(Optional)* **Einfache Befehle lokal beantworten** (Offline-Regel-Engine) und/oder **Lokales LLM
-   verwenden** aktivieren (**Lokales Modell installieren** klicken — lädt Engine + Modell; Fortschritt
-   beobachten).
-4. **Zugriff / Berechtigungen** setzen (siehe §6) und speichern.
+3. *(Optional)* **Einfache Befehle lokal beantworten** (Offline-Regel-Engine, Reiter **Befehle**) und/oder
+   **Lokales LLM verwenden** aktivieren (Reiter **Lokale Modelle**: **Lokales Modell installieren** klicken —
+   lädt Engine + Modell; Fortschritt beobachten; siehe unten).
+4. **Zugriff / Berechtigungen** im Reiter **Geräte** setzen (siehe §6) und speichern.
+
+### Lokale Modelle
+
+Der Reiter **Lokale Modelle** hält mehrere GGUF-Modelle nebeneinander:
+
+- **Aktives Modell**: das Modell, das die Instanz lädt. Speichern startet die Instanz neu; gewechselt wird
+  nicht zur Laufzeit. **Verwenden** in der Tabelle trägt ein Modell in dieses Feld ein.
+- **Modellordner**: absoluter Pfad, z. B. auf einer SSD; leer = `<Datenordner der Instanz>/models`. Der
+  Knopf neben dem Feld blättert durch die Ordner auf dem Host, auf dem die Instanz läuft (Admin 8.3.11 und
+  ein js-controller, der dafür Ordner auflisten kann; sonst den Pfad eintippen). Die Tabelle zeigt den
+  Ordner aus dem Formular sofort, noch vor dem Speichern. Modelle im alten Ordner werden nicht verschoben.
+- **Tabelle**: Größe jedes Modells, Summe und freier Platz; Statistik pro Modell (gefragt / beantwortet /
+  abgegeben, Ausfälle = Zeitüberschreitungen und Fehler, Tokens pro Sekunde, Zeit bis zum ersten Token,
+  Antwortzeit, Ladezeit, zuletzt genutzt). Die Statistik übersteht Neustarts und lässt sich pro Modell
+  zurücksetzen. Das aktive und das geladene Modell lassen sich nicht löschen.
+- **Modell hinzufügen**: Vorlagen mit Beschreibung, Parametern, Größe und den Sprachen laut Modellkarte
+  (Warnung, wenn die Sprache des Assistenten fehlt), oder ein eigener Link auf eine `.gguf`-Datei
+  (Hugging-Face-Seitenlinks und `hf:org/repo/datei.gguf` gehen). Vorher wird der freie Platz geprüft; eine
+  Datei, die kein GGUF-Modell ist (z. B. eine HTML-Fehlerseite), wird verworfen. Downloads laufen parallel
+  und lassen sich abbrechen.
+- **Test** (Knopf beim geladenen Modell): stellt dem Modell Testfragen in der Sprache des Assistenten und
+  auf Englisch. Fragen zum Zuhause muss es abgeben (das lokale Modell hat keine Werkzeuge), allgemeine mit
+  dem richtigen Fakt beantworten. Das Ergebnis (richtig, verpasste und unnötige Abgaben, falsche Antworten,
+  Tokens/s) wird beim Modell gespeichert; ein Klick zeigt jede Frage und Antwort. Das sind die echten Werte
+  dieses Hosts: veröffentlichte Benchmarks sagen über diese Rolle nichts.
+
+Die Tempo-Klasse einer Vorlage ist eine Schätzung aus der Größe, keine Messung. Sehr kleine Modelle
+„bestätigen“ gern einen Schaltbefehl, den sie gar nicht ausführen können („Okay, das Licht ist an“). Der
+Test zeigt das als verpasste Abgabe.
 
 ### Als Text nutzen
 
@@ -155,7 +184,7 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
 - Oder den **Test-Chat**-Reiter in den Adapter-Einstellungen nutzen (funktioniert bei laufender Instanz).
 - Oder über **Telegram**: im telegram-Adapter die Assistant-Instanz auswählen. Textnachrichten und
   **Sprachnachrichten** gehen dann an den Assistenten; die Antwort kommt in denselben Chat, bei einer
-  Sprachnachricht mit dem erkannten Text davor (🎤 …). Für Sprachnachrichten muss im Reiter Voice die
+  Sprachnachricht mit dem erkannten Text davor (🎤 …). Für Sprachnachrichten muss im Reiter Sprache die
   Sprache aktiviert und eine Spracherkennung eingerichtet sein, und auf dem ioBroker-Host braucht es
   **ffmpeg** (Telegram schickt OGG/Opus). Dafür braucht es telegram ab der Version mit
   Sprachnachrichten-Weiterleitung.
@@ -213,7 +242,7 @@ Andere Wetter-Adapter lassen sich ebenfalls wählen — sie werden dann bestmög
 ### Wer ist zuhause
 
 Sag dem Assistenten, welche States angeben, ob jemand zuhause ist — eine Zeile pro Person in der Tabelle
-**Anwesenheit** im Tab Einstellungen. Jeder State geht, denn Anwesenheit steckt in jedem Haus woanders:
+**Anwesenheit** im Tab Dienste. Jeder State geht, denn Anwesenheit steckt in jedem Haus woanders:
 
 | Spalte | Bedeutung |
 |---|---|
@@ -285,7 +314,7 @@ und `youtube_player`. Benötigt **Schreiben von States erlauben**.
 ### Routinen (eine Phrase, die mehreres tut)
 
 Eine Routine ist ein Makro, das du aufgeschrieben hast: eine Phrase, eine Liste von Aktionen, eine
-Antwort. Einzutragen in der Tabelle **Routinen** im Tab Einstellungen:
+Antwort. Einzutragen in der Tabelle **Routinen** im Tab Befehle:
 
 | Spalte | Beispiel |
 |---|---|
@@ -311,7 +340,7 @@ inklusive `{"say":…,"room":…}`, um irgendwo etwas zu sagen.
 
 *„Licht im Wohnzimmer in 2 Stunden aus“*, *„Rollo morgen um 7:30 auf 50 Prozent“*, *„выключи свет через
 полчаса“* — ein Befehl mit Verzögerung oder Uhrzeit wird **ein Termin im Kalender** des Adapters
-**fullcalendar** statt sofort ausgeführt. Dafür im Tab Einstellungen bei **Kalender für spätere Befehle**
+**fullcalendar** statt sofort ausgeführt. Dafür im Tab Dienste bei **Kalender für spätere Befehle**
 die fullcalendar-Instanz wählen. Der Termin steht dann im Kalender (dort sichtbar, änderbar, löschbar),
 überlebt Neustarts, und die Antwort sagt, wann es passiert: *„Okay, Licht (Wohnzimmer) wird um 22:30
 ausgeschaltet.“*
@@ -358,7 +387,7 @@ nicht auflösen kann, fällt ans LLM durch — du verlierst also nichts, wenn si
 #### Synonym-Wörterbuch
 
 Die Engine matcht deine Geräte- und Raumnamen, was ein Problem ist, wenn niemand sie so ausspricht. Die
-Tabelle **Synonym-Wörterbuch** im Tab Einstellungen schreibt das Gesagte vor dem Matching um: `TV` →
+Tabelle **Synonym-Wörterbuch** im Tab Befehle schreibt das Gesagte vor dem Matching um: `TV` →
 `Fernseher`, `Couchlicht` → `Licht Wohnzimmer`. Bleibt die Sprachspalte leer, gilt die Zeile für alle
 Sprachen. Sie wirkt für Sprache **und** Text, Chat und Telegram profitieren also von denselben Einträgen.
 
@@ -402,7 +431,7 @@ ElevenLabs Scribe und Voxtral für die Erkennung; ElevenLabs, Gemini TTS, Micros
 Kokoro und weitere für die Stimme. Die Modellfelder listen, was OpenRouter anbietet (IDs als
 `hersteller/modell`), das Stimmenfeld die Stimmen des gewählten Modells. Vorgaben:
 `openai/whisper-large-v3-turbo` und `elevenlabs/eleven-flash-v2.5`. Ohne OpenRouter-Schlüssel im
-Reiter Voice wird der Schlüssel des KI-Anbieters verwendet, wenn das OpenRouter ist (auch aus den
+Reiter Sprache wird der Schlüssel des KI-Anbieters verwendet, wenn das OpenRouter ist (auch aus den
 systemweiten KI-Einstellungen). Anders als OpenAI ignoriert OpenRouter Vokabel-Hinweise, Geräte- und
 Raumnamen gehen also nicht an die Erkennung. MiniMax-Stimmen gibt es nur als mp3; dafür braucht es
 **ffmpeg** auf dem ioBroker-Host.
@@ -426,7 +455,7 @@ Host laufen und braucht hier weder Adresse noch Schlüssel. Raum- und Gerätenam
 Instanz nicht, übernimmt die Reserve-Engine. Auf einem Raspberry Pi 5 braucht ein gesprochener Befehl 0,5–1 s, und
 er erkennt deutlich besser als Vosk.
 
-**Stimme und Erkennung testen** (unten im Reiter Voice, mit den Einstellungen so, wie sie im Formular
+**Stimme und Erkennung testen** (unten im Reiter Sprache, mit den Einstellungen so, wie sie im Formular
 stehen — auch ungespeichert): *Sprachausgabe* spricht einen Testsatz im Browser und zeigt Abtastrate,
 Länge und Synthesezeit (eine zu hohe oder zu tiefe Stimme heißt: falsche Abtastrate). *Spracherkennung*
 nimmt das Browser-Mikrofon auf (nur über https oder auf localhost), nimmt eine Audiodatei (wav, mp3, …;
@@ -460,7 +489,7 @@ warten auf **TCP 6053**. Der Adapter wählt also *sie* an, so wie Home Assistant
 Auf dem Gerät muss nichts installiert oder geflasht werden, und ESPHome-Werkzeuge braucht es auch nicht —
 „ESPHome-Native-API" ist bloß der Name des Protokolls, das die Werks-Firmware ohnehin spricht.
 
-1. Im Reiter **Voice** die Option **Auch ESPHome-Sprachsatelliten ansteuern** aktivieren.
+1. Im Reiter **Satelliten** die Option **Auch ESPHome-Sprachsatelliten ansteuern** aktivieren.
 2. Pro Gerät eine Zeile anlegen: **Adresse** (z. B. `192.168.1.195`), **Port** (leer = 6053), **Raum** und
    ein **Passwort** nur dann, wenn am Gerät wirklich eins gesetzt ist.
 3. Speichern. Der Adapter verbindet sich, loggt Gerätename und aktives Wake-Word, und der Satellit
@@ -648,7 +677,7 @@ Bevor die URL ans Gerät geht, schaut der Assistent sie einmal an:
   Formate, die ihre Pipelines melden, MP3, FLAC und WAV alle nur mit Format `NONE` oder auf älterer Firmware, die
   gar keine meldet.
 - Alles andere — AAC, HLS (`.m3u8`), Ogg Vorbis, ein Format, das das Gerät nicht meldet — läuft **durch ffmpeg**:
-  der Media-Server der ESPHome-Satelliten (der Port im Voice-Tab) liefert es dem Gerät als FLAC (oder im Codec,
+  der Media-Server der ESPHome-Satelliten (der Port im Reiter Satelliten) liefert es dem Gerät als FLAC (oder im Codec,
   den das Gerät meldet), mit der Rate und den Kanälen, die es verlangt, sonst 48 kHz mono. Ein ffmpeg pro
   spielendem Satelliten; es endet, wenn das Gerät nicht mehr zuhört oder eine andere URL geschrieben wird.
 - `transcode` = true schickt jede URL durch ffmpeg, auch eine, die das Gerät selbst dekodieren könnte (für einen
@@ -665,8 +694,8 @@ wenn es sie gibt, und kommt ohne sie aus:
 
 | Entity | Art | Was der Assistent tut |
 |---|---|---|
-| `confirm_answer` | Event, Typen `yes` / `no` | Solange eine Antwort auf eine Rückfrage wartet (pi-agent: „Testlampe auf true setzen? Sag ja oder nein.“), ist ein Tippen diese Antwort: das offene Mikrofon geht zu, „Ja“/„Nein“ in der Sprache des Voice-Tabs geht als Antwort weiter, und die Antwort darauf wird auf diesem Satelliten samt Text angesagt. Die Frage bleibt offen, bis die nächste Anfrage des Satelliten beantwortet ist, höchstens 30 s nach der Antwort; das Folge-Mikrofon zählt als Antwort darauf, auch wenn die Firmware dabei das letzte Wake-Word mitschickt. Ein Stopp, den die Firmware direkt nach dem Tippen schickt (vor oder nach dem Event), verwirft die Antwort nicht. Ein Tippen ohne offene Frage wird ignoriert. |
-| `display_language` | Select | Wird bei jeder Verbindung einmal auf die Sprache des Voice-Tabs gesetzt. Optionen dürfen Namen („Deutsch“, „English“, „Русский“), englische Namen („German“) oder Codes („de“, „de-DE“) sein. |
+| `confirm_answer` | Event, Typen `yes` / `no` | Solange eine Antwort auf eine Rückfrage wartet (pi-agent: „Testlampe auf true setzen? Sag ja oder nein.“), ist ein Tippen diese Antwort: das offene Mikrofon geht zu, „Ja“/„Nein“ in der Sprache aus dem Reiter Sprache geht als Antwort weiter, und die Antwort darauf wird auf diesem Satelliten samt Text angesagt. Die Frage bleibt offen, bis die nächste Anfrage des Satelliten beantwortet ist, höchstens 30 s nach der Antwort; das Folge-Mikrofon zählt als Antwort darauf, auch wenn die Firmware dabei das letzte Wake-Word mitschickt. Ein Stopp, den die Firmware direkt nach dem Tippen schickt (vor oder nach dem Event), verwirft die Antwort nicht. Ein Tippen ohne offene Frage wird ignoriert. |
+| `display_language` | Select | Wird bei jeder Verbindung einmal auf die Sprache aus dem Reiter Sprache gesetzt. Optionen dürfen Namen („Deutsch“, „English“, „Русский“), englische Namen („German“) oder Codes („de“, „de-DE“) sein. |
 | jedes `text` | Text | Normale schreibbare States — z. B. Beschriftungen und Einheiten der Bildschirmseiten, aus ioBroker gesetzt statt beim Bauen der Firmware. |
 
 #### Timer auf dem Gerät
@@ -743,7 +772,7 @@ abgespielt.
 
 Vier Einstellungen, die sich meist selbst bezahlen:
 
-- **Speech-to-Text-/Text-to-Speech-Reserve** (Tab Voice) — eine zweite Engine, die einspringt, wenn die
+- **Speech-to-Text-/Text-to-Speech-Reserve** (Tab Sprache) — eine zweite Engine, die einspringt, wenn die
   erste ausfällt: Störung, abgelaufener Key, leeres Guthaben. Mit `ai-parakeet` oder `Vosk (lokal)` und `Piper (lokal)`
   hinter einem Cloud-Anbieter hört und antwortet das Haus auch ohne Internet weiter. Die Reserve für die
   Spracherkennung springt auch ein, wenn die erste Engine für etwas, das der Satellit für Sprache hielt,
@@ -755,18 +784,18 @@ Vier Einstellungen, die sich meist selbst bezahlen:
   der Instanz, mit Text, Sprache, Anbieter und Stimme als Schlüssel — nach einem Stimmenwechsel wird also
   nichts Altes mehr ausgespielt. Lange Einmal-Antworten werden nicht gecacht, und der Cache räumt sich
   selbst auf 64 MB zurück.
-- **Schaltbefehle mit einem Ton bestätigen** (Tab Einstellungen) — ein erfolgreicher Schaltbefehl
+- **Schaltbefehle mit einem Ton bestätigen** (Tab Befehle) — ein erfolgreicher Schaltbefehl
   antwortet mit einem kurzen Ton statt mit einem Satz. Sofort, während Sprechen einen
   Text-to-Speech-Aufruf kostet. Das gilt auch, wenn die KI (oder pi-agent) den Befehl ausgeführt hat: Sie
   soll einen solchen Befehl nur mit dem Marker `[[DONE]]` beantworten, daraus wird der Ton; im Chat und in
   Telegram wird daraus „Erledigt.“. Fragen und Fehler sind davon unberührt, Timer und Wecker
   ebenfalls.
-- **Geräte-Rückmeldung prüfen** (Tab Einstellungen) — nach einem Schaltbefehl bis zu 2 Sekunden auf die
+- **Geräte-Rückmeldung prüfen** (Tab Geräte) — nach einem Schaltbefehl bis zu 2 Sekunden auf die
   Bestätigung des Geräts warten (`ack:true`) und "hat nicht reagiert" sagen, wenn sie ausbleibt. Bei
   Geräten, die nie bestätigen (MQTT, Skripte, `0_userdata`), **ausgeschaltet** lassen: sonst sieht jeder
   Befehl fehlgeschlagen aus.
 
-Außerdem: eine Antwort über **Längste gesprochene Antwort** (Tab Voice, Standard 400 Zeichen ≈ 25–30
+Außerdem: eine Antwort über **Längste gesprochene Antwort** (Tab Sprache, Standard 400 Zeichen ≈ 25–30
 Sekunden) wird **am letzten passenden Satzende abgeschnitten** (ein vorgelesener Absatz ist eine Minute, die
 niemand unterbrechen kann; 0 = keine Grenze, beim Kürzen warnt das Log). Bei einer gesprochenen Anfrage
 bekommt das KI-Modell die Grenze mitgeteilt (in Sätzen, weil Modelle keine Zeichen zählen können) und die
@@ -777,7 +806,7 @@ und Betonung —, während die übrigen Engines den Text ohne Markup bekommen, s
 
 ### Gruppen und Personen als Ziel
 
-Gib einer Gruppe von Satelliten in der Tabelle **Durchsage-Ziele** im Tab Voice einen Namen — dann kann
+Gib einer Gruppe von Satelliten in der Tabelle **Durchsage-Ziele** im Tab Satelliten einen Namen — dann kann
 alles, was ansagt, sie ansprechen: eine Gruppe von Räumen oder die Lautsprecher einer Person.
 
 | Spalte                            | Beispiel                                      |
@@ -834,7 +863,7 @@ läuft **auch bei „Nicht stören"** — z. B. `!Wasserleck im Keller`.
 ioBrokers Benachrichtigungen sind für eine Log-Ansicht geschrieben: `system.host.pi: admin.0: …`,
 Versionsnummern, `M/D/YYYY`-Zeitstempel. Wörtlich vorgelesen sind sie unzumutbar; der Assistent entfernt
 deshalb die Herkunfts-Präfixe und lässt das LLM **einen gesprochenen Satz** daraus machen, im Ton der
-Severity (**Systemmeldungen umformulieren** im Tab Einstellungen, standardmäßig an; ein kleiner LLM-Aufruf
+Severity (**Systemmeldungen umformulieren** im Tab Dienste, standardmäßig an; ein kleiner LLM-Aufruf
 pro Meldung, bei einem Fehler wird der Originaltext gesprochen).
 
 | Severity            | Ton                                         | Nicht stören                                      |
@@ -1060,7 +1089,7 @@ laufen Timer zusätzlich auf dem LED-Ring des Geräts mit.
 ### Töne und Klingeln
 
 Ein Timer oder Wecker kann einen Ton abspielen, bevor er spricht. Zwei sind vorinstalliert (`timer.wav`,
-`alarm.wav`); eigene mp3/wav-Dateien lädst du im Tab Einstellungen hoch, sie landen in
+`alarm.wav`); eigene mp3/wav-Dateien lädst du im Tab Dienste hoch, sie landen in
 `assistant.0/sounds/`. Unter **Timer-Ton** / **Wecker-Ton** wählst du pro Zweck einen aus — leer lassen
 heißt: nur sprechen.
 
@@ -1113,13 +1142,13 @@ sie also auf Dinge, die zählen, statt auf ein Tagebuch.
   `default`. Auf dem Gerät prüfen: `arecord -D plughw:2,0 -f S16_LE -c1 -r16000 -d3 /tmp/t.wav && aplay /tmp/t.wav`.
 - **Wake-Word wird nicht erkannt** — deutlich sprechen, näher rangehen, Schwelle senken; den Score im Test-
   Panel beobachten. Eigene Modelle brauchen ggf. mehr Trainings-Samples.
-- **„No API key configured"** — den LLM-Schlüssel im Settings-Reiter eintragen (oder Zugangsdaten wählen).
+- **„No API key configured"** — den LLM-Schlüssel im Reiter KI eintragen (oder Zugangsdaten wählen).
 - **Satellit erreicht den Assistant nicht** — die Assistant-Instanz muss **laufen**; für ioBroker-nativen
   Transport ist sonst nichts nötig, für UDP Port/Host prüfen.
-- **Voice-Tab-Optionen ausgeblendet** — zuerst **Sprache aktivieren (STT/TTS)**.
+- **Optionen in den Reitern Sprache und Satelliten ausgeblendet** — zuerst im Reiter Sprache **Sprache aktivieren (STT/TTS)**.
 - **„ffmpeg failed: … ENOENT"** (Töne, Telegram-Sprachnachrichten, MP3/Opus-Antworten) — ffmpeg fehlt oder
-  liegt nicht im Suchpfad des ioBroker-Prozesses. Installieren (`sudo apt install ffmpeg`), im Reiter Voice
-  **ffmpeg herunterladen** klicken oder unter **Pfad zu ffmpeg** den vollen Pfad eintragen; **ffmpeg prüfen**
+  liegt nicht im Suchpfad des ioBroker-Prozesses. Installieren (`sudo apt install ffmpeg`), im Reiter Sprache
+  (Abschnitt **ffmpeg**) **ffmpeg herunterladen** klicken oder unter **Pfad zu ffmpeg** den vollen Pfad eintragen; **ffmpeg prüfen**
   zeigt, ob er stimmt. **ffmpeg herunterladen** holt einen statischen Build von
   [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) (20–30 MB, GPL, gegen eine feste SHA-256 geprüft)
   ins Datenverzeichnis der Instanz — für Linux (x64, arm64, arm, ia32), Windows x64 und macOS. Er wird genutzt,
@@ -1187,5 +1216,7 @@ Alles, was der Assistent kann, ist aus einem Skript erreichbar. Die Antwort komm
 | `sendNotification`                                   | die Payload des Benachrichtigungsmanagers                                | `{ sent }` — nicht für den Handbetrieb gedacht                               |
 | `voice` / `registerSatellite`                        | Audio / Registrierung                                                    | das Satelliten-Protokoll, siehe §7                                           |
 
-`getModels`, `getVoices`, `getSttModels`, `getWeatherInstances`, `installLocalLlm` und
+`getModels`, `getVoices`, `getSttModels`, `getWeatherInstances`, `installLocalLlm`, die Befehle des
+Reiters „Lokale Modelle“ (`listLocalModels`, `getLocalModels`, `addLocalModel`, `cancelLocalModelDownload`,
+`deleteLocalModel`, `resetLocalModelStats`, `benchmarkLocalModel`) und
 `testApiConnection` gibt es für den Einstellungsdialog und sind anderswo kaum nützlich.

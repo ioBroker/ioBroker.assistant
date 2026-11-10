@@ -128,7 +128,7 @@ satellites stay simple. See §7.
 ## 4. Installation & basic setup (text)
 
 1. Install the **ioBroker.assistant** adapter from the ioBroker admin and create an instance.
-2. Open the instance settings → **Settings** tab:
+2. Open the instance settings → **AI** tab:
    - **Provider** — *System-wide AI settings (admin)* if provider and key are set up in the system settings
      of admin (tab "AI"); nothing else is needed then. Otherwise pick your LLM provider.
    - **Credential mode** — *Store key in adapter* (simplest) or *Central credential store* (js-controller
@@ -136,9 +136,38 @@ satellites stay simple. See §7.
    - **API key** (or select the credential).
    - Click **Test connection**. On success, pick a **Model** (the dropdown loads the provider's models;
      you can also type a model id).
-3. *(Optional)* enable **Answer simple commands locally** (offline rule engine) and/or **Use a local LLM**
-   (click **Install local model** — downloads engine + model; watch the progress).
-4. Set **Access / permissions** (see §6) and save.
+3. *(Optional)* enable **Answer simple commands locally** (offline rule engine, tab **Commands**) and/or
+   **Use a local LLM** (tab **Local models**: click **Install local model** — downloads engine + model; watch
+   the progress; see below).
+4. Set **Access / permissions** on the tab **Devices** (see §6) and save.
+
+### Local models
+
+The tab **Local models** keeps several GGUF models side by side:
+
+- **Active model**: the model the instance loads. Saving restarts the instance; switching is not done at
+  runtime. **Use** in the table puts a model into this field.
+- **Model folder**: absolute path, e.g. on an SSD; empty = `<data folder of the instance>/models`. The
+  button next to the field browses the folders on the disk of the host the instance runs on (Admin 8.3.11
+  and a js-controller that can list folders for it; otherwise type the path). The table lists the folder
+  from the form at once, before saving. Models in an old folder are not moved.
+- **Table**: size of each model, sum and free disk space; statistics per model (asked / answered /
+  handed over, failures = timeouts and errors, tokens per second, time to the first token, answer time,
+  load time, last use). Statistics survive restarts and can be reset per model. The active and the loaded
+  model cannot be deleted.
+- **Add a model**: presets with description, parameters, size and the languages the authors name (a
+  warning if the assistant's language is not among them), or an own link to a `.gguf` file (Hugging Face
+  page links and `hf:org/repo/file.gguf` work). The free space is checked first; a file that is not a
+  GGUF model (e.g. an HTML error page) is thrown away. Downloads can run in parallel and be cancelled.
+- **Benchmark** (button at the loaded model): asks the model test questions in the assistant's language
+  and in English. Questions about the home must be handed over (the local model has no tools),
+  general questions answered with the right fact. The result (correct, missed and needless hand-overs,
+  wrong answers, tokens/s) is stored with the model; click it for every question and answer. These
+  are the real numbers of this host: published benchmarks say nothing about this role.
+
+The speed class of a preset is an estimate from its size, not a measurement. Very small models tend to
+"confirm" a switch command they cannot carry out ("Okay, the light is on"). The benchmark shows that as a
+missed hand-over.
 
 ### Using it as text
 
@@ -204,7 +233,7 @@ Other weather adapters can be selected too — they are then read best-effort as
 ### Who is at home
 
 Tell the assistant which states say whether somebody is at home — one row per person in the **Presence**
-table on the Settings tab. Any state works, because presence sits in a different place in every house:
+table on the Services tab. Any state works, because presence sits in a different place in every house:
 
 | Column | Meaning |
 |---|---|
@@ -243,7 +272,7 @@ per person), **`presence.lastArrival`** / **`presence.lastDeparture`** (who it w
 
 With the [youtube-remote](https://github.com/ioBroker/ioBroker.youtube-remote) adapter the assistant plays
 YouTube on your TV: *"play the channel Sailing OceanAir"*, *"spiele das Video … im Schlafzimmer ab"*,
-*"pause YouTube"*, *"what is playing on the TV?"*. Fill the **YouTube players** table on the Settings tab:
+*"pause YouTube"*, *"what is playing on the TV?"*. Fill the **YouTube players** table on the Services tab:
 
 | Column | Example |
 |---|---|
@@ -274,7 +303,7 @@ else (pause, skip, volume, status, "the other one") goes through the LLM tools `
 ### Routines (a phrase that does several things)
 
 A routine is a macro you wrote down: a phrase, a list of actions, one reply. Fill the **Routines** table
-on the Settings tab:
+on the Commands tab:
 
 | Column | Example |
 |---|---|
@@ -299,7 +328,7 @@ is really a trigger whose condition is a phrase — including `{"say":…,"room"
 *"Turn off the light in the living room in 2 hours"*, *"Rollo morgen um 7:30 auf 50 Prozent"*, *"выключи свет
 через полчаса"* — a command with a delay or a clock time becomes **an event in the calendar** of the
 **fullcalendar** adapter instead of running now. Pick the fullcalendar instance under **Calendar for commands
-for later** on the Settings tab. The event is then in the calendar (visible, editable, deletable there),
+for later** on the Services tab. The event is then in the calendar (visible, editable, deletable there),
 survives restarts, and the answer says when it happens: *"Okay, Licht (Wohnzimmer) will be turned off at
 22:30."*
 
@@ -345,7 +374,7 @@ through to the LLM, so you lose nothing by it being wrong.
 #### Synonym dictionary
 
 The engine matches your device and room names, which is a problem when nobody says them that way. The
-**Synonym dictionary** table on the Settings tab rewrites what was said before matching: `TV` →
+**Synonym dictionary** table on the Commands tab rewrites what was said before matching: `TV` →
 `Fernseher`, `couch light` → `Licht Wohnzimmer`. Leave the language column empty to apply a row to every
 language. It applies to voice **and** text, so the chat and Telegram benefit from the same entries.
 
@@ -443,7 +472,7 @@ way round from every other transport: they do not connect to a server, they **ar
 Nothing has to be installed or flashed on the device and no ESPHome tooling is involved — "ESPHome
 native API" is simply the protocol the stock firmware already speaks.
 
-1. Enable **Also drive ESPHome voice satellites** on the Voice tab.
+1. Enable **Also drive ESPHome voice satellites** on the Satellites tab.
 2. Add one row per device: **address** (e.g. `192.168.1.195`), **port** (empty = 6053), **room**, and a
    **password** only if the device really has an API password set.
 3. Save. The adapter connects, logs the device name and its active wake word, and the satellite shows up
@@ -627,7 +656,7 @@ Before the URL goes to the device the assistant looks at it once:
   the device says in its media player's formats: since ESPHome 2026.10 a firmware decodes only the formats its
   pipelines announce, all of MP3, FLAC and WAV with format `NONE` or on older firmware that announces none.
 - Anything else — AAC, HLS (`.m3u8`), Ogg Vorbis, a format the device does not list — runs **through ffmpeg**:
-  the media server of the ESPHome satellites (the port on the Voice tab) serves it to the device as FLAC (or the
+  the media server of the ESPHome satellites (the port on the Satellites tab) serves it to the device as FLAC (or the
   codec the device lists), at the rate and channels it asks for, 48 kHz mono otherwise. One ffmpeg per playing
   satellite; it ends when the device stops listening or another URL is written.
 - `transcode` = true sends every URL through ffmpeg, also one the device could decode itself (for a station whose
@@ -729,12 +758,12 @@ Four settings that mostly pay for themselves:
   audio that is identical. Short texts (up to 200 characters) are therefore kept under the instance's data
   directory, keyed by text, language, provider and voice — change the voice and nothing stale is served.
   Long one-off answers are not cached, and the cache prunes itself back to 64 MB.
-- **Confirm switch commands with a beep** (Settings tab) — a successful switch command answers with a
+- **Confirm switch commands with a beep** (Commands tab) — a successful switch command answers with a
   short tone instead of a sentence. Instant, where speaking costs a text-to-speech call. This also works
   when the AI (or pi-agent) carried out the command: it is told to answer such a command with the marker
   `[[DONE]]` alone, which becomes the tone; in the chat and in Telegram it becomes "Done.". Questions
   and errors are unaffected, as are timers and alarms.
-- **Verify device feedback** (Settings tab) — after a switch command, wait up to 2 seconds for the device
+- **Verify device feedback** (Devices tab) — after a switch command, wait up to 2 seconds for the device
   to acknowledge the value (`ack:true`) and say "did not respond" if it never does. Leave this **off** for
   devices that never acknowledge (MQTT, scripts, `0_userdata`): every command would look failed.
 
@@ -748,7 +777,7 @@ the other engines get the text without the markup instead of reading the tags ou
 
 ### Groups and people as targets
 
-Give a set of satellites a name in the **Announcement targets** table on the Voice tab, and anything that
+Give a set of satellites a name in the **Announcement targets** table on the Satellites tab, and anything that
 announces can address it: a group of rooms, or the speakers that belong to one person.
 
 | Column | Example |
@@ -805,7 +834,7 @@ announcement plays **even when Do-Not-Disturb is on** — e.g. `!Water leak in t
 ioBroker's notifications are written for a log viewer: `system.host.pi: admin.0: …`, version numbers,
 `M/D/YYYY` timestamps. Read out verbatim they are unlistenable, so the assistant strips the origin
 prefixes and has the LLM turn the text into **one spoken sentence** whose tone follows the severity
-(**Reword system notifications** on the Settings tab, on by default; one small LLM call per notification,
+(**Reword system notifications** on the Services tab, on by default; one small LLM call per notification,
 and the original text is spoken if it fails).
 
 | Severity | Tone | Do-Not-Disturb |
@@ -1027,7 +1056,7 @@ on the device's own LED ring.
 ### Sounds and ringing
 
 A timer or alarm can play a sound before it speaks. Two are preinstalled (`timer.wav`, `alarm.wav`); your
-own mp3/wav files are uploaded on the Settings tab and land in `assistant.0/sounds/`. Pick one per purpose
+own mp3/wav files are uploaded on the Services tab and land in `assistant.0/sounds/`. Pick one per purpose
 under **Timer sound** / **Alarm sound**, or leave it empty to only speak.
 
 **Ring duration (seconds)** decides how long it keeps going: with a value above 0 the sound repeats until
@@ -1078,13 +1107,13 @@ things that matter, not a diary.
   Verify on the device: `arecord -D plughw:2,0 -f S16_LE -c1 -r16000 -d3 /tmp/t.wav && aplay /tmp/t.wav`.
 - **Wake word not detected** — say it clearly, move closer, lower the threshold; watch the Test panel's
   score. Custom models may need retraining with more samples.
-- **"No API key configured"** — enter the LLM key (or select the credential) on the Settings tab.
+- **"No API key configured"** — enter the LLM key (or select the credential) on the AI tab.
 - **Satellite can't reach the assistant** — make sure the assistant instance is **running**; for
   ioBroker-native transport nothing else is needed, for UDP check the port/host.
-- **Voice tab options hidden** — enable **Enable voice (STT/TTS)** first.
+- **Options on the Voice and Satellites tabs hidden** — enable **Enable voice (STT/TTS)** on the Voice tab first.
 - **"ffmpeg failed: … ENOENT"** (sounds, Telegram voice messages, MP3/Opus replies) — ffmpeg is missing or not
   in the search path of the ioBroker process. Install it (`sudo apt install ffmpeg`), click **Download ffmpeg** on
-  the Voice tab or enter the full path under **Path to ffmpeg**; **Check ffmpeg** shows whether it is right.
+  the Voice tab (section **ffmpeg**) or enter the full path under **Path to ffmpeg**; **Check ffmpeg** shows whether it is right.
   **Download ffmpeg** fetches a static build of [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static)
   (20–30 MB, GPL, checked against a fixed SHA-256) into the data directory of the instance — for Linux
   (x64, arm64, arm, ia32), Windows x64 and macOS. It is used while **Path to ffmpeg** is empty, also instead of an
@@ -1151,5 +1180,7 @@ Everything the assistant can do is reachable from a script. The reply always arr
 | `sendNotification` | the notification-manager payload | `{ sent }` — not meant to be called by hand |
 | `voice` / `registerSatellite` | audio / registration | the satellite protocol, see §7 |
 
-`getModels`, `getVoices`, `getSttModels`, `getWeatherInstances`, `installLocalLlm` and
-`testApiConnection` exist for the settings dialog and are of little use elsewhere.
+`getModels`, `getVoices`, `getSttModels`, `getWeatherInstances`, `installLocalLlm`,
+`testApiConnection` and the commands of the "Local models" tab (`listLocalModels`, `getLocalModels`,
+`addLocalModel`, `cancelLocalModelDownload`, `deleteLocalModel`, `resetLocalModelStats`,
+`benchmarkLocalModel`) exist for the settings dialog and are of little use elsewhere.

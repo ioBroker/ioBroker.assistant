@@ -142,8 +142,12 @@ export interface AdapterConfig {
     ringSeconds: number;
     /** Tier-1a: use an on-demand-installed local LLM (node-llama-cpp) between NLU and the cloud LLM. */
     useLocalLlm: boolean;
-    /** Direct URL of the GGUF model for the local LLM ('' → built-in default, Qwen2.5-1.5B). */
+    /** Legacy: direct URL of the GGUF model; used only while `localLlmModel` is empty ('' → Qwen2.5-1.5B). */
     localLlmModelUrl: string;
+    /** File name of the active local model in `localLlmModelDir` (chosen in the "Local models" tab). */
+    localLlmModel: string;
+    /** Absolute directory of the local models; '' = `<instance data dir>/models`. */
+    localLlmModelDir: string;
     /** Ask the local LLM before the cloud LLM; otherwise it only answers when the cloud fails. */
     localLlmFirst: boolean;
     /** Seconds after which a local LLM answer is aborted and the next tier takes over. */
