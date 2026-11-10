@@ -51,6 +51,7 @@ test('systemAiSelection: providers of admin, the address only for the custom ser
         model: 'x/y',
         credentialId: 'c',
         baseUrl: '',
+        reasoningEffort: '',
     });
     assert.equal(
         systemAiSelection({ provider: 'custom', baseUrl: 'http://ollama:11434/v1' }).baseUrl,
@@ -61,10 +62,24 @@ test('systemAiSelection: providers of admin, the address only for the custom ser
     }
 });
 
+test('systemAiSelection: the reasoning effort, an unknown one as the default', () => {
+    for (const effort of ['none', 'minimal', 'low', 'medium', 'high']) {
+        assert.equal(systemAiSelection({ provider: 'openai', reasoningEffort: effort }).reasoningEffort, effort);
+    }
+    assert.equal(systemAiSelection({ provider: 'openai', reasoningEffort: 'extreme' }).reasoningEffort, '');
+    assert.equal(systemAiSelection({ provider: 'openai', reasoningEffort: 3 }).reasoningEffort, '');
+    assert.equal(systemAiSelection({ provider: 'openai' }).reasoningEffort, '');
+});
+
 test('systemAiFingerprint: only what the assistant uses counts', () => {
     const base = { provider: 'openai', model: 'gpt', credentialId: 'c' };
     assert.equal(systemAiFingerprint({ ...base, hideFab: true }), systemAiFingerprint({ ...base, hideFab: false }));
     assert.notEqual(systemAiFingerprint(base), systemAiFingerprint({ ...base, model: 'other' }));
+    assert.notEqual(
+        systemAiFingerprint({ ...base, reasoningEffort: 'medium' }),
+        systemAiFingerprint({ ...base, reasoningEffort: 'none' }),
+        'a new reasoning effort restarts the instance',
+    );
 });
 
 test('usesSystemAi: provider "system", or a provider that needs a key without one', () => {
@@ -80,7 +95,12 @@ test('usesSystemAi: provider "system", or a provider that needs a key without on
 
 test('resolveLlm: provider "system" takes provider, model, key and address of system.ai', async () => {
     const adapter = fakeAdapter({
-        'system.ai': systemAi({ provider: 'openrouter', model: 'anthropic/claude-sonnet-5', credentialId: CREDENTIAL }),
+        'system.ai': systemAi({
+            provider: 'openrouter',
+            model: 'anthropic/claude-sonnet-5',
+            credentialId: CREDENTIAL,
+            reasoningEffort: 'low',
+        }),
         [CREDENTIAL]: credential('sk-or'),
     });
     assert.deepEqual(await resolveLlm(adapter, { provider: 'system', maxTokens: 300 }), {
@@ -88,6 +108,7 @@ test('resolveLlm: provider "system" takes provider, model, key and address of sy
         apiKey: 'sk-or',
         model: 'anthropic/claude-sonnet-5',
         baseUrl: 'https://openrouter.ai/api/v1',
+        reasoningEffort: 'low',
         system: true,
     });
 });
@@ -116,6 +137,7 @@ test('resolveLlm: an instance without a key of its own takes system.ai; one with
         apiKey: 'sk-ant',
         model: 'claude-sonnet-4-6',
         baseUrl: '',
+        reasoningEffort: '',
         system: false,
     });
 });

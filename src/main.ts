@@ -706,6 +706,7 @@ class Assistant extends Adapter {
                     apiKey: this.llm.apiKey,
                     model: this.llm.model,
                     baseUrl: this.llm.baseUrl,
+                    reasoningEffort: this.llm.reasoningEffort,
                     systemPrompt: cfg.systemPrompt || '',
                     maxTokens: cfg.maxTokens || 1024,
                     tools: tools.map(t => this.journalTool(t)),

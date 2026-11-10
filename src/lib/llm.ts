@@ -37,6 +37,33 @@ export const OPENROUTER_HEADERS = { 'HTTP-Referer': 'https://www.iobroker.net', 
 /** Lowest `max_completion_tokens` sent to OpenAI (see {@link LlmAgent.openAiLimit}). */
 const MIN_OPENAI_COMPLETION_TOKENS = 1024;
 
+/** Reasoning effort of OpenAI reasoning models (`system.ai`); '' = the model's default. */
+export type ReasoningEffort = '' | 'none' | 'minimal' | 'low' | 'medium' | 'high';
+
+/**
+ * `provider:model` of the reasoning models that take function tools on Chat Completions only with
+ * `reasoning_effort: 'none'` — learned from their 400, so the next question does not fail first.
+ */
+const needEffortNone = new Set<string>();
+/** `provider:model` of the models that take function tools only on the Responses API (not even with 'none'). */
+const needResponsesApi = new Set<string>();
+/** `provider:model` of the models that refuse the configured reasoning effort (no reasoning model, 'none' unknown …). */
+const rejectsEffort = new Set<string>();
+
+/** What {@link LlmAgent.chatWithFallback} gives back when the question has to go over the Responses API. */
+const USE_RESPONSES_API = Symbol('use the Responses API');
+
+/** An HTTP 400 of the API, if `pattern` is given one whose message or parameter matches it. */
+function isBadRequest(e: unknown, pattern?: RegExp): boolean {
+    const err = e as { status?: number; message?: string; param?: string } | null;
+    return err?.status === 400 && (!pattern || pattern.test(`${err.param || ''} ${err.message || ''}`));
+}
+
+/** "Function tools with reasoning_effort are not supported for … in /v1/chat/completions." */
+function rejectsToolsWithEffort(e: unknown): boolean {
+    return isBadRequest(e, /reasoning_effort/i) && isBadRequest(e, /function tools/i);
+}
+
 /** Resolve the effective SDK, base URL and default model for a provider (custom uses `configBaseUrl`). */
 export function resolveProvider(
     provider: string | undefined,
@@ -64,6 +91,8 @@ export interface LlmAgentOptions {
     apiKey: string;
     model: string;
     baseUrl?: string;
+    /** Only sent to OpenAI and the custom server; '' = the model's default */
+    reasoningEffort?: ReasoningEffort;
     systemPrompt?: string;
     maxTokens?: number;
     tools: Tool[];
@@ -122,6 +151,7 @@ export class LlmAgent {
     /** Configured provider (gemini, deepseek, custom … — {@link provider} is only the SDK). */
     private readonly providerName: string;
     private readonly baseUrl: string;
+    private readonly reasoningEffort: ReasoningEffort;
     private readonly trace?: TraceFn;
 
     private readonly openai?: OpenAI;
@@ -131,6 +161,7 @@ export class LlmAgent {
         this.provider = opts.provider === 'anthropic' ? 'anthropic' : 'openai';
         this.providerName = opts.provider || this.provider;
         this.baseUrl = opts.baseUrl || '';
+        this.reasoningEffort = opts.reasoningEffort || '';
         this.trace = opts.trace;
         this.configuredModel = (opts.model || '').trim();
         this.systemPrompt = opts.systemPrompt || '';
@@ -215,6 +246,7 @@ export class LlmAgent {
                 baseUrl: this.baseUrl || undefined,
                 maxTokens: this.maxTokens,
                 maxRounds: this.maxRounds,
+                reasoningEffort: this.reasoningEffort || undefined,
                 system: sys,
                 tools: this.tools.map(t => t.name),
                 images: images.length ? images.map(i => i.mimeType) : undefined,
@@ -223,7 +255,9 @@ export class LlmAgent {
         const answer =
             this.provider === 'anthropic'
                 ? await this.askAnthropic(question, sys, history, images)
-                : await this.askOpenAI(question, sys, history, images);
+                : needResponsesApi.has(this.modelKey)
+                  ? await this.askOpenAIResponses(question, sys, history, images)
+                  : await this.askOpenAI(question, sys, history, images);
         this.log.debug(`llm answer (${Date.now() - started} ms): ${answer}`);
         return answer;
     }
@@ -257,6 +291,36 @@ export class LlmAgent {
             return { max_completion_tokens: Math.max(tokens, MIN_OPENAI_COMPLETION_TOKENS) };
         }
         return { max_tokens: tokens };
+    }
+
+    /** Key of {@link needEffortNone}, {@link needResponsesApi} and {@link rejectsEffort}. */
+    private get modelKey(): string {
+        return `${this.providerName}:${this.model}`;
+    }
+
+    /** Only OpenAI and the custom server (often a proxy to OpenAI) get a reasoning effort. */
+    private get sendsReasoning(): boolean {
+        return this.providerName === 'openai' || this.providerName === 'custom';
+    }
+
+    /** `reasoning_effort` of a Chat Completions request with tools: 'none' if the model wants it for tools. */
+    private openAiReasoning(): { reasoning_effort?: ReasoningEffort } {
+        if (!this.sendsReasoning) {
+            return {};
+        }
+        if (needEffortNone.has(this.modelKey)) {
+            return { reasoning_effort: 'none' };
+        }
+        if (!this.reasoningEffort || rejectsEffort.has(this.modelKey)) {
+            return {};
+        }
+        return { reasoning_effort: this.reasoningEffort };
+    }
+
+    /** A fallback of the request, in the log and as its own step of the trace. */
+    private traceRetry(title: string, e: unknown): void {
+        this.log.info(`${title}: ${(e as Error).message}`);
+        this.trace?.({ stage: 'cloud', level: 'warn', title, data: { error: errorInfo(e) } });
     }
 
     /**
@@ -500,10 +564,16 @@ export class LlmAgent {
                 messages,
                 tools: tools.length ? tools : undefined,
                 ...this.openAiLimit(this.maxTokens),
+                ...this.openAiReasoning(),
             };
             this.dump(`llm → openai round ${round}`, request);
             const sent = messages.slice(shown);
-            const { resp, ms } = await this.timedRound(round, sent, () => client.chat.completions.create(request));
+            const { resp, ms } = await this.timedRound(round, sent, () =>
+                this.chatWithFallback(client, request, round === 0),
+            );
+            if (resp === USE_RESPONSES_API) {
+                return this.askOpenAIResponses(question, systemPrompt, history, images);
+            }
             const msg = resp.choices[0].message;
             this.dump(`llm ← openai round ${round}`, { message: msg, usage: resp.usage });
             messages.push(msg);
@@ -540,6 +610,155 @@ export class LlmAgent {
             }
         }
         return this.tooManyRounds();
+    }
+
+    /**
+     * One Chat Completions request. OpenAI reasoning models refuse function tools unless `reasoning_effort` is
+     * 'none' ("Function tools with reasoning_effort are not supported …"): retried with 'none', and if the model
+     * does not take that either, {@link USE_RESPONSES_API} says to ask over the Responses API instead — only in
+     * the first round (`mayFallback`), so no tool runs twice. A model that refuses the effort itself (no
+     * reasoning model) is asked again without it. Each model is remembered, so the next question goes the right
+     * way at once.
+     */
+    private async chatWithFallback(client: OpenAI, request: any, mayFallback: boolean): Promise<any> {
+        try {
+            return await client.chat.completions.create(request);
+        } catch (e) {
+            if (!this.sendsReasoning || !isBadRequest(e, /reasoning_effort/i)) {
+                throw e;
+            }
+            if (!rejectsToolsWithEffort(e)) {
+                if (!request.reasoning_effort) {
+                    throw e;
+                }
+                rejectsEffort.add(this.modelKey);
+                this.traceRetry(
+                    `${this.model} does not take reasoning_effort "${request.reasoning_effort}" — retrying without`,
+                    e,
+                );
+                delete request.reasoning_effort;
+                return this.chatWithFallback(client, request, mayFallback);
+            }
+            let error = e;
+            if (request.reasoning_effort !== 'none') {
+                needEffortNone.add(this.modelKey);
+                this.traceRetry(`${this.model} refuses function tools with reasoning — retrying with "none"`, e);
+                request.reasoning_effort = 'none';
+                try {
+                    return await client.chat.completions.create(request);
+                } catch (e2) {
+                    if (!isBadRequest(e2)) {
+                        throw e2;
+                    }
+                    error = e2;
+                }
+            }
+            if (!mayFallback) {
+                throw error;
+            }
+            needEffortNone.delete(this.modelKey);
+            needResponsesApi.add(this.modelKey);
+            this.traceRetry(`${this.model} takes function tools only over the Responses API — switching`, error);
+            return USE_RESPONSES_API;
+        }
+    }
+
+    // ── OpenAI (Responses API + function tools, for reasoning models) ──────────
+    private async askOpenAIResponses(
+        question: string,
+        systemPrompt: string,
+        history: { role: 'user' | 'assistant'; content: string }[] = [],
+        images: ImageInput[] = [],
+    ): Promise<string> {
+        const client = this.openai as OpenAI;
+        // strict would demand schemas with every property required and no additional ones
+        const tools = this.tools.map(t => ({
+            type: 'function' as const,
+            name: t.name,
+            description: t.description,
+            parameters: t.parameters,
+            strict: false,
+        }));
+
+        const input: any[] = [
+            ...history.map(t => ({ role: t.role, content: t.content })),
+            { role: 'user', content: openAiResponsesUserContent(question, images) },
+        ];
+        // Items the trace has shown already (the system prompt is part of the opening step).
+        let shown = 0;
+
+        for (let round = 0; round < this.maxRounds; round++) {
+            const effort = this.sendsReasoning && !rejectsEffort.has(this.modelKey) ? this.reasoningEffort : '';
+            const request: any = {
+                model: this.model,
+                instructions: systemPrompt || undefined,
+                input,
+                tools: tools.length ? tools : undefined,
+                max_output_tokens: Math.max(this.maxTokens, MIN_OPENAI_COMPLETION_TOKENS),
+                ...(effort ? { reasoning: { effort } } : {}),
+                // nothing is kept at OpenAI: the reasoning items go back to the model encrypted
+                store: false,
+                include: ['reasoning.encrypted_content'],
+            };
+            this.dump(`llm → openai responses round ${round}`, request);
+            const sent = input.slice(shown);
+            const { resp, ms } = await this.timedRound(round, sent, () => this.responsesWithFallback(client, request));
+            const output: any[] = resp.output || [];
+            this.dump(`llm ← openai responses round ${round}`, { output, usage: resp.usage });
+            const calls = output.filter(item => item.type === 'function_call');
+            // the reasoning items too: the model continues its reasoning after the tool results
+            input.push(...output);
+            shown = input.length;
+            this.trace?.({
+                stage: 'cloud',
+                title: roundTitle(
+                    round,
+                    calls.map(call => String(call.name)),
+                ),
+                ms,
+                tokens: tokensOf(resp.usage),
+                data: {
+                    sent: redactImages(sent),
+                    response: { status: resp.status, output },
+                    model: resp.model,
+                    usage: resp.usage,
+                },
+            });
+
+            if (!calls.length) {
+                return responsesText(resp);
+            }
+
+            for (const call of calls) {
+                let args: Record<string, unknown> = {};
+                try {
+                    args = JSON.parse(call.arguments || '{}');
+                } catch {
+                    /* leave empty */
+                }
+                const result = await this.runTool(call.name, args);
+                input.push({ type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(result) });
+            }
+        }
+        return this.tooManyRounds();
+    }
+
+    /** One Responses API request; a model that refuses the configured effort ('none' …) is asked again without. */
+    private async responsesWithFallback(client: OpenAI, request: any): Promise<any> {
+        try {
+            return await client.responses.create(request);
+        } catch (e) {
+            if (!request.reasoning || !isBadRequest(e, /effort/i)) {
+                throw e;
+            }
+            rejectsEffort.add(this.modelKey);
+            this.traceRetry(
+                `${this.model} does not take reasoning effort "${request.reasoning.effort}" — retrying without`,
+                e,
+            );
+            delete request.reasoning;
+            return client.responses.create(request);
+        }
     }
 
     /**
@@ -667,6 +886,44 @@ export function openAiUserContent(question: string, images: ImageInput[] = []): 
         { type: 'text', text: question },
         ...images.map(i => ({ type: 'image_url', image_url: { url: `data:${i.mimeType};base64,${i.data}` } })),
     ];
+}
+
+/**
+ * The user turn of the OpenAI Responses API: the plain question, or text and pictures as data URLs.
+ *
+ * @param question the question
+ * @param images pictures that came with it
+ */
+export function openAiResponsesUserContent(question: string, images: ImageInput[] = []): string | unknown[] {
+    if (!images.length) {
+        return question;
+    }
+    return [
+        { type: 'input_text', text: question },
+        ...images.map(i => ({
+            type: 'input_image',
+            detail: 'auto',
+            image_url: `data:${i.mimeType};base64,${i.data}`,
+        })),
+    ];
+}
+
+/**
+ * The text of a Responses API answer: the SDK's `output_text`, or the text parts of the output messages.
+ *
+ * @param resp the response
+ */
+function responsesText(resp: any): string {
+    if (typeof resp.output_text === 'string') {
+        return resp.output_text.trim();
+    }
+    return (resp.output || [])
+        .filter((item: any) => item.type === 'message')
+        .flatMap((item: any) => item.content || [])
+        .filter((part: any) => part.type === 'output_text')
+        .map((part: any) => part.text)
+        .join('')
+        .trim();
 }
 
 /**
