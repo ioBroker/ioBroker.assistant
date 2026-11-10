@@ -237,7 +237,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.6.0 (2026-11-10)
 * (@GermanBluefox) Local LLM: new tab "Local models" to keep several models, pick the active one (saving restarts the instance), choose the folder, see sizes and free space, download presets (with description, size and languages) or own GGUF links, delete models, and see statistics per model (questions, answers, hand-overs, failures, tokens/s, time to the first token, load time). A benchmark on the host checks that the loaded model hands home questions over and answers general ones correctly. The model folder can be picked on the disk of the host (Admin 8.3.11+)
 * (@GermanBluefox) Settings split into topic tabs: AI, Commands, Local models, Devices (with the permissions), Services, Triggers, Voice, Satellites (with the connections of the satellites) and Chat as the last one; rarely needed options (max tokens and system prompt, ffmpeg, end of speech and diagnosis) are in sections that open on a click
 * (@GermanBluefox) Local LLM: refusals like "as an AI language model, I don't have the ability…" are handed over to the next tier instead of being said to the user (found with the new benchmark)
