@@ -19,6 +19,38 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Modell-Manager für das lokale LLM** (Nutzerwunsch 2026-11-10, Branch `feat/local-model-manager`). `src/lib/llmModels.ts`
+  `ModelManager`: Ordner `localLlmModelDir` (absolut, leer = `<Datenverzeichnis>/models` = bisheriger Ort), `list()` =
+  `*.gguf` mit Größe + Quelle aus `<Ordner>/models.json`, `disk()` per `fs.statfs` (nächster existierender Elternordner),
+  `startDownload()` (`normalizeModelUrl`: `hf:org/repo/file`, `/blob/` → `/resolve/`; HEAD für die Größe, Platzprüfung
+  mit `DISK_RESERVE_BYTES` 200 MB, `.part` → GGUF-Magic prüfen → rename, abbrechbar, parallel, Fehler 1 min sichtbar),
+  `delete()` (nie das aktive), Statistik pro Datei in `<Datenverzeichnis>/local-llm-stats.json` (Summen: asked/answered/
+  handoffs/busy/timeouts/errors, tokens+genMs → tokens/s, firstTokenMs, answerMs, loads/lastLoadMs, lastUsed, benchmark;
+  5 s debounced + `flush` in `onUnload`). `MODEL_PRESETS` (10, URLs + Größen am 2026-11-10 gegen HF geprüft, Sprachen
+  laut Modellkarte, `speed` = **Schätzung** aus der Größe): MNN-Pocket 0.3B Q4_1 (nur en/zh, **das Original-Repo ist
+  safetensors/MNN, nur `-GGUF` läuft hier**), Qwen3 0.6B/1.7B (unsloth, `thinking` → `budgets.thoughtTokens: 0`),
+  Qwen2.5 0.5/1.5/3B, Gemma 3 1B/4B, Llama 3.2 1B/3B (kein ru). `LocalLlm` bekommt jetzt `modelPath` statt URL (Download
+  nur noch im Manager), misst per `onToken` (`lastRun`: ms, tokens, firstTokenMs, genMs, promptTokens per `tokenize`),
+  `loadMs`. `main.ts`: Config `localLlmModel` (Datei, `selectSendTo getLocalModels`), `activeLocalModel()` fällt ohne
+  Auswahl auf die Datei von `localLlmModelUrl`/Default zurück (alte Installationen laufen unverändert), fehlende Datei
+  mit bekannter Quelle wird vor dem Laden geladen, sonst Status `error`. sendTo `listLocalModels`/`addLocalModel {preset|
+  url}`/`cancelLocalModelDownload`/`deleteLocalModel`/`resetLocalModelStats`/`benchmarkLocalModel` (alle nehmen `dir`/
+  `active` aus dem ungespeicherten Formular), State `localLlm.model`, Status `benchmark`. **Wechsel nur per Neustart**
+  (Nutzerwunsch). `src/lib/llmBenchmark.ts`: je 3 Zuhause-Fragen (→ HANDOFF) + 3 Fakten (Regex) pro Sprache, Sprache
+  des Assistenten + en; läuft nur auf dem **geladenen** Modell (zwei Modelle = doppelter RAM), wartet, solange eine echte
+  Frage läuft, zählt nicht in die Nutzungsstatistik. GUI `src-admin/src/LocalModelsComponent.tsx` (Reiter
+  `_localModels`, `hidden: !data.useLocalLlm`): Kopf (Ordner, Summe, freier Platz, Status), Tabelle mit „Verwenden“
+  (schreibt `localLlmModel` ins Formular), Test, Statistik zurücksetzen, Löschen mit Bestätigung, Downloads mit
+  Fortschritt/Abbruch, Vorlagen-Karten (Sprachwarnung, Platz), eigener Link, Testdetails-Dialog; pollt 1 s während
+  Downloads/Test, sonst 10 s. **Echt geprüft** in der Cloud-Sandbox (x86, node-llama-cpp 3.22.3, nicht auf dem Pi):
+  Download über den Manager, Laden, Messwerte, Qwen3 ohne `<think>`, `main.ts` per Wegwerf-Harness (Liste, Dropdown,
+  Schutz aktiv/geladen, relativer Pfad, Laden, Statistik, Test, fehlende Datei). Test-Ergebnisse (ru+en, 12 Fragen):
+  MNN-Pocket 4/12 (ru unbrauchbar), Qwen3-0.6B 4/12 (365 Tage, „Парисс“), Gemma 3 1B 7/12 („Закрываю жалюзи“ erfunden),
+  Qwen2.5-1.5B 8/12. **Daraus gefixt:** `isHandoff` erkannte englische Absagen „as an AI language model, I don't have
+  the ability…“ / „I don't have any information…“ nicht (gingen als Antwort an den Nutzer) → neue Muster en/de, Test mit
+  den Originalsätzen. ⚠️ Erfundene Ausführungen („Okay, I've turned on the light“) erkennt kein Muster — nur der Test
+  zeigt sie. Tests: `llmModels.test.js` (echter HTTP-Server: Download, HTML statt GGUF, zu groß, Abbruch, Löschen,
+  Statistik, Benchmark-Wertung), `localLlm.test.js`.
 - **Dialogmodus für ESPHome-Satelliten** (Nutzerwunsch 2026-11-05: „ioBroker – Dialogmodus an“ → ohne Wake-Word
   weitersprechen, „Dialogmodus aus“ → normal). `nlu.ts.dialogCommand()` (de/en/ru, Modus-Phrase Pflicht, Fragen
   und > 8 Wörter → null, an **und** aus → null) → `main.switchDialog()` in `produceAnswer` nach der

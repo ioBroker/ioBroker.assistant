@@ -41,6 +41,18 @@ import {
 } from './lib/weather';
 import { Journal, errorInfo, traceDirFor, type JournalOrigin } from './lib/journal';
 import { LocalLlm, installLocalLlm, isLocalLlmInstalled, isHandoff, DEFAULT_LOCAL_MODEL_URL } from './lib/localLlm';
+import {
+    ModelManager,
+    MODEL_PRESETS,
+    formatBytes,
+    modelDisplayName,
+    modelFileName,
+    normalizeModelUrl,
+    presetForFile,
+    type DownloadInfo,
+    type RunOutcome,
+} from './lib/llmModels';
+import { benchmarkCases, runBenchmark } from './lib/llmBenchmark';
 import { resolveApiKey, resolveVoiceCredentials, type LlmKey } from './lib/credentials';
 import { ConversationStore, type ConversationTurn } from './lib/context';
 import { PendingQuestions, ANY_SOURCE, ASK_TIMEOUT_MS, endsWithQuestion } from './lib/ask';
@@ -507,6 +519,10 @@ class Assistant extends Adapter {
     private localLlmLoading: Promise<void> | null = null;
     /** Last reported local-LLM download percent (to throttle state writes / avoid log spam). */
     private lastLlmPct = -1;
+    /** Local models: files, downloads, statistics (created in onReady). */
+    private models: ModelManager | null = null;
+    /** A benchmark of the active local model is running. */
+    private benchmarkRunning = false;
     /** A running "Download ffmpeg" - a second click waits for the same download. */
     private ffmpegDownload: Promise<string> | null = null;
     /** UDP voice server for satellites (only when voiceEnabled); null otherwise. */
@@ -764,6 +780,7 @@ class Assistant extends Adapter {
                   : 'Assistant ready without an LLM provider — answering locally only.',
         );
 
+        this.models = new ModelManager(this.instanceDataDir(), this.log);
         if (cfg.useLocalLlm) {
             void this.ensureLocalLlm(); // background: model load/download must not block onReady
         }
@@ -3065,6 +3082,11 @@ class Assistant extends Adapter {
             return;
         }
 
+        // Model manager of the local LLM ("Local models" tab).
+        if (await this.handleLocalModelMessage(obj)) {
+            return;
+        }
+
         // Settings buttons "Install pi-agent" / "Install ai-parakeet".
         if (obj.command === 'installAdapter') {
             const result = await this.installHelperAdapter(obj.message);
@@ -4663,6 +4685,7 @@ class Assistant extends Adapter {
         try {
             const ans = await this.localLlm.ask(prompt, timeoutMs);
             const ms = Date.now() - start;
+            this.recordLocalRun(busy ? 'busy' : ans && !isHandoff(ans) ? 'answered' : 'handoff', ms);
             if (ans && !isHandoff(ans)) {
                 this.log.info(`Answered by local LLM (source='${source}').`);
                 this.journal?.note({ tier: 'localLlm', detail: name });
@@ -4684,6 +4707,7 @@ class Assistant extends Adapter {
                 data: { ...data, answer: ans },
             });
         } catch (e) {
+            this.recordLocalRun(/timed out/i.test((e as Error).message) ? 'timeout' : 'error', Date.now() - start);
             this.log.info(`Local LLM gave no answer: ${(e as Error).message}`);
             this.journal?.step({
                 stage: 'localLlm',
@@ -4907,10 +4931,28 @@ class Assistant extends Adapter {
         };
     }
 
-    /** Short name of the local model for the journal ("qwen2.5-1.5b-instruct-q4_k_m"). */
+    /** Short name of the local model for the journal ("Qwen2.5 1.5B (Q4_K_M)"). */
     private localLlmName(): string {
-        const url = (this.config.localLlmModelUrl || '').trim() || DEFAULT_LOCAL_MODEL_URL;
-        return (url.split(/[/\\]/).pop() || url).replace(/\?.*$/, '').replace(/\.gguf$/i, '');
+        return modelDisplayName(this.activeLocalModel().file);
+    }
+
+    /**
+     * The local model to load: the one picked in the "Local models" tab, else the file of the legacy
+     * `localLlmModelUrl` (or the built-in default) — that is where older versions stored it.
+     */
+    private activeLocalModel(): { file: string; url: string } {
+        const chosen = (this.config.localLlmModel || '').trim();
+        if (chosen) {
+            return { file: chosen, url: presetForFile(chosen)?.url || '' };
+        }
+        const url = normalizeModelUrl(this.config.localLlmModelUrl || '') || DEFAULT_LOCAL_MODEL_URL;
+        return { file: modelFileName(url) || 'model.gguf', url };
+    }
+
+    /** Directory of the local models (configured or `<data dir>/models`). */
+    private localModelDir(override?: unknown): string {
+        const dir = typeof override === 'string' ? override : this.config.localLlmModelDir || '';
+        return (this.models || new ModelManager(this.instanceDataDir(), this.log)).resolveDir(dir);
     }
 
     /** Writable per-instance data dir via the adapter-core function (with a fallback for old runtimes). */
@@ -4938,6 +4980,18 @@ class Assistant extends Adapter {
                 read: true,
                 write: false,
                 def: 'idle',
+            },
+            native: {},
+        });
+        await this.setObjectNotExistsAsync('localLlm.model', {
+            type: 'state',
+            common: {
+                name: 'Active local model',
+                type: 'string',
+                role: 'text',
+                read: true,
+                write: false,
+                def: '',
             },
             native: {},
         });
@@ -4984,8 +5038,9 @@ class Assistant extends Adapter {
     }
 
     /**
-     * Lazily load the local LLM (Tier 1a) when enabled + installed. Runs in the background — the model
-     * download can take a while — so callers should not await it on the hot path.
+     * Lazily load the local LLM (Tier 1a) when enabled + installed. Downloads the active model first when
+     * it is missing and its source is known (preset, `models.json`, legacy URL). Runs in the background —
+     * the download can take a while — so callers should not await it on the hot path.
      */
     private async ensureLocalLlm(): Promise<void> {
         if (this.localLlm) {
@@ -5004,22 +5059,48 @@ class Assistant extends Adapter {
             );
             return;
         }
-        const llm = new LocalLlm({
-            dataDir,
-            modelUrl: (this.config.localLlmModelUrl || '').trim() || DEFAULT_LOCAL_MODEL_URL,
-            systemPrompt: this.config.systemPrompt || '',
-            maxTokens: Math.min(this.config.maxTokens || LOCAL_LLM_MAX_TOKENS, LOCAL_LLM_MAX_TOKENS),
-            log: this.log,
-        });
+        const models = this.models || (this.models = new ModelManager(dataDir, this.log));
+        let dir: string;
+        try {
+            dir = this.localModelDir();
+        } catch (e) {
+            this.setLlmStatus('error');
+            this.log.warn(`Local LLM: ${(e as Error).message}`);
+            return;
+        }
+        const active = this.activeLocalModel();
+        const modelPath = models.modelPath(dir, active.file);
+        const preset = presetForFile(active.file);
+        this.setStateAsync('localLlm.model', { val: modelDisplayName(active.file), ack: true }).catch(() => {});
+
         this.lastLlmPct = -1;
-        this.setLlmStatus('loading');
-        this.localLlmLoading = llm
-            .load(line => this.onLocalLlmProgress(line))
-            .then(() => {
-                this.localLlm = llm;
-                this.setLlmStatus('ready', 100);
-                this.log.info('Local model ready.');
-            })
+        this.localLlmLoading = (async () => {
+            if (!fs.existsSync(modelPath)) {
+                const known = (await models.list(dir)).find(m => m.file === active.file);
+                const url = active.url || known?.url || '';
+                if (!url) {
+                    throw new Error(
+                        `model ${active.file} is not in ${dir} — download it in the "Local models" tab or pick another one`,
+                    );
+                }
+                this.setLlmStatus('downloading', 0);
+                await this.downloadLocalModel(url, dir);
+            }
+            this.setLlmStatus('loading');
+            const llm = new LocalLlm({
+                dataDir,
+                modelPath,
+                systemPrompt: this.config.systemPrompt || '',
+                maxTokens: Math.min(this.config.maxTokens || LOCAL_LLM_MAX_TOKENS, LOCAL_LLM_MAX_TOKENS),
+                noThoughts: !!preset?.thinking || /qwen3/i.test(active.file),
+                log: this.log,
+            });
+            await llm.load();
+            await models.recordLoad(active.file, llm.loadMs);
+            this.localLlm = llm;
+            this.setLlmStatus('ready', 100);
+            this.log.info(`Local model ${modelDisplayName(active.file)} ready.`);
+        })()
             .catch(e => {
                 this.setLlmStatus('error');
                 this.log.warn(`Local LLM load failed: ${(e as Error).message}`);
@@ -5028,6 +5109,175 @@ class Assistant extends Adapter {
                 this.localLlmLoading = null;
             });
         return this.localLlmLoading;
+    }
+
+    /** Downloads a model through the manager and resolves when it is on disk (progress → `localLlm.*`). */
+    private downloadLocalModel(url: string, dir: string): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.models!.startDownload(
+                url,
+                dir,
+                (_file, error) => (error ? reject(error) : resolve()),
+                info => {
+                    if (info.total) {
+                        this.onLocalLlmProgress(`download ${Math.round((100 * info.received) / info.total)}%`);
+                    }
+                },
+            ).catch(reject);
+        });
+    }
+
+    /**
+     * sendTo commands of the "Local models" tab. `dir` in a message is the directory from the (maybe unsaved)
+     * form, so the list follows the field before saving. Returns false for other commands.
+     */
+    private async handleLocalModelMessage(obj: ioBroker.Message): Promise<boolean> {
+        const cmds = [
+            'getLocalModels',
+            'listLocalModels',
+            'addLocalModel',
+            'cancelLocalModelDownload',
+            'deleteLocalModel',
+            'resetLocalModelStats',
+            'benchmarkLocalModel',
+        ];
+        if (!cmds.includes(obj.command)) {
+            return false;
+        }
+        const reply = (result: unknown): void => {
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, result as any, obj.callback);
+            }
+        };
+        const msg = (obj.message && typeof obj.message === 'object' ? obj.message : {}) as Record<string, any>;
+        const models = this.models || (this.models = new ModelManager(this.instanceDataDir(), this.log));
+        try {
+            const dir = this.localModelDir(msg.dir);
+            const active = (typeof msg.active === 'string' && msg.active) || this.activeLocalModel().file;
+            switch (obj.command) {
+                case 'getLocalModels': {
+                    // selectSendTo of the "Active model" field
+                    const list = await models.list(dir);
+                    const options = list.map(m => ({
+                        label: `${m.name}, ${formatBytes(m.sizeBytes)}`,
+                        value: m.file,
+                    }));
+                    const chosen = (this.config.localLlmModel || '').trim();
+                    if (chosen && !list.some(m => m.file === chosen)) {
+                        options.push({ label: `${modelDisplayName(chosen)}: not downloaded`, value: chosen });
+                    }
+                    reply(options);
+                    break;
+                }
+                case 'listLocalModels': {
+                    const list = await models.list(dir);
+                    reply({
+                        dir,
+                        active,
+                        loaded: this.localLlm ? this.activeLocalModel().file : '',
+                        engineInstalled: isLocalLlmInstalled(this.instanceDataDir()),
+                        models: list,
+                        totalBytes: list.reduce((sum, m) => sum + m.sizeBytes, 0),
+                        disk: await models.disk(dir),
+                        downloads: models.listDownloads(),
+                        presets: MODEL_PRESETS,
+                        benchmarkRunning: this.benchmarkRunning,
+                        language: this.config.voiceLanguage || this.language || 'en',
+                    });
+                    break;
+                }
+                case 'addLocalModel': {
+                    const preset = MODEL_PRESETS.find(p => p.id === msg.preset);
+                    const url = preset ? preset.url : String(msg.url || '');
+                    const info: DownloadInfo = await models.startDownload(url, dir);
+                    reply({ result: info });
+                    break;
+                }
+                case 'cancelLocalModelDownload':
+                    reply({ result: models.cancelDownload(String(msg.file || '')) });
+                    break;
+                case 'deleteLocalModel':
+                    // the saved active model and the one picked in the unsaved form are both protected
+                    if (msg.file === this.activeLocalModel().file && this.localLlm) {
+                        throw new Error('the model is loaded; select another model and save first');
+                    }
+                    await models.delete(dir, String(msg.file || ''), active);
+                    reply({ result: true });
+                    break;
+                case 'resetLocalModelStats':
+                    await models.resetStats(msg.file ? String(msg.file) : undefined);
+                    reply({ result: true });
+                    break;
+                case 'benchmarkLocalModel':
+                    reply({ result: await this.benchmarkLocalModel() });
+                    break;
+            }
+        } catch (e) {
+            reply({ error: (e as Error).message });
+        }
+        return true;
+    }
+
+    /**
+     * Runs the benchmark (home questions → hand-off, facts → right answer) on the loaded model. Only the
+     * loaded one: a second model next to it would need its RAM twice — on a Raspberry Pi that is too much.
+     */
+    private async benchmarkLocalModel(): Promise<unknown> {
+        const llm = this.localLlm;
+        if (!llm) {
+            throw new Error('no local model is loaded');
+        }
+        if (this.benchmarkRunning) {
+            throw new Error('a benchmark is already running');
+        }
+        this.benchmarkRunning = true;
+        const file = this.activeLocalModel().file;
+        const timeoutMs = Math.max(1, Number(this.config.localLlmTimeoutSec) || LOCAL_LLM_TIMEOUT_SEC) * 1000;
+        const cases = benchmarkCases(this.config.voiceLanguage || this.language || 'en');
+        this.log.info(`Benchmark of local model ${modelDisplayName(file)}: ${cases.length} questions`);
+        try {
+            const result = await runBenchmark(
+                cases,
+                async question => {
+                    // wait while a real question is answered — the benchmark must not take its place
+                    for (let i = 0; i < 600 && llm.running; i++) {
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                    const answer = await llm.ask(question, timeoutMs);
+                    const run = llm.lastRun;
+                    return {
+                        answer,
+                        ms: run?.ms ?? 0,
+                        tokens: run?.tokens,
+                        genMs: run?.genMs,
+                        firstTokenMs: run?.firstTokenMs,
+                    };
+                },
+                (done, total) => this.setLlmStatus('benchmark', Math.round((100 * done) / total)),
+            );
+            await this.models!.recordBenchmark(file, result);
+            this.log.info(
+                `Benchmark of local model ${modelDisplayName(file)}: ${result.correct}/${result.cases} correct, ` +
+                    `${result.tokensPerSec} tokens/s, ${result.avgMs} ms per answer`,
+            );
+            return result;
+        } finally {
+            this.benchmarkRunning = false;
+            this.setLlmStatus(this.localLlm ? 'ready' : 'error', 100);
+        }
+    }
+
+    /** Adds one question to the statistics of the active model. */
+    private recordLocalRun(outcome: RunOutcome, ms: number): void {
+        const run = outcome === 'answered' || outcome === 'handoff' ? this.localLlm?.lastRun : null;
+        void this.models?.recordRun(this.activeLocalModel().file, {
+            outcome,
+            ms,
+            tokens: run?.tokens,
+            genMs: run?.genMs,
+            firstTokenMs: run?.firstTokenMs,
+            promptTokens: run?.promptTokens,
+        });
     }
 
     /**
@@ -8563,6 +8813,12 @@ class Assistant extends Adapter {
         }
         try {
             await this.media?.stop();
+        } catch {
+            // ignore
+        }
+        try {
+            this.models?.cancelAll();
+            await this.models?.flush();
         } catch {
             // ignore
         }

@@ -53,7 +53,6 @@
   "DeepSeek": "Diepzoeken",
   "Delay": "Vertraging",
   "Devices": "Apparaten",
-  "Direct URL of a GGUF model. Leave empty for the default (Qwen2.5-1.5B-Instruct). Small models recommended on Raspberry Pi / arm64.": "Directe URL van een GGUF-model. Laat dit veld leeg voor de standaardversie (Qwen2.5-1.5B-Instruct). Kleine modellen worden aanbevolen voor Raspberry Pi / arm64.",
   "Downloads the engine and model (several hundred MB). Progress is shown below.": "Downloadt de engine en het model (enkele honderden MB). De voortgang wordt hieronder weergegeven.",
   "ESPHome satellites": "ESPHome-satellieten",
   "ESPHome satellites do not get the reply over their API socket — they fetch it as a URL. This is the port that small HTTP server listens on.": "ESPHome-satellieten krijgen het antwoord niet via hun API-socket — ze halen het op als URL. Dit is de poort waarop die kleine HTTP-server luistert.",
@@ -89,7 +88,6 @@
   "Loaded from Polly (instance must run); empty = default per language. e.g. Vicki, Tatyana.": "Geladen vanuit Polly (instantie moet actief zijn); leeg = standaardwaarde per taal. bijv. Vicki, Tatyana.",
   "Loaded from the provider (instance must run); you can also type a model id.": "Wordt geladen vanaf de provider (het exemplaar moet actief zijn); u kunt ook een model-ID invoeren.",
   "Loaded from the provider (instance must run); you can also type a voice id.": "Wordt geladen vanaf de provider (het apparaat moet actief zijn); u kunt ook een spraak-ID invoeren.",
-  "Local model URL (GGUF, optional)": "Lokale model-URL (GGUF, optioneel)",
   "Local speech (no cloud)": "Lokale spraak (geen bewolking)",
   "Long-term memory (remember facts across sessions)": "Langetermijngeheugen (feiten onthouden over meerdere sessies heen)",
   "Max tokens": "Max tokens",
@@ -242,5 +240,13 @@
   "Cancel": "Annuleren",
   "%s was installed and selected. Save the settings to use it.": "%s is geïnstalleerd en geselecteerd. Sla de instellingen op om hem te gebruiken.",
   "%s is already installed and is now selected. Save the settings to use it.": "%s is al geïnstalleerd en nu geselecteerd. Sla de instellingen op om hem te gebruiken.",
-  "The adapter ai-parakeet recognises speech offline on the CPU of its host, in 25 European languages that the model detects itself. The audio goes to it over the ioBroker message bus, so the instance may also run on another host.": "De adapter ai-parakeet herkent spraak offline op de CPU van zijn host, in 25 Europese talen die het model zelf herkent. Het geluid gaat via de berichtenbus van ioBroker naar hem toe, dus de instantie kan ook op een andere host draaien."
+  "The adapter ai-parakeet recognises speech offline on the CPU of its host, in 25 European languages that the model detects itself. The audio goes to it over the ioBroker message bus, so the instance may also run on another host.": "De adapter ai-parakeet herkent spraak offline op de CPU van zijn host, in 25 Europese talen die het model zelf herkent. Het geluid gaat via de berichtenbus van ioBroker naar hem toe, dus de instantie kan ook op een andere host draaien.",
+  "Local model URL (GGUF, old setting)": "URL van het lokale model (GGUF, oude instelling)",
+  "Used only while no model is selected in the tab \"Local models\". Pick the model there instead.": "Alleen gebruikt zolang er op het tabblad \"Lokale modellen\" geen model is gekozen. Kies het model daar.",
+  "Local models": "Lokale modellen",
+  "Small models answer general questions without the cloud. Download several, compare them with the benchmark and switch between them here.": "Kleine modellen beantwoorden algemene vragen zonder cloud. Download er meerdere, vergelijk ze met de test en wissel hier tussen hen.",
+  "Active model": "Actief model",
+  "Saving restarts the instance and loads this model. Download models below.": "Opslaan herstart de instantie en laadt dit model. Download modellen hieronder.",
+  "Model folder": "Modelmap",
+  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Absoluut pad, bijv. /mnt/ssd/llm. Leeg = gegevensmap van de instantie. Elders gedownloade modellen worden niet verplaatst."
 }

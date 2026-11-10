@@ -524,9 +524,9 @@
                 },
                 "localLlmModelUrl": {
                     "type": "text",
-                    "label": "Local model URL (GGUF, optional)",
-                    "help": "Direct URL of a GGUF model. Leave empty for the default (Qwen2.5-1.5B-Instruct). Small models recommended on Raspberry Pi / arm64.",
-                    "hidden": "!data.useLocalLlm",
+                    "label": "Local model URL (GGUF, old setting)",
+                    "help": "Used only while no model is selected in the tab \"Local models\". Pick the model there instead.",
+                    "hidden": "!data.useLocalLlm || !!data.localLlmModel || !data.localLlmModelUrl",
                     "xs": 12,
                     "sm": 12,
                     "md": 6,
@@ -708,6 +708,61 @@
                     "type": "text",
                     "label": "System prompt",
                     "minRows": 4,
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                }
+            }
+        },
+        "_localModels": {
+            "type": "panel",
+            "label": "Local models",
+            "hidden": "!data.useLocalLlm",
+            "items": {
+                "_localModelsInfo": {
+                    "type": "staticText",
+                    "text": "Small models answer general questions without the cloud. Download several, compare them with the benchmark and switch between them here.",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                },
+                "localLlmModel": {
+                    "newLine": true,
+                    "type": "selectSendTo",
+                    "command": "getLocalModels",
+                    "jsonData": "{\"dir\":\"${data.localLlmModelDir}\"}",
+                    "alsoDependsOn": ["localLlmModelDir"],
+                    "noTranslation": true,
+                    "label": "Active model",
+                    "help": "Saving restarts the instance and loads this model. Download models below.",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 6,
+                    "lg": 6,
+                    "xl": 6
+                },
+                "localLlmModelDir": {
+                    "type": "text",
+                    "label": "Model folder",
+                    "help": "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 6,
+                    "lg": 6,
+                    "xl": 6
+                },
+                "_localModels": {
+                    "newLine": true,
+                    "type": "custom",
+                    "i18n": true,
+                    "url": "custom/customComponents.js",
+                    "name": "ConfigCustomAssistant/Components/LocalModelsComponent",
+                    "bundlerType": "module",
+                    "guiApi": 2,
                     "xs": 12,
                     "sm": 12,
                     "md": 12,

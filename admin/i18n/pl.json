@@ -53,7 +53,6 @@
   "DeepSeek": "Głębokie poszukiwania",
   "Delay": "Opóźnienie",
   "Devices": "Urządzenia",
-  "Direct URL of a GGUF model. Leave empty for the default (Qwen2.5-1.5B-Instruct). Small models recommended on Raspberry Pi / arm64.": "Bezpośredni adres URL modelu GGUF. Pozostaw puste dla wartości domyślnej (Qwen2.5-1.5B-Instruct). Zalecane są małe modele na Raspberry Pi / arm64.",
   "Downloads the engine and model (several hundred MB). Progress is shown below.": "Pobiera silnik i model (kilkaset MB). Postęp jest wyświetlany poniżej.",
   "ESPHome satellites": "Satelity ESPHome",
   "ESPHome satellites do not get the reply over their API socket — they fetch it as a URL. This is the port that small HTTP server listens on.": "Satelity ESPHome nie odbierają odpowiedzi przez swoje gniazdo API — pobierają ją jako URL. To port, na którym nasłuchuje ten mały serwer HTTP.",
@@ -89,7 +88,6 @@
   "Loaded from Polly (instance must run); empty = default per language. e.g. Vicki, Tatyana.": "Załadowano z Polly (instancja musi działać); puste = wartość domyślna dla danego języka. np. Vicki, Tatyana.",
   "Loaded from the provider (instance must run); you can also type a model id.": "Ładowane od dostawcy (instancja musi być uruchomiona); można również wpisać identyfikator modelu.",
   "Loaded from the provider (instance must run); you can also type a voice id.": "Pobierane od dostawcy (instancja musi być uruchomiona). Można również wpisać identyfikator głosowy.",
-  "Local model URL (GGUF, optional)": "Lokalny adres URL modelu (GGUF, opcjonalnie)",
   "Local speech (no cloud)": "Mowa lokalna (bez chmury)",
   "Long-term memory (remember facts across sessions)": "Pamięć długotrwała (zapamiętywanie faktów w trakcie sesji)",
   "Max tokens": "Maksymalna liczba tokenów",
@@ -242,5 +240,13 @@
   "Cancel": "Anuluj",
   "%s was installed and selected. Save the settings to use it.": "%s został zainstalowany i wybrany. Zapisz ustawienia, aby go używać.",
   "%s is already installed and is now selected. Save the settings to use it.": "%s jest już zainstalowany i teraz wybrany. Zapisz ustawienia, aby go używać.",
-  "The adapter ai-parakeet recognises speech offline on the CPU of its host, in 25 European languages that the model detects itself. The audio goes to it over the ioBroker message bus, so the instance may also run on another host.": "Adapter ai-parakeet rozpoznaje mowę offline na procesorze swojego hosta, w 25 językach europejskich, które model rozpoznaje sam. Dźwięk trafia do niego przez magistralę wiadomości ioBroker, więc instancja może też działać na innym hoście."
+  "The adapter ai-parakeet recognises speech offline on the CPU of its host, in 25 European languages that the model detects itself. The audio goes to it over the ioBroker message bus, so the instance may also run on another host.": "Adapter ai-parakeet rozpoznaje mowę offline na procesorze swojego hosta, w 25 językach europejskich, które model rozpoznaje sam. Dźwięk trafia do niego przez magistralę wiadomości ioBroker, więc instancja może też działać na innym hoście.",
+  "Local model URL (GGUF, old setting)": "URL modelu lokalnego (GGUF, stare ustawienie)",
+  "Used only while no model is selected in the tab \"Local models\". Pick the model there instead.": "Używane tylko, dopóki na karcie „Modele lokalne” nie wybrano modelu. Wybierz model tam.",
+  "Local models": "Modele lokalne",
+  "Small models answer general questions without the cloud. Download several, compare them with the benchmark and switch between them here.": "Małe modele odpowiadają na ogólne pytania bez chmury. Pobierz kilka, porównaj je testem i przełączaj się między nimi tutaj.",
+  "Active model": "Aktywny model",
+  "Saving restarts the instance and loads this model. Download models below.": "Zapisanie uruchamia instancję ponownie i ładuje ten model. Modele pobierzesz poniżej.",
+  "Model folder": "Folder modeli",
+  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Ścieżka bezwzględna, np. /mnt/ssd/llm. Puste = folder danych instancji. Modele pobrane już gdzie indziej nie są przenoszone."
 }

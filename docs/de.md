@@ -144,8 +144,36 @@ antwortet und liest die Antwort vor (TTS). Spracherkennung und -synthese laufen 
      Anbieters; du kannst auch eine Modell-ID eintippen).
 3. *(Optional)* **Einfache Befehle lokal beantworten** (Offline-Regel-Engine) und/oder **Lokales LLM
    verwenden** aktivieren (**Lokales Modell installieren** klicken — lädt Engine + Modell; Fortschritt
-   beobachten).
+   beobachten). Die Modelle verwaltest du im Reiter **Lokale Modelle** (siehe unten).
 4. **Zugriff / Berechtigungen** setzen (siehe §6) und speichern.
+
+### Lokale Modelle
+
+Der Reiter **Lokale Modelle** (sichtbar mit *Lokales LLM verwenden*) hält mehrere GGUF-Modelle nebeneinander:
+
+- **Aktives Modell**: das Modell, das die Instanz lädt. Speichern startet die Instanz neu; gewechselt wird
+  nicht zur Laufzeit. **Verwenden** in der Tabelle trägt ein Modell in dieses Feld ein.
+- **Modellordner**: absoluter Pfad, z. B. auf einer SSD; leer = `<Datenordner der Instanz>/models`. Die
+  Tabelle zeigt den Ordner aus dem Formular sofort, noch vor dem Speichern. Modelle im alten Ordner werden
+  nicht verschoben.
+- **Tabelle**: Größe jedes Modells, Summe und freier Platz; Statistik pro Modell (gefragt / beantwortet /
+  abgegeben, Ausfälle = Zeitüberschreitungen und Fehler, Tokens pro Sekunde, Zeit bis zum ersten Token,
+  Antwortzeit, Ladezeit, zuletzt genutzt). Die Statistik übersteht Neustarts und lässt sich pro Modell
+  zurücksetzen. Das aktive und das geladene Modell lassen sich nicht löschen.
+- **Modell hinzufügen**: Vorlagen mit Beschreibung, Parametern, Größe und den Sprachen laut Modellkarte
+  (Warnung, wenn die Sprache des Assistenten fehlt), oder ein eigener Link auf eine `.gguf`-Datei
+  (Hugging-Face-Seitenlinks und `hf:org/repo/datei.gguf` gehen). Vorher wird der freie Platz geprüft; eine
+  Datei, die kein GGUF-Modell ist (z. B. eine HTML-Fehlerseite), wird verworfen. Downloads laufen parallel
+  und lassen sich abbrechen.
+- **Test** (Knopf beim geladenen Modell): stellt dem Modell Testfragen in der Sprache des Assistenten und
+  auf Englisch. Fragen zum Zuhause muss es abgeben (das lokale Modell hat keine Werkzeuge), allgemeine mit
+  dem richtigen Fakt beantworten. Das Ergebnis (richtig, verpasste und unnötige Abgaben, falsche Antworten,
+  Tokens/s) wird beim Modell gespeichert; ein Klick zeigt jede Frage und Antwort. Das sind die echten Werte
+  dieses Hosts: veröffentlichte Benchmarks sagen über diese Rolle nichts.
+
+Die Tempo-Klasse einer Vorlage ist eine Schätzung aus der Größe, keine Messung. Sehr kleine Modelle
+„bestätigen“ gern einen Schaltbefehl, den sie gar nicht ausführen können („Okay, das Licht ist an“). Der
+Test zeigt das als verpasste Abgabe.
 
 ### Als Text nutzen
 
@@ -1187,5 +1215,7 @@ Alles, was der Assistent kann, ist aus einem Skript erreichbar. Die Antwort komm
 | `sendNotification`                                   | die Payload des Benachrichtigungsmanagers                                | `{ sent }` — nicht für den Handbetrieb gedacht                               |
 | `voice` / `registerSatellite`                        | Audio / Registrierung                                                    | das Satelliten-Protokoll, siehe §7                                           |
 
-`getModels`, `getVoices`, `getSttModels`, `getWeatherInstances`, `installLocalLlm` und
+`getModels`, `getVoices`, `getSttModels`, `getWeatherInstances`, `installLocalLlm`, die Befehle des
+Reiters „Lokale Modelle“ (`listLocalModels`, `getLocalModels`, `addLocalModel`, `cancelLocalModelDownload`,
+`deleteLocalModel`, `resetLocalModelStats`, `benchmarkLocalModel`) und
 `testApiConnection` gibt es für den Einstellungsdialog und sind anderswo kaum nützlich.

@@ -53,7 +53,6 @@
   "DeepSeek": "DeepSeek",
   "Delay": "Délai",
   "Devices": "Appareils",
-  "Direct URL of a GGUF model. Leave empty for the default (Qwen2.5-1.5B-Instruct). Small models recommended on Raspberry Pi / arm64.": "URL directe d'un modèle GGUF. Laisser vide pour la valeur par défaut (Qwen2.5-1.5B-Instruct). Modèles légers recommandés pour Raspberry Pi / arm64.",
   "Downloads the engine and model (several hundred MB). Progress is shown below.": "Télécharge le moteur et le modèle (plusieurs centaines de Mo). La progression s'affiche ci-dessous.",
   "ESPHome satellites": "Satellites ESPHome",
   "ESPHome satellites do not get the reply over their API socket — they fetch it as a URL. This is the port that small HTTP server listens on.": "Les satellites ESPHome ne reçoivent pas la réponse par leur socket API : ils la récupèrent via une URL. C’est le port sur lequel écoute ce petit serveur HTTP.",
@@ -89,7 +88,6 @@
   "Loaded from Polly (instance must run); empty = default per language. e.g. Vicki, Tatyana.": "Chargé depuis Polly (l'instance doit être en cours d'exécution) ; vide = valeur par défaut pour chaque langue. Ex. : Vicki, Tatyana.",
   "Loaded from the provider (instance must run); you can also type a model id.": "Chargé depuis le fournisseur (l'instance doit être en cours d'exécution) ; vous pouvez également saisir un identifiant de modèle.",
   "Loaded from the provider (instance must run); you can also type a voice id.": "Chargé depuis le fournisseur (l'instance doit être en cours d'exécution) ; vous pouvez également saisir un identifiant vocal.",
-  "Local model URL (GGUF, optional)": "URL du modèle local (GGUF, facultatif)",
   "Local speech (no cloud)": "Voix locale (sans cloud)",
   "Long-term memory (remember facts across sessions)": "Mémoire à long terme (se souvenir des faits d'une session à l'autre)",
   "Max tokens": "Jetons maximum",
@@ -242,5 +240,13 @@
   "Cancel": "Annuler",
   "%s was installed and selected. Save the settings to use it.": "%s a été installé et sélectionné. Enregistrez les paramètres pour l'utiliser.",
   "%s is already installed and is now selected. Save the settings to use it.": "%s est déjà installé et maintenant sélectionné. Enregistrez les paramètres pour l'utiliser.",
-  "The adapter ai-parakeet recognises speech offline on the CPU of its host, in 25 European languages that the model detects itself. The audio goes to it over the ioBroker message bus, so the instance may also run on another host.": "L'adaptateur ai-parakeet reconnaît la parole hors ligne sur le processeur de son hôte, dans 25 langues européennes que le modèle détecte lui-même. L'audio lui parvient par le bus de messages d'ioBroker, l'instance peut donc aussi tourner sur un autre hôte."
+  "The adapter ai-parakeet recognises speech offline on the CPU of its host, in 25 European languages that the model detects itself. The audio goes to it over the ioBroker message bus, so the instance may also run on another host.": "L'adaptateur ai-parakeet reconnaît la parole hors ligne sur le processeur de son hôte, dans 25 langues européennes que le modèle détecte lui-même. L'audio lui parvient par le bus de messages d'ioBroker, l'instance peut donc aussi tourner sur un autre hôte.",
+  "Local model URL (GGUF, old setting)": "URL du modèle local (GGUF, ancien réglage)",
+  "Used only while no model is selected in the tab \"Local models\". Pick the model there instead.": "Utilisé seulement tant qu'aucun modèle n'est choisi dans l'onglet « Modèles locaux ». Choisissez plutôt le modèle là-bas.",
+  "Local models": "Modèles locaux",
+  "Small models answer general questions without the cloud. Download several, compare them with the benchmark and switch between them here.": "Les petits modèles répondent aux questions générales sans le cloud. Téléchargez-en plusieurs, comparez-les avec le test et passez de l'un à l'autre ici.",
+  "Active model": "Modèle actif",
+  "Saving restarts the instance and loads this model. Download models below.": "L'enregistrement redémarre l'instance et charge ce modèle. Téléchargez des modèles ci-dessous.",
+  "Model folder": "Dossier des modèles",
+  "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Chemin absolu, p. ex. /mnt/ssd/llm. Vide = dossier de données de l'instance. Les modèles déjà téléchargés ailleurs ne sont pas déplacés."
 }

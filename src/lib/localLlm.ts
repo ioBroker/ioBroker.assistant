@@ -29,13 +29,29 @@ const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 type Logger = Pick<ioBroker.Logger, 'info' | 'warn' | 'debug' | 'error'>;
 
 export interface LocalLlmOptions {
-    /** Writable instance data dir (from `adapter.getAbsoluteInstanceDataDir()`). */
+    /** Writable instance data dir (from `adapter.getAbsoluteInstanceDataDir()`) — where node-llama-cpp lives. */
     dataDir: string;
-    /** Direct URL of a GGUF model file. */
-    modelUrl: string;
+    /** Full path of the GGUF model file (the model manager downloads it). */
+    modelPath: string;
     systemPrompt?: string;
     maxTokens?: number;
+    /** The model writes a chain of thought first (Qwen3): give it no thought budget, it costs seconds. */
+    noThoughts?: boolean;
     log: Logger;
+}
+
+/** Measurements of the last {@link LocalLlm.ask}. */
+export interface LocalLlmRun {
+    /** Whole call, prompt processing included. */
+    ms: number;
+    /** Tokens of the prompt (question + facts; the system prompt is cached in the session). */
+    promptTokens?: number;
+    /** Generated tokens. */
+    tokens: number;
+    /** From the call to the first generated token (= prompt processing). */
+    firstTokenMs?: number;
+    /** From the first to the last generated token; tokens/s = tokens / genMs. */
+    genMs: number;
 }
 
 /** Directory the on-demand npm install targets (`<dataDir>/node_modules/node-llama-cpp`). */
@@ -43,25 +59,10 @@ function moduleDir(dataDir: string): string {
     return path.join(dataDir, 'node_modules', 'node-llama-cpp');
 }
 
-/** Local file path a model URL is cached to. */
-function modelPathFor(dataDir: string, url: string): string {
-    const file = url.split('/').pop() || 'model.gguf';
-    return path.join(dataDir, 'models', file);
-}
-
 /** True once `node-llama-cpp` has been installed into the data dir. */
 export function isLocalLlmInstalled(dataDir: string): boolean {
     try {
         return fs.existsSync(path.join(moduleDir(dataDir), 'package.json'));
-    } catch {
-        return false;
-    }
-}
-
-/** True once the model file has been downloaded. */
-export function isModelDownloaded(dataDir: string, url: string): boolean {
-    try {
-        return fs.existsSync(modelPathFor(dataDir, url));
     } catch {
         return false;
     }
@@ -91,8 +92,9 @@ export function installLocalLlm(dataDir: string, onProgress: (line: string) => v
 }
 
 /**
- * A loaded local model. `load()` imports the on-demand module, downloads the GGUF if missing, and
- * spins up a llama context. `ask()` returns the model's answer (or {@link HANDOFF}).
+ * A loaded local model. `load()` imports the on-demand module and spins up a llama context for the GGUF
+ * file (the model manager has downloaded it). `ask()` returns the model's answer (or {@link HANDOFF}) and
+ * leaves its measurements in {@link lastRun}.
  */
 export class LocalLlm {
     private session: any = null;
@@ -100,6 +102,10 @@ export class LocalLlm {
     private context: any = null;
     /** A prompt is running — the session takes one at a time. */
     private busy = false;
+    /** Measurements of the last answered call. */
+    lastRun: LocalLlmRun | null = null;
+    /** How long {@link load} took. */
+    loadMs = 0;
 
     constructor(private readonly opts: LocalLlmOptions) {}
 
@@ -122,36 +128,23 @@ export class LocalLlm {
         );
     }
 
-    async load(onProgress?: (line: string) => void): Promise<void> {
+    async load(): Promise<void> {
+        const started = Date.now();
         const dir = moduleDir(this.opts.dataDir);
         if (!fs.existsSync(path.join(dir, 'package.json'))) {
             throw new Error('node-llama-cpp is not installed — run the install first');
+        }
+        if (!fs.existsSync(this.opts.modelPath)) {
+            throw new Error(`model file not found: ${this.opts.modelPath}`);
         }
         // Resolve the package entry from the data dir and import it (v3 is ESM-only → dynamic import).
         const req = createRequire(path.join(this.opts.dataDir, 'package.json'));
         const entry = req.resolve('node-llama-cpp');
         const mod: any = await import(pathToFileURL(entry).href);
-        const { getLlama, LlamaChatSession, createModelDownloader } = mod;
-
-        const modelPath = modelPathFor(this.opts.dataDir, this.opts.modelUrl);
-        if (!fs.existsSync(modelPath)) {
-            this.opts.log.info(`Downloading local model → ${modelPath}`);
-            fs.mkdirSync(path.dirname(modelPath), { recursive: true });
-            const downloader = await createModelDownloader({
-                modelUri: this.opts.modelUrl,
-                dirPath: path.dirname(modelPath),
-                fileName: path.basename(modelPath),
-                onProgress: (p: { downloadedSize: number; totalSize: number }) => {
-                    if (p.totalSize) {
-                        onProgress?.(`download ${Math.round((100 * p.downloadedSize) / p.totalSize)}%`);
-                    }
-                },
-            });
-            await downloader.download();
-        }
+        const { getLlama, LlamaChatSession } = mod;
 
         const llama = await getLlama();
-        this.model = await llama.loadModel({ modelPath });
+        this.model = await llama.loadModel({ modelPath: this.opts.modelPath });
         // Leave one core to js-controller and the other adapters: llama.cpp takes all of them otherwise, and on
         // a Raspberry Pi the whole host — the voice server included — stalls for the length of an answer.
         const cores = typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length;
@@ -160,7 +153,18 @@ export class LocalLlm {
             contextSequence: this.context.getSequence(),
             systemPrompt: this.systemPrompt(),
         });
-        this.opts.log.info('Local model loaded.');
+        this.loadMs = Date.now() - started;
+        this.opts.log.info(`Local model ${path.basename(this.opts.modelPath)} loaded in ${this.loadMs} ms.`);
+    }
+
+    /** Number of tokens of a text, or undefined when the model cannot tell. */
+    private countTokens(text: string): number | undefined {
+        try {
+            const tokens = this.model?.tokenize?.(text);
+            return Array.isArray(tokens) ? tokens.length : undefined;
+        } catch {
+            return undefined;
+        }
     }
 
     /**
@@ -175,6 +179,11 @@ export class LocalLlm {
         this.busy = true;
         const abort = new AbortController();
         const timer = timeoutMs > 0 ? setTimeout(() => abort.abort(), timeoutMs) : null;
+        const started = Date.now();
+        let firstAt = 0;
+        let lastAt = 0;
+        let tokens = 0;
+        this.lastRun = null;
         try {
             // Reset per-question so prompts stay independent (best-effort across node-llama-cpp versions).
             try {
@@ -185,9 +194,30 @@ export class LocalLlm {
             const answer: string = await this.session.prompt(question, {
                 maxTokens: this.opts.maxTokens || 256,
                 signal: abort.signal,
+                // Older node-llama-cpp versions ignore unknown options.
+                ...(this.opts.noThoughts ? { budgets: { thoughtTokens: 0 } } : {}),
+                onToken: (chunk: unknown[]) => {
+                    const now = Date.now();
+                    if (!firstAt) {
+                        firstAt = now;
+                    }
+                    lastAt = now;
+                    tokens += Array.isArray(chunk) ? chunk.length : 1;
+                },
             });
             if (abort.signal.aborted) {
                 throw new Error('aborted');
+            }
+            this.lastRun = {
+                ms: Date.now() - started,
+                promptTokens: this.countTokens(question),
+                tokens,
+                firstTokenMs: firstAt ? firstAt - started : undefined,
+                // The first token's own time belongs to prompt processing, so count the rest.
+                genMs: tokens > 1 ? lastAt - firstAt : 0,
+            };
+            if (this.lastRun.genMs > 0) {
+                this.lastRun.tokens = tokens - 1;
             }
             return (answer || '').trim();
         } catch (e) {
@@ -222,10 +252,14 @@ const REFUSAL = [
     /\bhandoff\b/i,
     // en
     /\bi('?m| am)\s+an?\s+ai\b/i,
+    /\bas\s+an?\s+ai\b/i, // "as an AI language model, I don't have the ability …"
     /\bi\s+(can('?t|not)|am\s+unable\s+to)\b.*\b(turn|switch|control|access|interact|device|light)\b/i,
+    /\bi\s+(don'?t|do\s+not)\s+have\s+(the\s+ability|any\s+(information|data|way)|access|real[- ]time)\b/i,
     // de
     /\bich\s+bin\s+eine?\s+(ki|künstliche)\b/i,
+    /\bals\s+(eine?\s+)?(ki|künstliche)\b/i,
     /\bkann\s+.*\bnicht\b.*\b(schalten|steuern|einschalten|zugreifen|geräte?|licht)\b/i,
+    /\bhabe\s+keinen?\s+(zugriff|zugang|möglichkeit)\b/i,
     // ru (\w/\b are ASCII-only → use Cyrillic classes / plain substrings)
     /искусственн[а-яё]*\s+интеллект/i,
     /не\s+(могу|имею)/i,

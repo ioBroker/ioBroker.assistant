@@ -137,8 +137,35 @@ satellites stay simple. See §7.
    - Click **Test connection**. On success, pick a **Model** (the dropdown loads the provider's models;
      you can also type a model id).
 3. *(Optional)* enable **Answer simple commands locally** (offline rule engine) and/or **Use a local LLM**
-   (click **Install local model** — downloads engine + model; watch the progress).
+   (click **Install local model** — downloads engine + model; watch the progress). Models are managed on the
+   tab **Local models** (see below).
 4. Set **Access / permissions** (see §6) and save.
+
+### Local models
+
+The tab **Local models** (visible with *Use a local LLM*) keeps several GGUF models side by side:
+
+- **Active model**: the model the instance loads. Saving restarts the instance; switching is not done at
+  runtime. **Use** in the table puts a model into this field.
+- **Model folder**: absolute path, e.g. on an SSD; empty = `<data folder of the instance>/models`. The
+  table lists the folder from the form at once, before saving. Models in an old folder are not moved.
+- **Table**: size of each model, sum and free disk space; statistics per model (asked / answered /
+  handed over, failures = timeouts and errors, tokens per second, time to the first token, answer time,
+  load time, last use). Statistics survive restarts and can be reset per model. The active and the loaded
+  model cannot be deleted.
+- **Add a model**: presets with description, parameters, size and the languages the authors name (a
+  warning if the assistant's language is not among them), or an own link to a `.gguf` file (Hugging Face
+  page links and `hf:org/repo/file.gguf` work). The free space is checked first; a file that is not a
+  GGUF model (e.g. an HTML error page) is thrown away. Downloads can run in parallel and be cancelled.
+- **Benchmark** (button at the loaded model): asks the model test questions in the assistant's language
+  and in English. Questions about the home must be handed over (the local model has no tools),
+  general questions answered with the right fact. The result (correct, missed and needless hand-overs,
+  wrong answers, tokens/s) is stored with the model; click it for every question and answer. These
+  are the real numbers of this host: published benchmarks say nothing about this role.
+
+The speed class of a preset is an estimate from its size, not a measurement. Very small models tend to
+"confirm" a switch command they cannot carry out ("Okay, the light is on"). The benchmark shows that as a
+missed hand-over.
 
 ### Using it as text
 
@@ -1151,5 +1178,7 @@ Everything the assistant can do is reachable from a script. The reply always arr
 | `sendNotification` | the notification-manager payload | `{ sent }` — not meant to be called by hand |
 | `voice` / `registerSatellite` | audio / registration | the satellite protocol, see §7 |
 
-`getModels`, `getVoices`, `getSttModels`, `getWeatherInstances`, `installLocalLlm` and
-`testApiConnection` exist for the settings dialog and are of little use elsewhere.
+`getModels`, `getVoices`, `getSttModels`, `getWeatherInstances`, `installLocalLlm`,
+`testApiConnection` and the commands of the "Local models" tab (`listLocalModels`, `getLocalModels`,
+`addLocalModel`, `cancelLocalModelDownload`, `deleteLocalModel`, `resetLocalModelStats`,
+`benchmarkLocalModel`) exist for the settings dialog and are of little use elsewhere.
