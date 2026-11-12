@@ -23,6 +23,7 @@ import * as path from 'node:path';
 import { CachedTts } from './ttsCache';
 import { FallbackStt, FallbackTts, type NamedEngine } from './fallback';
 import { isoToLocale } from './lang';
+import { LanguageTts, VoicePerLanguage } from './speechLanguage';
 import type { VoiceLogger } from './download';
 
 export type SpeechProvider = 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk' | 'parakeet' | 'piper';
@@ -75,6 +76,15 @@ export interface EngineContext {
     decodeAudio?: AudioDecoder;
     /** Longest text that is spoken, in characters; longer ones are cut at a sentence end. 0 = no limit, absent = 400. */
     ttsMaxChars?: number;
+    /**
+     * Language the satellites listen in (ISO-639-1). A voice set for one language (Polly 'Vicki') is only used for
+     * it; an answer in another language gets the default voice of that language.
+     */
+    language?: string;
+    /** Table "voice per language" (ISO code → voice of the main TTS provider); absent = the voices above. */
+    voicesByLanguage?: Record<string, string>;
+    /** Language the answering tier reported for exactly this text (pi-agent `language`); absent → by its letters. */
+    reportedLanguage?: (text: string) => string | undefined;
     /** Instance of ioBroker.ai-parakeet for the provider `parakeet`, e.g. 'ai-parakeet.0'. */
     parakeetInstance?: string;
     /** Message bus to other instances (ai-parakeet); absent → `parakeet` cannot be used. */
@@ -149,9 +159,14 @@ function buildSttEngine(provider: SpeechProvider, ctx: EngineContext): SttEngine
 }
 
 export function createTtsEngine(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
+    // Outermost: every text is spoken in its own language — a German voice spells a Russian answer letter by letter
+    return new LanguageTts(fallbackTts(provider, ctx), ctx.reportedLanguage, ctx.log);
+}
+
+function fallbackTts(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
     // Each engine gets the shared behaviour (disk cache, length limit, SSML) and its own cache directory,
     // so a fallback engine's voice can never be served later while the primary one is healthy again.
-    const primary: NamedEngine<TtsEngine> = { name: provider, engine: cachedTts(provider, ctx) };
+    const primary: NamedEngine<TtsEngine> = { name: provider, engine: withLanguageVoices(provider, ctx) };
     const fallback = ctx.ttsFallback && ctx.ttsFallback !== provider ? ctx.ttsFallback : '';
     if (!fallback) {
         return primary.engine;
@@ -163,6 +178,34 @@ export function createTtsEngine(provider: SpeechProvider, ctx: EngineContext): T
         ctx.log.warn(`Text-to-speech fallback '${fallback}' unavailable: ${(e as Error).message}`);
         return primary.engine;
     }
+}
+
+/** Key of a provider in {@link VoiceNames}; the speech-to-text-only providers have no voice. */
+function voiceKey(provider: SpeechProvider): keyof VoiceNames | '' {
+    return provider === 'vosk' || provider === 'parakeet' ? '' : provider;
+}
+
+/**
+ * The main provider with the table "voice per language": one engine per row with that voice. The table names voices
+ * of the main provider, so the fallback provider does not get it.
+ */
+function withLanguageVoices(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
+    const main = cachedTts(provider, ctx);
+    const key = voiceKey(provider);
+    const rows = Object.entries(ctx.voicesByLanguage || {});
+    if (!key || !rows.length) {
+        return main;
+    }
+    const byLanguage: Record<string, TtsEngine> = {};
+    for (const [lang, voice] of rows) {
+        try {
+            // the voice of a row is for its language (Polly names say nothing about it)
+            byLanguage[lang] = cachedTts(provider, { ...ctx, language: lang, voices: { ...ctx.voices, [key]: voice } });
+        } catch (e) {
+            ctx.log.warn(`Voice '${voice}' for '${lang}' unavailable: ${(e as Error).message}`);
+        }
+    }
+    return new VoicePerLanguage(main, byLanguage);
 }
 
 /**
@@ -191,7 +234,7 @@ function buildTtsEngine(provider: SpeechProvider, ctx: EngineContext): TtsEngine
             return new AzureTts(ctx.creds.azureKey, ctx.creds.azureRegion, ctx.voices.azure);
         case 'aws':
             requireAws(ctx.creds);
-            return new AwsTts(ctx.creds.aws, ctx.voices.aws);
+            return new AwsTts(ctx.creds.aws, ctx.voices.aws, ctx.language);
         case 'piper':
             return new PiperTts(ctx.dataDir, ctx.voices.piper, ctx.log);
         case 'vosk':

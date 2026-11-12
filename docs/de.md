@@ -425,6 +425,13 @@ wähle:
 - **Sprachausgabe-Anbieter** — OpenAI, OpenRouter, Azure, AWS oder **Piper** (lokal, offline).
 - Anbieter-Schlüssel (getrennt vom LLM-Schlüssel; eine *Sprach-Schlüssel-Quelle* spiegelt manual/manager).
   Stimmen und lokale Modelle laden in Dropdowns.
+- **Stimme pro Antwortsprache** — eine Antwort in einer anderen Sprache als der der Satelliten wird in ihrer eigenen
+  Sprache gesprochen: in der, die pi-agent (ab 0.10.1) für die Antwort meldet, sonst in der, die ihre Buchstaben
+  verraten (Kyrillisch, Griechisch, Chinesisch …; lateinische Buchstaben unterscheiden Deutsch nicht von Englisch).
+  Eine oben eingestellte Stimme für eine Sprache (`de_DE-thorsten-medium`, `de-DE-KatjaNeural`, Polly `Vicki`) gilt
+  nur für diese Sprache; andere Sprachen bekommen die Standardstimme des Anbieters oder die Stimme ihrer Zeile in
+  dieser Tabelle (z. B. `ru` → `ru_RU-dmitri-medium`). Piper lädt die Stimmen der Tabelle beim Start (je ~60 MB).
+  OpenAI-Stimmen sprechen jede Sprache.
 
 **OpenRouter** bietet mit einem Schlüssel die Sprachmodelle vieler Hersteller: Whisper, Deepgram,
 ElevenLabs Scribe und Voxtral für die Erkennung; ElevenLabs, Gemini TTS, Microsoft MAI-Voice, Deepgram Aura,

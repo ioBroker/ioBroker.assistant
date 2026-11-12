@@ -411,6 +411,12 @@ speech recognition/synthesis available; **it does not open any network port**. T
 - **Text-to-speech provider** — OpenAI, OpenRouter, Azure, AWS, or **Piper** (local, offline).
 - Provider keys (separate from the LLM key; a *Speech credential mode* mirrors manual/manager). Voices and
   local models load into dropdowns.
+- **Voice per answer language** — an answer in another language than the satellites listen in is spoken in its own
+  language: the language pi-agent (0.10.1+) reports for the answer, otherwise what its letters tell (Cyrillic,
+  Greek, Chinese …; Latin letters do not tell German from English). A voice set above for one language
+  (`de_DE-thorsten-medium`, `de-DE-KatjaNeural`, Polly `Vicki`) is only used for that language; other languages
+  get the provider's default voice, or the voice of their row in this table (e.g. `ru` → `ru_RU-dmitri-medium`).
+  Piper loads the voices of the table at the start (~60 MB each). OpenAI voices speak every language.
 
 **OpenRouter** gives one key for the speech models of many vendors: Whisper, Deepgram, ElevenLabs Scribe,
 Voxtral for recognition; ElevenLabs, Gemini TTS, Microsoft MAI-Voice, Deepgram Aura, Kokoro and more for the

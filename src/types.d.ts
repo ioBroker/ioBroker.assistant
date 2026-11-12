@@ -243,6 +243,8 @@ export interface AdapterConfig {
     voskModel: string;
     /** Local Piper voice name, e.g. 'de_DE-thorsten-medium' ('' → default per language). */
     piperVoice: string;
+    /** Voice of the TTS provider per answer language, e.g. ru → ru_RU-dmitri-medium; empty = the voice above. */
+    ttsVoices?: { language: string; voice: string }[];
 
     /**
      * Where the speech credentials come from:

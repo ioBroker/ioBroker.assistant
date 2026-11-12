@@ -1,9 +1,9 @@
 'use strict';
-// The language an answer is spoken in: what pi-agent reports for it, else what its letters tell, else the voice
+// The language an answer is spoken in (speechLanguage.ts): what pi-agent reports for it, else what its letters tell, else the voice
 // language; and the Piper voice of the settings only for its own language.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { scriptLanguage, speechLanguage } = require('../../build/lib/voice/lang');
+const { scriptLanguage, speechLanguage } = require('../../build/lib/voice/speechLanguage');
 const { PiperTts } = require('../../build/lib/voice/piper');
 const { PiAgentHarness } = require('../../build/lib/piAgent');
 
@@ -63,4 +63,19 @@ test('PiAgentHarness remembers the language pi-agent reports for an answer', asy
     assert.equal(harness.languageOf('Ok.'), '', 'an older pi-agent reports nothing');
     await ask('y');
     assert.equal(harness.languageOf('x'), '', 'an invalid code is ignored');
+});
+
+test('PiAgentHarness finds the language of a question to confirm without its [[LISTEN]] mark', async () => {
+    // the assistant takes the mark out before the TTS: the text the TTS looks up has none
+    const host = {
+        async getForeignStateAsync() {
+            return { val: true };
+        },
+        async sendToAsync() {
+            return { answer: 'Restart the instance telegram.0? Say yes or no. [[LISTEN]]', language: 'en' };
+        },
+    };
+    const harness = new PiAgentHarness(host, 'pi-agent.0');
+    await harness.ask({ text: 'restart telegram', conversation: 'Gast', instructions: '', language: 'de' });
+    assert.equal(harness.languageOf('Restart the instance telegram.0? Say yes or no.'), 'en');
 });

@@ -35,9 +35,10 @@ test('STT factory: constructs / throws per provider', () => {
 test('TTS factory: constructs / throws per provider', () => {
     const withKey = ctx({ creds: { ...ctx().creds, openaiKey: 'sk-x', azureKey: 'a', azureRegion: 'r', aws: { accessKeyId: 'A', secretAccessKey: 'S', region: 'eu' } } });
     // Every engine comes wrapped in the shared cache/length/SSML layer, so the provider is internal.
+    // ...inside the language layer, which speaks every text in its own language (speechLanguage.ts).
     for (const provider of ['openai', 'azure', 'aws', 'piper']) {
         const engine = createTtsEngine(provider, withKey);
-        assert.equal(engine.constructor.name, 'CachedTts', provider);
+        assert.equal(engine.inner.constructor.name, 'CachedTts', provider);
         assert.equal(typeof engine.synthesize, 'function');
         assert.equal(typeof engine.warm, 'function', 'the cache can be warmed');
     }
@@ -48,14 +49,14 @@ test('a configured fallback wraps the pair; an unusable one is dropped with a wa
     const base = ctx({ creds: { ...ctx().creds, openaiKey: 'sk-x' } });
     const warnings = [];
     const withFallback = { ...base, ttsFallback: 'piper', log: { ...base.log, warn: m => warnings.push(m) } };
-    assert.equal(createTtsEngine('openai', withFallback).constructor.name, 'FallbackTts');
+    assert.equal(createTtsEngine('openai', withFallback).inner.constructor.name, 'FallbackTts');
 
     // Same provider as the primary → nothing to fall back to.
-    assert.equal(createTtsEngine('piper', { ...base, ttsFallback: 'piper' }).constructor.name, 'CachedTts');
+    assert.equal(createTtsEngine('piper', { ...base, ttsFallback: 'piper' }).inner.constructor.name, 'CachedTts');
 
     // A fallback that cannot be built (no credentials) must not take the primary down.
     const broken = { ...base, ttsFallback: 'azure', log: { ...base.log, warn: m => warnings.push(m) } };
-    assert.equal(createTtsEngine('openai', broken).constructor.name, 'CachedTts');
+    assert.equal(createTtsEngine('openai', broken).inner.constructor.name, 'CachedTts');
     assert.match(warnings.join('\n'), /fallback 'azure' unavailable/);
 });
 

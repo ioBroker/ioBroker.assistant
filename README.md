@@ -237,6 +237,9 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@sadam6752-tech) A Piper voice set for one language is only used for it, a Russian answer on a German satellite gets a Russian voice instead of being spelled letter by letter; the language pi-agent 0.10.1 reports for an answer is used for its voice (#27)
+* (@GermanBluefox) The language of an answer is taken for every voice: UDP and Wyoming satellites, announcements and the voice test too, and Azure, AWS and OpenRouter voices set for one language are only used for it. New table "Voice per answer language" in the Voice tab (e.g. ru → ru_RU-dmitri-medium); Piper loads its voices at the start. The language pi-agent reports is also found for its questions to confirm, and a mark that the letters contradict is not believed
 ### 1.6.0 (2026-11-10)
 * (@GermanBluefox) Local LLM: new tab "Local models" to keep several models, pick the active one (saving restarts the instance), choose the folder, see sizes and free space, download presets (with description, size and languages) or own GGUF links, delete models, and see statistics per model (questions, answers, hand-overs, failures, tokens/s, time to the first token, load time). A benchmark on the host checks that the loaded model hands home questions over and answers general ones correctly. The model folder can be picked on the disk of the host (Admin 8.3.11+)
 * (@GermanBluefox) Settings split into topic tabs: AI, Commands, Local models, Devices (with the permissions), Services, Triggers, Voice, Satellites (with the connections of the satellites) and Chat as the last one; rarely needed options (max tokens and system prompt, ffmpeg, end of speech and diagnosis) are in sections that open on a click

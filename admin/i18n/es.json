@@ -259,5 +259,8 @@
   "End of speech and diagnosis": "Fin del habla y diagnóstico",
   "Voice is off. Turn it on in the tab \"Voice\" to connect satellites.": "La voz está desactivada. Actívala en la pestaña «Voz» para conectar satélites.",
   "Status": "Estado",
-  "ffmpeg": "ffmpeg"
+  "ffmpeg": "ffmpeg",
+  "Voice per answer language": "Voice per answer language",
+  "An answer in another language than the satellites listen in (e.g. pi-agent answers a Russian question in Russian) is spoken with the voice of its language, not spelled letter by letter by the voice above. Without a row the provider's default voice for that language is used. Voice names of the speech output provider, e.g. ru → ru_RU-dmitri-medium (Piper), ru-RU-SvetlanaNeural (Azure), Tatyana (AWS).": "An answer in another language than the satellites listen in (e.g. pi-agent answers a Russian question in Russian) is spoken with the voice of its language, not spelled letter by letter by the voice above. Without a row the provider's default voice for that language is used. Voice names of the speech output provider, e.g. ru → ru_RU-dmitri-medium (Piper), ru-RU-SvetlanaNeural (Azure), Tatyana (AWS).",
+  "Language (e.g. ru)": "Language (e.g. ru)"
 }

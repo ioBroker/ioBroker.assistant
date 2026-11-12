@@ -104,6 +104,8 @@ export class AwsTts implements TtsEngine {
         creds: AwsCreds,
         /** Polly VoiceId (e.g. 'Vicki', 'Tatyana'); empty → default per language. */
         private readonly voice: string,
+        /** Language the voice is set for ('' = every language); Polly voice ids do not tell it. */
+        private readonly language = '',
     ) {
         this.client = new PollyClient({
             region: creds.region,
@@ -122,7 +124,10 @@ export class AwsTts implements TtsEngine {
 
     private async speak(text: string, lang: string, textType: 'text' | 'ssml'): Promise<TtsResult> {
         const iso = (lang || 'en').split('-')[0].toLowerCase();
-        const voice = this.voice || DEFAULT_POLLY_VOICE[iso] || 'Joanna';
+        const home = (this.language || '').split('-')[0].toLowerCase();
+        // the set voice only for its language: Vicki reads no Russian, Tatyana does
+        const own = this.voice && (!home || iso === home || !DEFAULT_POLLY_VOICE[iso]) ? this.voice : '';
+        const voice = own || DEFAULT_POLLY_VOICE[iso] || this.voice || 'Joanna';
         const resp = await this.client.send(
             new SynthesizeSpeechCommand({
                 Text: text,

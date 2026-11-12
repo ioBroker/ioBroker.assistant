@@ -184,5 +184,5 @@ test('factory: OpenRouter engines need the OpenRouter key', () => {
     assert.throws(() => createSttEngine('openrouter', ctx('')), /OpenRouter speech needs an API key/);
     assert.throws(() => createTtsEngine('openrouter', ctx('')), /OpenRouter speech needs an API key/);
     assert.equal(createSttEngine('openrouter', ctx('sk-or')).constructor.name, 'OpenRouterStt');
-    assert.equal(createTtsEngine('openrouter', ctx('sk-or')).constructor.name, 'CachedTts');
+    assert.equal(createTtsEngine('openrouter', ctx('sk-or')).inner.constructor.name, 'CachedTts');
 });

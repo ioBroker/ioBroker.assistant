@@ -19,6 +19,19 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Antwort in ihrer eigenen Sprache sprechen** (Feldbericht 2026-11-12: pi-agent antwortete russisch, Thorsten
+  buchstabierte „kyrillisch a …“). PR #27 (sadam6752-tech): pi-agent 0.10.1 gibt `result.language` zurück
+  (`[[lang:xx]]`-Marke des Modells, sonst Schrift), `PiAgentHarness.languageOf(text)` (Schlüssel **ohne**
+  `[[LISTEN]]`/`[[DONE]]`, sonst fand die TTS die Rückfragen nicht). Darauf `src/lib/voice/speechLanguage.ts`:
+  `LanguageTts` ist die **äußerste** Schicht in `createTtsEngine` (gilt für alle Transporte, Durchsagen, Stimmtest),
+  `speechLanguage(text, configured, reported)` — Meldung gilt, wenn die Schrift nicht widerspricht; sonst Schrift
+  (Kyrillisch/ґєії→uk/Griechisch/CJK/Kana/Hangul/Arabisch/Hebräisch, ≥ 3 Buchstaben); Latein auf nicht-lateinischer
+  Sprache → `en`. Eine eingestellte Stimme nur für ihre Sprache (`voiceFitsLanguage` = Locale am Namensanfang,
+  Azure `Multilingual` = alle): Piper, Azure, OpenRouter; Polly über `EngineContext.language`. Tabelle `ttsVoices`
+  `{language, voice}` → `VoicePerLanguage` (eine Engine + Cache pro Zeile, nur Hauptanbieter, `prepare` lädt alle).
+  Schichten: `LanguageTts(Fallback(VoicePerLanguage(Cached…), Cached))`. STT bleibt bei `voiceLanguage` (Whisper
+  bekommt `language` → erkennt nichts; Auto-Erkennung wäre ein Opt-in, bei kurzen Befehlen unzuverlässig).
+  Tests: `speechLanguage.test.js`, `answerLanguage.test.js`. Nicht am Gerät.
 - **Modell-Manager für das lokale LLM** (Nutzerwunsch 2026-11-10, Branch `feat/local-model-manager`). `src/lib/llmModels.ts`
   `ModelManager`: Ordner `localLlmModelDir` (absolut, leer = `<Datenverzeichnis>/models` = bisheriger Ort), `list()` =
   `*.gguf` mit Größe + Quelle aus `<Ordner>/models.json`, `disk()` per `fs.statfs` (nächster existierender Elternordner),

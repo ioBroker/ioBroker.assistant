@@ -1,0 +1,162 @@
+'use strict';
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const {
+    scriptLanguage,
+    speechLanguage,
+    voiceFitsLanguage,
+    parseVoiceTable,
+    LanguageTts,
+    VoicePerLanguage,
+} = require('../../build/lib/voice/speechLanguage');
+const { AwsTts } = require('../../build/lib/voice/aws');
+const { createTtsEngine } = require('../../build/lib/voice/engines');
+
+const log = { debug() {}, info() {}, warn() {}, error() {} };
+
+/** A TTS engine that records the language it was asked for. */
+function fakeEngine(name) {
+    const calls = [];
+    return {
+        calls,
+        async synthesize(text, lang) {
+            calls.push({ name, text, lang });
+            return { pcm: Buffer.alloc(2), sampleRate: 16000 };
+        },
+        async prepare(lang) {
+            calls.push({ name, prepare: lang });
+        },
+    };
+}
+
+test('scriptLanguage: Cyrillic, Ukrainian, Greek, Chinese, Japanese; Latin and short texts say nothing', () => {
+    assert.equal(scriptLanguage('Свет в гостиной включён.'), 'ru');
+    assert.equal(scriptLanguage('Світло у вітальні увімкнено.'), 'uk');
+    assert.equal(scriptLanguage('Το φως είναι αναμμένο.'), 'el');
+    assert.equal(scriptLanguage('客厅的灯开着。'), 'zh');
+    assert.equal(scriptLanguage('リビングの電気がついています。'), 'ja');
+    assert.equal(scriptLanguage('Das Licht ist an.'), '');
+    assert.equal(scriptLanguage('OK'), '');
+    assert.equal(scriptLanguage('21 °C'), '');
+});
+
+test('speechLanguage: a Russian answer on a German satellite is spoken in Russian', () => {
+    // the field report: pi-agent answered in Russian, the German voice spelled "kyrillisch a, kyrillisch b …"
+    assert.equal(speechLanguage('В гостиной 21 градус, свет выключен.', 'de'), 'ru');
+    // a German device name in a Russian sentence does not change that
+    assert.equal(speechLanguage('Лампа «Wohnzimmer» сейчас выключена.', 'de'), 'ru');
+    // the letters fit: the configured language stays
+    assert.equal(speechLanguage('Das Licht ist an.', 'de'), 'de');
+    assert.equal(speechLanguage('Свет включён.', 'ru'), 'ru');
+    assert.equal(speechLanguage('Світло увімкнено.', 'ru'), 'uk');
+    // too few letters: nothing to tell
+    assert.equal(speechLanguage('OK.', 'ru'), 'ru');
+    // Latin letters on a Russian satellite: English is the best guess, a Russian voice would mangle them
+    assert.equal(speechLanguage('The light is on.', 'ru'), 'en');
+});
+
+test('speechLanguage: the language pi-agent reports wins, unless the letters contradict it', () => {
+    assert.equal(speechLanguage('The light is on.', 'de', 'en'), 'en');
+    assert.equal(speechLanguage('Свет включён.', 'de', 'ru'), 'ru');
+    assert.equal(speechLanguage('OK', 'de', 'en'), 'en');
+    // a wrong mark on a Cyrillic answer: the letters decide
+    assert.equal(speechLanguage('Свет включён.', 'de', 'de'), 'ru');
+    assert.equal(speechLanguage('Das Licht ist an.', 'de', 'ru'), 'de');
+    assert.equal(speechLanguage('Das Licht ist an.', 'de', 'ru-RU'), 'de');
+});
+
+test('voiceFitsLanguage: by the locale at the start of the name', () => {
+    assert.equal(voiceFitsLanguage('de_DE-thorsten-medium', 'de'), true);
+    assert.equal(voiceFitsLanguage('de_DE-thorsten-medium', 'ru'), false);
+    assert.equal(voiceFitsLanguage('de-DE-KatjaNeural', 'ru'), false);
+    assert.equal(voiceFitsLanguage('de-DE-SeraphinaMultilingualNeural', 'ru'), true);
+    assert.equal(voiceFitsLanguage('de-DE-Klaus:MAI-Voice-2', 'ru'), false);
+    assert.equal(voiceFitsLanguage('alloy', 'ru'), true);
+    assert.equal(voiceFitsLanguage('Kore', 'ru'), true);
+    assert.equal(voiceFitsLanguage('de_DE-thorsten-medium', ''), true);
+});
+
+test('parseVoiceTable: ISO code → voice, incomplete rows skipped', () => {
+    assert.deepEqual(
+        parseVoiceTable([
+            { language: 'ru', voice: ' ru_RU-dmitri-medium ' },
+            { language: 'en-US', voice: 'en_US-lessac-medium' },
+            { language: '', voice: 'x' },
+            { language: 'fr', voice: '' },
+            null,
+        ]),
+        { ru: 'ru_RU-dmitri-medium', en: 'en_US-lessac-medium' },
+    );
+    assert.deepEqual(parseVoiceTable(undefined), {});
+});
+
+test('LanguageTts: hands the engine the language of the text, the reported one first', async () => {
+    const engine = fakeEngine('main');
+    const reported = new Map([['The light is on.', 'en']]);
+    const tts = new LanguageTts(engine, text => reported.get(text), log);
+    await tts.synthesize('Свет включён.', 'de');
+    await tts.synthesize('The light is on.', 'de');
+    await tts.synthesize('Das Licht ist an.', 'de');
+    assert.deepEqual(
+        engine.calls.map(c => c.lang),
+        ['ru', 'en', 'de'],
+    );
+});
+
+test('VoicePerLanguage: the row of the language, else the default engine; prepare loads every row', async () => {
+    const main = fakeEngine('main');
+    const ru = fakeEngine('ru');
+    const tts = new VoicePerLanguage(main, { ru });
+    await tts.synthesize('Свет включён.', 'ru');
+    await tts.synthesize('Das Licht ist an.', 'de');
+    assert.deepEqual(ru.calls, [{ name: 'ru', text: 'Свет включён.', lang: 'ru' }]);
+    assert.deepEqual(main.calls, [{ name: 'main', text: 'Das Licht ist an.', lang: 'de' }]);
+    await tts.prepare('de');
+    assert.deepEqual(main.calls.at(-1), { name: 'main', prepare: 'de' });
+    assert.deepEqual(ru.calls.at(-1), { name: 'ru', prepare: 'ru' });
+});
+
+test('AwsTts: the set voice only for its language, the default voice of another one', async () => {
+    const creds = { accessKeyId: 'a', secretAccessKey: 'b', region: 'eu-central-1' };
+    const used = [];
+    const polly = new AwsTts(creds, 'Vicki', 'de');
+    polly.client.send = async cmd => {
+        used.push(cmd.input.VoiceId);
+        return { AudioStream: { transformToByteArray: async () => new Uint8Array(2) } };
+    };
+    await polly.synthesize('Das Licht ist an.', 'de');
+    await polly.synthesize('Свет включён.', 'ru');
+    await polly.synthesize('x', 'uk'); // no Polly default for Ukrainian: the set voice rather than none
+    assert.deepEqual(used, ['Vicki', 'Tatyana', 'Vicki']);
+});
+
+test('createTtsEngine: the language layer is outside, a row of the table gets its own engine', async () => {
+    const os = require('node:os');
+    const path = require('node:path');
+    const fs = require('node:fs');
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'speechlang-'));
+    try {
+        const ctx = {
+            creds: { openaiKey: '', openrouterKey: '', azureKey: 'k', azureRegion: 'westeurope', aws: {} },
+            voices: { openai: 'alloy', azure: 'de-DE-KatjaNeural', aws: '', piper: '', openrouter: '' },
+            dataDir,
+            log,
+            voskModel: '',
+            sttModel: '',
+            ttsModel: '',
+            openrouterSttModel: '',
+            openrouterTtsModel: '',
+            language: 'de',
+            voicesByLanguage: { ru: 'ru-RU-SvetlanaNeural' },
+        };
+        const tts = createTtsEngine('azure', ctx);
+        assert.equal(tts.constructor.name, 'LanguageTts');
+        assert.equal(tts.languageFor('Свет включён.', 'de'), 'ru');
+        // one cache directory per voice: the Russian row does not share the German one
+        assert.equal(tts.inner.constructor.name, 'VoicePerLanguage');
+        assert.deepEqual(Object.keys(tts.inner.byLanguage), ['ru']);
+    } finally {
+        fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+});
