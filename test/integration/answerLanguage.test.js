@@ -3,7 +3,7 @@
 // language; and the Piper voice of the settings only for its own language.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { scriptLanguage, speechLanguage } = require('../../build/lib/voice/speechLanguage');
+const { scriptLanguage, speechLanguage, nluAnswerLanguage } = require('../../build/lib/voice/speechLanguage');
 const { PiperTts } = require('../../build/lib/voice/piper');
 const { PiAgentHarness } = require('../../build/lib/piAgent');
 
@@ -78,4 +78,14 @@ test('PiAgentHarness finds the language of a question to confirm without its [[L
     const harness = new PiAgentHarness(host, 'pi-agent.0');
     await harness.ask({ text: 'restart telegram', conversation: 'Gast', instructions: '', language: 'de' });
     assert.equal(harness.languageOf('Restart the instance telegram.0? Say yes or no.'), 'en');
+});
+
+test('nluAnswerLanguage: a Russian question on a German satellite gets a Russian answer from the rule NLU', () => {
+    assert.equal(nluAnswerLanguage('Сколько сейчас времени?', 'de'), 'ru');
+    assert.equal(nluAnswerLanguage('Какая температура в гостиной?', 'de-DE'), 'ru');
+    // the voice language itself, Latin letters and languages without NLU texts keep the voice language
+    assert.equal(nluAnswerLanguage('Сколько сейчас времени?', 'ru'), '');
+    assert.equal(nluAnswerLanguage('Wie spät ist es?', 'de'), '');
+    assert.equal(nluAnswerLanguage('What time is it?', 'de'), '');
+    assert.equal(nluAnswerLanguage('Скільки зараз часу?', 'de'), '');
 });

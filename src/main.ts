@@ -144,7 +144,8 @@ import { MAX_TTS_CHARS, parseTtsMaxChars, spokenLengthHint } from './lib/voice/t
 import { CaptureStore, type DiscardedCapture } from './lib/voice/captures';
 import { downloadFfmpegStatic, ffmpegStaticPath } from './lib/voice/ffmpegStatic';
 import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
-import { parseVoiceTable } from './lib/voice/speechLanguage';
+import { nluAnswerLanguage, parseVoiceTable } from './lib/voice/speechLanguage';
+
 import { AdapterInstaller, type InstallerAdapter } from './lib/installer';
 import {
     attachmentNote,
@@ -595,6 +596,11 @@ class Assistant extends Adapter {
      * Where the request being answered came from, for the LLM tools: a tool only gets the model's
      * arguments, but "play X" from the bedroom satellite should go to the bedroom TV.
      */
+    /**
+     * The language of the question the rule-based NLU is answering, while it runs ({@link tryLocalNlu}): a Russian
+     * question on a German satellite gets a Russian answer. Empty outside the NLU.
+     */
+    private readonly nluLanguage = new AsyncLocalStorage<string>();
     private readonly requestOrigin = new AsyncLocalStorage<{
         source: string;
         room: string;
@@ -4003,9 +4009,12 @@ class Assistant extends Adapter {
         return this.requestOrigin.getStore()?.attachments ?? NO_ATTACHMENTS;
     }
 
-    /** Language of fixed replies: the voice language, else the system language. */
+    /**
+     * Language of fixed replies: the language of the question while the rule-based NLU answers it (see
+     * {@link tryLocalNlu}), else the voice language, else the system language.
+     */
     private answerLanguage(): string {
-        return String(this.config.voiceLanguage || this.language || 'en');
+        return this.nluLanguage.getStore() || String(this.config.voiceLanguage || this.language || 'en');
     }
 
     /**
@@ -4042,7 +4051,7 @@ class Assistant extends Adapter {
 
     /** Reply to a voice message in which speech recognition found nothing. */
     private nothingHeardText(): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         return lang === 'ru'
             ? 'В голосовом сообщении я ничего не разобрала.'
             : lang === 'de'
@@ -4193,7 +4202,7 @@ class Assistant extends Adapter {
         if (!this.config.confirmWithTone || !this.config.voiceEnabled) {
             return '';
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         if (lang === 'ru') {
             return 'Если запрос был только командой включить, выключить или установить устройства на значение и всё получилось, ответь только управляющим маркером [[DONE]] (вместо фразы прозвучит короткий сигнал). На вопросы, при ошибках или если нужно что-то сообщить, отвечай как обычно.';
         }
@@ -4208,7 +4217,7 @@ class Assistant extends Adapter {
      * the time/weather lines are in the configured language, and the model followed them instead of the question.
      */
     private languageHint(): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         if (lang === 'ru') {
             return 'Всегда отвечай на том языке, на котором задан вопрос, даже если эти инструкции, имена устройств или данные на другом языке.';
         }
@@ -4228,12 +4237,12 @@ class Assistant extends Adapter {
             return '';
         }
         const limit = parseTtsMaxChars(this.config.ttsMaxChars) ?? MAX_TTS_CHARS;
-        return spokenLengthHint(limit, String(this.config.voiceLanguage || this.language || 'en'));
+        return spokenLengthHint(limit, this.answerLanguage());
     }
 
     /** What [[DONE]] says where no beep can be played */
     private doneText(): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         return lang === 'ru' ? 'Готово.' : lang === 'de' ? 'Erledigt.' : 'Done.';
     }
 
@@ -4304,7 +4313,7 @@ class Assistant extends Adapter {
      * satellite re-open its mic on the model's decision. Localized (de/en/ru).
      */
     private followUpHint(): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         if (lang === 'ru') {
             return 'Если твой ответ — это встречный вопрос и ты ждёшь ответа пользователя, добавь в самом конце управляющий маркер [[LISTEN]] (он удаляется и не произносится). Если ответа не требуется — не добавляй.';
         }
@@ -4321,7 +4330,7 @@ class Assistant extends Adapter {
      * timestamp there would bust the cache — incl. the large device list — on every single call.
      */
     private buildTimeContext(): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const locale = lang === 'de' ? 'de-DE' : lang === 'ru' ? 'ru-RU' : 'en-GB';
         let tz = '';
         try {
@@ -4351,7 +4360,7 @@ class Assistant extends Adapter {
      * LLM. Localized (de/en/ru) spoken-style reply; uses the host's local timezone via {@link Intl}.
      */
     private executeTimeIntent(intent: NluIntent): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const locale = lang === 'de' ? 'de-DE' : lang === 'ru' ? 'ru-RU' : 'en-GB';
         const now = new Date();
         if (intent.action === 'dateQuery') {
@@ -4456,7 +4465,7 @@ class Assistant extends Adapter {
             this.log.info(`Ring stopped by voice (${n} session(s)).`);
             this.journal?.note({ tier: 'stop' });
             this.journal?.step({ stage: 'stop', title: `Stop word: silenced ${n} ringing timer/alarm(s)` });
-            const lang = String(this.config.voiceLanguage || this.language || 'en');
+            const lang = this.answerLanguage();
             return lang === 'ru' ? 'Хорошо.' : lang === 'de' ? 'Ok.' : 'Okay.';
         }
         // An open question from `askUser` claims the next utterance of that source as its answer — before
@@ -4754,7 +4763,7 @@ class Assistant extends Adapter {
 
     /** Reply when nothing local understood the request and there is no cloud LLM (provider "none"). */
     private localOnlyFallback(): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         if (lang === 'ru') {
             return 'Извини, этого я не поняла. Без облачной языковой модели я понимаю только простые команды для устройств, таймеры и будильники.';
         }
@@ -4789,7 +4798,7 @@ class Assistant extends Adapter {
             const room = d.room ? `${d.room}, ` : '';
             lines.push(`- ${d.name} (${room}${d.type}): ${this.describeControls(d)}`);
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         lines.push(...this.satelliteVolumeLines(lang));
         if (!lines.length) {
             return '';
@@ -5322,6 +5331,16 @@ class Assistant extends Adapter {
         if (!this.mcp) {
             return null;
         }
+        // The NLU understands de/en/ru whatever the voice language is; its answer follows the question when the
+        // letters tell its language (Cyrillic → ru), and the voice of that language speaks it.
+        const asked = nluAnswerLanguage(question, this.config.voiceLanguage || this.language || 'en');
+        return asked
+            ? this.nluLanguage.run(asked, () => this.runLocalNlu(question, source))
+            : this.runLocalNlu(question, source);
+    }
+
+    /** {@link tryLocalNlu} in the language of its answer. */
+    private async runLocalNlu(question: string, source: string): Promise<string | null> {
         // Timer intents match device-independently (parse() checks them first), so build the NLU even
         // when no devices are known and always try timers before bailing out.
         const start = Date.now();
@@ -5576,7 +5595,7 @@ class Assistant extends Adapter {
         if (!device || !intent.stateId) {
             throw new Error('deferred intent without a device');
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const pick = (rus: string, ger: string, eng: string): string =>
             lang === 'ru' ? rus : lang === 'de' ? ger : eng;
         const room = intent.room || device.room;
@@ -5775,7 +5794,7 @@ class Assistant extends Adapter {
         if (!res.report) {
             throw new Error(res.error || 'no weather report');
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const text = buildWeatherAnswer(res.report, lang, intent.when);
         if (!text) {
             throw new Error(`the weather report has no data for '${intent.when || 'now'}'`);
@@ -5789,7 +5808,7 @@ class Assistant extends Adapter {
      * of an ESPHome device, the `volume` message of a UDP satellite.
      */
     private async executeVolumeIntent(intent: NluIntent, source: string): Promise<string> {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const satId = intent.room ? this.resolveSatelliteId(intent.room) : this.announceTargetForSource(source);
         const absolute = typeof intent.value === 'number' ? intent.value : null;
         const delta = intent.delta || 0;
@@ -5855,7 +5874,7 @@ class Assistant extends Adapter {
 
     /** Localized "this part did not work" sentence for a failed part of a combined command. */
     private nluFailureText(intent: NluIntent): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const what = intent.device?.name ? ` (${intent.device.name})` : '';
         return lang === 'ru'
             ? `Одну команду${what} выполнить не удалось.`
@@ -5870,9 +5889,7 @@ class Assistant extends Adapter {
      * the canonical device/room/action wording before matching.
      */
     private getNluAliases(): { from: string; to: string }[] {
-        const iso = String(this.config.voiceLanguage || this.language || 'en')
-            .split('-')[0]
-            .toLowerCase();
+        const iso = this.answerLanguage().split('-')[0].toLowerCase();
         return (this.config.nluAliases || [])
             .filter(a => a?.from && a?.to && (!a.language || String(a.language).split('-')[0].toLowerCase() === iso))
             .map(a => ({ from: a.from, to: a.to }));
@@ -6067,7 +6084,7 @@ class Assistant extends Adapter {
             return '';
         }
         // Respond in the assistant's interaction language (voice language, else system).
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -6168,7 +6185,7 @@ class Assistant extends Adapter {
         if (!mcp) {
             throw new Error('mcp not ready');
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -6218,7 +6235,7 @@ class Assistant extends Adapter {
         if (!mcp) {
             throw new Error('mcp not ready');
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -6499,7 +6516,7 @@ class Assistant extends Adapter {
 
     /** Build the spoken expiry message ("Timer abgelaufen: die Nudeln.") in the interaction language. */
     private timerAnnounceMessage(t: TimerInfo): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -6713,7 +6730,7 @@ class Assistant extends Adapter {
         if (!mgr) {
             return '';
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -6988,7 +7005,7 @@ class Assistant extends Adapter {
             () => {},
         );
         const announce = this.config.alarmAnnounce !== false;
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -7006,7 +7023,7 @@ class Assistant extends Adapter {
         if (!mgr) {
             return '';
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -7247,7 +7264,7 @@ class Assistant extends Adapter {
         if (typeof name === 'string') {
             return name;
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en') as ioBroker.Languages;
+        const lang = this.answerLanguage() as ioBroker.Languages;
         return name?.[lang] || name?.en || obj._id.split('.').pop() || obj._id;
     }
 
@@ -7296,7 +7313,7 @@ class Assistant extends Adapter {
         kind: YouTubeKind | 'auto',
         playerName?: string,
     ): Promise<YouTubePlayResult> {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const player = this.youtubePlayerFor(playerName);
         if (!player) {
             const names = this.youtubePlayers.map(p => p.name).join(', ');
@@ -7656,7 +7673,7 @@ class Assistant extends Adapter {
         if (!this.presence?.configured) {
             return '';
         }
-        return buildPresencePrompt(this.presence.list(), String(this.config.voiceLanguage || this.language || 'en'));
+        return buildPresencePrompt(this.presence.list(), this.answerLanguage());
     }
 
     /**
@@ -7712,7 +7729,7 @@ class Assistant extends Adapter {
      * ({@link flattenNotification}): a changed field degrades the spoken sentence, it never throws.
      */
     private async handleSystemNotification(message: unknown): Promise<{ sent: boolean }> {
-        const flat = flattenNotification(message, String(this.config.voiceLanguage || this.language || 'en'));
+        const flat = flattenNotification(message, this.answerLanguage());
         if (!flat.text) {
             this.log.warn('Notification from the notification-manager had nothing to speak.');
             return { sent: false };
@@ -8133,7 +8150,7 @@ class Assistant extends Adapter {
         if (this.config.useLongTermMemory === false || !this.memory) {
             return '';
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         return buildMemoryPrompt(this.memory.list(), lang);
     }
 
@@ -8263,7 +8280,7 @@ class Assistant extends Adapter {
         if (!value) {
             return '';
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const key = `${value}|${lang}`;
         const now = Date.now();
         if (this.weatherCtx && this.weatherCtx.key === key && now - this.weatherCtx.ts < WEATHER_CTX_TTL) {

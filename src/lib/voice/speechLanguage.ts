@@ -104,6 +104,22 @@ export function scriptLanguage(text: string): string {
     }
 }
 
+/** Languages the rule-based NLU has answer texts for. */
+const NLU_LANGUAGES = ['de', 'en', 'ru'];
+
+/**
+ * The language the rule-based NLU answers a question in when it is not the voice language: a Russian question on a
+ * German satellite gets "Сейчас 20:13." instead of "Es ist 20:13 Uhr.". '' = the voice language (Latin letters do
+ * not tell German from English, and the NLU has no texts for other languages).
+ *
+ * @param question what the user said
+ * @param voiceLanguage the language of the satellites
+ */
+export function nluAnswerLanguage(question: string, voiceLanguage: string): string {
+    const asked = scriptLanguage(question);
+    return NLU_LANGUAGES.includes(asked) && asked !== baseLanguage(voiceLanguage) ? asked : '';
+}
+
 /**
  * The language to speak a text in.
  *
