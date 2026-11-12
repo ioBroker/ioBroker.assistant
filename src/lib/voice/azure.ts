@@ -37,7 +37,9 @@ export class AzureStt implements SttEngine {
         const format = sdk.AudioStreamFormat.getWaveFormatPCM(sampleRate, 16, 1);
         const pushStream = sdk.AudioInputStream.createPushStream(format);
         // The push stream needs a standalone ArrayBuffer (not the pooled Node Buffer view).
-        pushStream.write(pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength) as ArrayBuffer);
+        const chunk = new ArrayBuffer(pcm.byteLength);
+        new Uint8Array(chunk).set(pcm);
+        pushStream.write(chunk);
         pushStream.close();
 
         const recognizer = new sdk.SpeechRecognizer(speechConfig, sdk.AudioConfig.fromStreamInput(pushStream));
