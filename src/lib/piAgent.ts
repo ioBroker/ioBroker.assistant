@@ -20,6 +20,7 @@
  */
 
 import type { ImageInput } from './media';
+import { AnswerLanguages } from './voice/speechLanguage';
 
 /** Longest instructions pi-agent accepts for a conversation; anything beyond is cut there. */
 export const PI_AGENT_MAX_INSTRUCTIONS = 20000;
@@ -86,24 +87,10 @@ export function conversationOf(source: string): string {
     return (source || 'default').replace(/\//g, '_').slice(0, 100);
 }
 
-/**
- * An answer as the TTS gets it: the assistant takes the control markers ([[LISTEN]] after a question to confirm,
- * [[DONE]]) out before speaking, so the language is kept under the text without them.
- */
-function answerKey(text: string): string {
-    return String(text || '')
-        .replace(/\[\[[A-Z]+\]\]/gi, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-/** How many answers {@link PiAgentHarness.languageOf} remembers. */
-const KEPT_LANGUAGES = 50;
-
 export class PiAgentHarness {
     private seq = 0;
     /** Language pi-agent reported per answer text (pi-agent 0.10.1+), for the voice that speaks it. */
-    private readonly languages = new Map<string, string>();
+    private readonly languages = new AnswerLanguages();
 
     public constructor(
         private readonly host: PiAgentHost,
@@ -146,14 +133,8 @@ export class PiAgentHarness {
         if (!answer) {
             throw new Error(`${this.instance} gave no answer`);
         }
-        const language = typeof result?.language === 'string' ? result.language.trim().toLowerCase() : '';
-        if (/^[a-z]{2,3}(-[a-z]{2,4})?$/.test(language)) {
-            const key = answerKey(answer);
-            this.languages.delete(key);
-            this.languages.set(key, language);
-            if (this.languages.size > KEPT_LANGUAGES) {
-                this.languages.delete(this.languages.keys().next().value as string);
-            }
+        if (typeof result?.language === 'string') {
+            this.languages.remember(answer, result.language);
         }
         return answer;
     }
@@ -163,6 +144,6 @@ export class PiAgentHarness {
      * left its mark out). The answer travels as plain text through the tiers; this finds its language again by text.
      */
     public languageOf(answer: string): string {
-        return this.languages.get(answerKey(answer)) || '';
+        return this.languages.languageOf(answer);
     }
 }

@@ -160,3 +160,37 @@ test('createTtsEngine: the language layer is outside, a row of the table gets it
         fs.rmSync(dataDir, { recursive: true, force: true });
     }
 });
+
+test('questionLanguage: Cyrillic by the letters, English and German by their function words', () => {
+    const { questionLanguage } = require('../../build/lib/voice/speechLanguage');
+    // the field report: answered with the German time on a German satellite
+    assert.equal(questionLanguage('скажи, сколько сейчас времени', 'de'), 'ru');
+    assert.equal(questionLanguage('Выключи тестовую лампу', 'de'), 'ru');
+    assert.equal(questionLanguage('What time is it?', 'de'), 'en');
+    assert.equal(questionLanguage('Turn off the light in the kitchen', 'de'), 'en');
+    assert.equal(questionLanguage('Wie spät ist es?', 'en'), 'de');
+    assert.equal(questionLanguage('Wie spät ist es?', 'de'), 'de');
+    assert.equal(questionLanguage('Сколько времени?', 'ru'), 'ru');
+    // the configured language stays when nothing clearly speaks against it
+    assert.equal(questionLanguage('Licht an', 'de'), 'de');
+    assert.equal(questionLanguage('Licht an', 'ru'), 'ru');
+    assert.equal(questionLanguage('Schalte den Fan im Wohnzimmer aus', 'de'), 'de');
+    assert.equal(questionLanguage('Turn on Wohnzimmer Licht', 'de'), 'de');
+    assert.equal(questionLanguage('Allume la lumière du salon', 'fr'), 'fr');
+    assert.equal(questionLanguage('OK', 'de'), 'de');
+    assert.equal(questionLanguage('', 'de-DE'), 'de-DE');
+});
+
+test('AnswerLanguages: by the text without control markers, the oldest goes first', () => {
+    const { AnswerLanguages } = require('../../build/lib/voice/speechLanguage');
+    const memo = new AnswerLanguages();
+    memo.remember('It is 9:15. [[LISTEN]]', 'en');
+    memo.remember('x', 'not a language');
+    assert.equal(memo.languageOf('It is 9:15.'), 'en');
+    assert.equal(memo.languageOf('x'), '');
+    for (let i = 0; i < 50; i++) {
+        memo.remember(`answer ${i}`, 'ru');
+    }
+    assert.equal(memo.languageOf('It is 9:15.'), '');
+    assert.equal(memo.languageOf('answer 49'), 'ru');
+});

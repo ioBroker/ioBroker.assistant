@@ -417,6 +417,10 @@ speech recognition/synthesis available; **it does not open any network port**. T
   (`de_DE-thorsten-medium`, `de-DE-KatjaNeural`, Polly `Vicki`) is only used for that language; other languages
   get the provider's default voice, or the voice of their row in this table (e.g. `ru` → `ru_RU-dmitri-medium`).
   Piper loads the voices of the table at the start (~60 MB each). OpenAI voices speak every language.
+  A question in another language gets its answer in that language too: Cyrillic tells Russian, and English and
+  German are told apart by their small words ("what time is it" on a German satellite → English answer and
+  voice). This is what the built-in answers (time, devices, timers …) use; short commands like "Licht an" stay in
+  the configured language.
 
 **OpenRouter** gives one key for the speech models of many vendors: Whisper, Deepgram, ElevenLabs Scribe,
 Voxtral for recognition; ElevenLabs, Gemini TTS, Microsoft MAI-Voice, Deepgram Aura, Kokoro and more for the
