@@ -103,7 +103,12 @@ export class PiperTts implements TtsEngine {
 
     private voiceFor(lang: string): string {
         const iso = (lang || 'en').split('-')[0].toLowerCase();
-        return this.voice || DEFAULT_VOICE[iso] || DEFAULT_VOICE.en;
+        // The chosen voice speaks one language (de_DE-thorsten-medium: German). An answer in another language gets
+        // the default voice of that language; a German voice would spell Cyrillic letters one by one.
+        if (this.voice && this.voice.split('_')[0].toLowerCase() === iso) {
+            return this.voice;
+        }
+        return DEFAULT_VOICE[iso] || this.voice || DEFAULT_VOICE.en;
     }
 
     private async ensureVoice(voice: string): Promise<{ onnx: string; sampleRate: number }> {

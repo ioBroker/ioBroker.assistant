@@ -323,6 +323,11 @@ export interface EsphomeSatellitesOptions {
     devices: EsphomeDevice[];
     /** ISO-639-1 language hint for STT/TTS ('' = auto/provider default). */
     language: string;
+    /**
+     * The language to speak an answer in ('' or missing = `language`): an answer in another language than the
+     * satellite listens in needs a voice of that language.
+     */
+    speechLanguage?: (answer: string) => string;
     stt: SttEngine;
     tts: TtsEngine;
     /**
@@ -1082,6 +1087,11 @@ class EsphomeConnection {
         void this.answerButton(yes, run);
     }
 
+    /** Language to speak an answer in (see {@link EsphomeSatellitesOptions.speechLanguage}). */
+    private spokenIn(answer: string): string {
+        return this.opts.speechLanguage?.(answer) || this.opts.language;
+    }
+
     /** Pass a button answer on and announce the reply (see {@link onConfirmButton}). */
     private async answerButton(yes: boolean, run: number): Promise<void> {
         const text = yesNoWord(this.opts.language, yes);
@@ -1100,7 +1110,7 @@ class EsphomeConnection {
             }
             const followUp = this.opts.expectsFollowUp?.(answer, this.deviceName) === true;
             const ttsStart = Date.now();
-            const { pcm, sampleRate } = await this.opts.tts.synthesize(answer, this.opts.language);
+            const { pcm, sampleRate } = await this.opts.tts.synthesize(answer, this.spokenIn(answer));
             if (run !== this.run) {
                 return;
             }
@@ -1663,7 +1673,7 @@ class EsphomeConnection {
             }
 
             const ttsStart = Date.now();
-            const { pcm: ttsPcm, sampleRate } = await this.opts.tts.synthesize(answer, this.opts.language);
+            const { pcm: ttsPcm, sampleRate } = await this.opts.tts.synthesize(answer, this.spokenIn(answer));
             if (!current()) {
                 return;
             }

@@ -14,6 +14,9 @@
  * With "Confirmation by text in sendTo conversations", pi-agent answers a write it may not do unasked with a
  * question ending in `[[LISTEN]]`, and the next `ask` of the conversation is the yes or no. `language` makes it
  * ask that question in the language the satellite listens in.
+ *
+ * pi-agent 0.10.1+ also answers with `language`, the language it wrote the answer in; the voice that speaks the
+ * answer is chosen by it ({@link PiAgentHarness.languageOf}).
  */
 
 import type { ImageInput } from './media';
@@ -83,8 +86,13 @@ export function conversationOf(source: string): string {
     return (source || 'default').replace(/\//g, '_').slice(0, 100);
 }
 
+/** How many answers {@link PiAgentHarness.languageOf} remembers. */
+const KEPT_LANGUAGES = 50;
+
 export class PiAgentHarness {
     private seq = 0;
+    /** Language pi-agent reported per answer text (pi-agent 0.10.1+), for the voice that speaks it. */
+    private readonly languages = new Map<string, string>();
 
     public constructor(
         private readonly host: PiAgentHost,
@@ -118,7 +126,7 @@ export class PiAgentHarness {
                 requestId,
             },
             { timeout: this.timeoutMs },
-        )) as { answer?: unknown; error?: unknown } | null | undefined;
+        )) as { answer?: unknown; error?: unknown; language?: unknown } | null | undefined;
         if (result?.error) {
             const error = typeof result.error === 'string' ? result.error : JSON.stringify(result.error);
             throw new Error(`${this.instance}: ${error}`);
@@ -127,6 +135,22 @@ export class PiAgentHarness {
         if (!answer) {
             throw new Error(`${this.instance} gave no answer`);
         }
+        const language = typeof result?.language === 'string' ? result.language.trim().toLowerCase() : '';
+        if (/^[a-z]{2,3}(-[a-z]{2,4})?$/.test(language)) {
+            this.languages.delete(answer);
+            this.languages.set(answer, language);
+            if (this.languages.size > KEPT_LANGUAGES) {
+                this.languages.delete(this.languages.keys().next().value as string);
+            }
+        }
         return answer;
+    }
+
+    /**
+     * The language pi-agent wrote an answer in (`ru`, `de` …), '' when it did not say (older pi-agent, or the model
+     * left its mark out). The answer travels as plain text through the tiers; this finds its language again by text.
+     */
+    public languageOf(answer: string): string {
+        return this.languages.get(answer.trim()) || '';
     }
 }

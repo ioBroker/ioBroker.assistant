@@ -95,6 +95,7 @@ import {
 } from './lib/triggers';
 import { VoiceServer } from './lib/voice/voiceServer';
 import { WyomingServer } from './lib/voice/wyoming';
+import { speechLanguage } from './lib/voice/lang';
 import {
     EsphomeSatellites,
     esphomeAddress,
@@ -895,6 +896,7 @@ class Assistant extends Adapter {
         this.esphome = new EsphomeSatellites({
             devices,
             language,
+            speechLanguage: answer => this.speechLanguageOf(answer, language),
             stt,
             tts,
             answer: (question, origin) =>
@@ -1104,6 +1106,14 @@ class Assistant extends Adapter {
         return endsWithQuestion(answer);
     }
 
+    /**
+     * The language to speak an answer in: what pi-agent reported for it, else what its letters tell (Cyrillic,
+     * Chinese), else the voice language. A Russian answer on a German satellite then gets a Russian voice.
+     */
+    private speechLanguageOf(answer: string, language: string): string {
+        return speechLanguage(answer, language, this.piAgent?.languageOf(answer) || '');
+    }
+
     /** A transport synthesised the reply to `source`'s latest request — the journal shows it with that request. */
     private reportSpoken(source: string, info: { ms: number; audioMs: number }): void {
         const cfg = this.config;
@@ -1241,7 +1251,7 @@ class Assistant extends Adapter {
                 return { text, answer: '' };
             }
             const ttsStart = Date.now();
-            const reply = await engines.tts.synthesize(answer, language);
+            const reply = await engines.tts.synthesize(answer, this.speechLanguageOf(answer, language));
             this.reportSpoken(source, {
                 ms: Date.now() - ttsStart,
                 audioMs: (reply.pcm.length / 2 / reply.sampleRate) * 1000,
