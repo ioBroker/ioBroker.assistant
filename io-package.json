@@ -152,8 +152,50 @@
       "config": "json"
     },
     "webComponents": [
-      "webcomponents/assistant-chat.json",
-      "webcomponents/assistant-satellites.json"
+      {
+        "manifest": "webcomponents/assistant-chat.json",
+        "tag": "iob-assistant-chat",
+        "name": {
+          "en": "Assistant chat",
+          "de": "Assistent-Chat",
+          "ru": "Чат ассистента",
+          "pt": "Chat do assistente",
+          "nl": "Assistent-chat",
+          "fr": "Chat de l'assistant",
+          "it": "Chat dell'assistente",
+          "es": "Chat del asistente",
+          "pl": "Czat asystenta",
+          "uk": "Чат асистента",
+          "zh-cn": "助手聊天"
+        },
+        "icon": "../assistant.svg",
+        "size": {
+          "width": 400,
+          "height": 500
+        }
+      },
+      {
+        "manifest": "webcomponents/assistant-satellites.json",
+        "tag": "iob-assistant-satellites",
+        "name": {
+          "en": "Voice satellites",
+          "de": "Sprach-Satelliten",
+          "ru": "Голосовые сателлиты",
+          "pt": "Satélites de voz",
+          "nl": "Spraaksatellieten",
+          "fr": "Satellites vocaux",
+          "it": "Satelliti vocali",
+          "es": "Satélites de voz",
+          "pl": "Satelity głosowe",
+          "uk": "Голосові сателіти",
+          "zh-cn": "语音卫星"
+        },
+        "icon": "../assistant.svg",
+        "size": {
+          "width": 440,
+          "height": 300
+        }
+      }
     ],
     "dependencies": [
       {
