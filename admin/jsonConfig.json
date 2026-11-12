@@ -1494,6 +1494,22 @@
                     "lg": 5,
                     "xl": 5
                 },
+                "ttsVoices": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "Voice per answer language",
+                    "help": "An answer in another language than the satellites listen in (e.g. pi-agent answers a Russian question in Russian) is spoken with the voice of its language, not spelled letter by letter by the voice above. Without a row the provider's default voice for that language is used. Voice names of the speech output provider, e.g. ru → ru_RU-dmitri-medium (Piper), ru-RU-SvetlanaNeural (Azure), Tatyana (AWS).",
+                    "hidden": "!data.voiceEnabled",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
+                    "items": [
+                        { "type": "text", "attr": "language", "title": "Language (e.g. ru)", "width": "30%" },
+                        { "type": "text", "attr": "voice", "title": "Voice", "width": "70%" }
+                    ]
+                },
                 "_ffmpegPanel": {
                     "type": "panel",
                     "collapsable": true,

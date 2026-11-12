@@ -86,6 +86,17 @@ export function conversationOf(source: string): string {
     return (source || 'default').replace(/\//g, '_').slice(0, 100);
 }
 
+/**
+ * An answer as the TTS gets it: the assistant takes the control markers ([[LISTEN]] after a question to confirm,
+ * [[DONE]]) out before speaking, so the language is kept under the text without them.
+ */
+function answerKey(text: string): string {
+    return String(text || '')
+        .replace(/\[\[[A-Z]+\]\]/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 /** How many answers {@link PiAgentHarness.languageOf} remembers. */
 const KEPT_LANGUAGES = 50;
 
@@ -137,8 +148,9 @@ export class PiAgentHarness {
         }
         const language = typeof result?.language === 'string' ? result.language.trim().toLowerCase() : '';
         if (/^[a-z]{2,3}(-[a-z]{2,4})?$/.test(language)) {
-            this.languages.delete(answer);
-            this.languages.set(answer, language);
+            const key = answerKey(answer);
+            this.languages.delete(key);
+            this.languages.set(key, language);
             if (this.languages.size > KEPT_LANGUAGES) {
                 this.languages.delete(this.languages.keys().next().value as string);
             }
@@ -151,6 +163,6 @@ export class PiAgentHarness {
      * left its mark out). The answer travels as plain text through the tiers; this finds its language again by text.
      */
     public languageOf(answer: string): string {
-        return this.languages.get(answer.trim()) || '';
+        return this.languages.get(answerKey(answer)) || '';
     }
 }

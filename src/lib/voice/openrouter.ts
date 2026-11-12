@@ -12,6 +12,7 @@ import OpenAI, { toFile } from 'openai';
 import { OPENROUTER_HEADERS, PROVIDER_PRESETS } from '../llm';
 import { pcmToWav, type SttEngine } from './stt';
 import type { TtsEngine, TtsResult } from './tts';
+import { voiceFitsLanguage } from './speechLanguage';
 
 /** Speech-to-text model when none is configured: Whisper large v3 turbo, multilingual and the cheapest Whisper */
 export const DEFAULT_OPENROUTER_STT_MODEL = 'openai/whisper-large-v3-turbo';
@@ -174,15 +175,16 @@ export class OpenRouterTts implements TtsEngine {
 
     /** The configured voice, or the first one the model offers for the language — most models need a voice */
     private async voiceFor(lang: string): Promise<string> {
-        if (this.voice) {
+        // a locale voice (de-DE-Klaus:MAI-Voice-2) only for its language; Kore, george … speak every language
+        if (this.voice && voiceFitsLanguage(this.voice, lang)) {
             return this.voice;
         }
         try {
             const models = await listOpenRouterSpeechModels('speech', this.fetchImpl);
             const voices = models.find(m => m.id === this.model)?.voices || [];
-            return voicesForLanguage(voices, lang)[0] || '';
+            return voicesForLanguage(voices, lang)[0] || this.voice;
         } catch {
-            return '';
+            return this.voice;
         }
     }
 

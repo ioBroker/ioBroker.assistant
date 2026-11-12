@@ -2229,36 +2229,3 @@ test('replies go out as FLAC at the rate the media player asks for, and ids are 
         `the log says which format: ${seen.info.join(' | ')}`,
     );
 });
-
-test('an answer in another language than the satellite listens in is spoken in that language', async t => {
-    const device = fakeDevice({ speechMs: 600 });
-    const port = await device.listen();
-    const media = new MediaServer({ port: 0, log: silentLog });
-    await media.start();
-    const spoken = [];
-    const satellites = new EsphomeSatellites({
-        devices: [{ ip: '127.0.0.1', port, room: 'Gast' }],
-        language: 'de',
-        speechLanguage: answer => (/[а-я]/i.test(answer) ? 'ru' : ''),
-        stt: { transcribe: async () => 'включи свет' },
-        tts: {
-            synthesize: async (text, language) => {
-                spoken.push({ text, language });
-                return { pcm: Buffer.alloc(3200), sampleRate: 16000 };
-            },
-        },
-        answer: async () => 'Свет включён.',
-        media,
-        silenceMs: 300,
-        log: silentLog,
-        expectsFollowUp: () => false,
-    });
-    t.after(async () => {
-        await satellites.stop();
-        await media.stop();
-        await device.close();
-    });
-    await satellites.start();
-    await waitFor(() => spoken.length === 1, 'the spoken answer');
-    assert.deepEqual(spoken, [{ text: 'Свет включён.', language: 'ru' }]);
-});

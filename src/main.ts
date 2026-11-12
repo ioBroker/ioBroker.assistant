@@ -95,7 +95,6 @@ import {
 } from './lib/triggers';
 import { VoiceServer } from './lib/voice/voiceServer';
 import { WyomingServer } from './lib/voice/wyoming';
-import { speechLanguage } from './lib/voice/lang';
 import {
     EsphomeSatellites,
     esphomeAddress,
@@ -145,6 +144,7 @@ import { MAX_TTS_CHARS, parseTtsMaxChars, spokenLengthHint } from './lib/voice/t
 import { CaptureStore, type DiscardedCapture } from './lib/voice/captures';
 import { downloadFfmpegStatic, ffmpegStaticPath } from './lib/voice/ffmpegStatic';
 import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
+import { parseVoiceTable } from './lib/voice/speechLanguage';
 import { AdapterInstaller, type InstallerAdapter } from './lib/installer';
 import {
     attachmentNote,
@@ -282,6 +282,7 @@ const VOICE_FORM_FIELDS = [
     'awsCredentialId',
     'awsVoice',
     'piperVoice',
+    'ttsVoices',
 ];
 /** Of those, the protected ones: the browser never gets them, so an empty value there means "keep the saved one" */
 const VOICE_FORM_SECRETS = [
@@ -896,7 +897,6 @@ class Assistant extends Adapter {
         this.esphome = new EsphomeSatellites({
             devices,
             language,
-            speechLanguage: answer => this.speechLanguageOf(answer, language),
             stt,
             tts,
             answer: (question, origin) =>
@@ -987,6 +987,9 @@ class Assistant extends Adapter {
             openrouterTtsModel: (cfg.openrouterTtsModel || '').trim(),
             decodeAudio: audio => this.decodeAudioBufferToPcm(audio),
             ttsMaxChars: parseTtsMaxChars(cfg.ttsMaxChars),
+            language: String(cfg.voiceLanguage || this.language || ''),
+            voicesByLanguage: parseVoiceTable(cfg.ttsVoices),
+            reportedLanguage: text => this.reportedLanguage(text),
             parakeetInstance: (cfg.parakeetInstance || '').trim().replace(/^system\.adapter\./, ''),
             sendMessage: (instance, command, message) =>
                 this.askInstance(instance, command, message, PARAKEET_TIMEOUT_MS),
@@ -1104,14 +1107,6 @@ class Assistant extends Adapter {
      */
     private expectsFollowUp(answer: string): boolean {
         return endsWithQuestion(answer);
-    }
-
-    /**
-     * The language to speak an answer in: what pi-agent reported for it, else what its letters tell (Cyrillic,
-     * Chinese), else the voice language. A Russian answer on a German satellite then gets a Russian voice.
-     */
-    private speechLanguageOf(answer: string, language: string): string {
-        return speechLanguage(answer, language, this.piAgent?.languageOf(answer) || '');
     }
 
     /** A transport synthesised the reply to `source`'s latest request — the journal shows it with that request. */
@@ -1251,7 +1246,7 @@ class Assistant extends Adapter {
                 return { text, answer: '' };
             }
             const ttsStart = Date.now();
-            const reply = await engines.tts.synthesize(answer, this.speechLanguageOf(answer, language));
+            const reply = await engines.tts.synthesize(answer, language);
             this.reportSpoken(source, {
                 ms: Date.now() - ttsStart,
                 audioMs: (reply.pcm.length / 2 / reply.sampleRate) * 1000,
@@ -4245,6 +4240,14 @@ class Assistant extends Adapter {
     /** Per source: whether its last {@link answer} asked the user something (LLM-signalled via [[LISTEN]]). */
     private readonly followUps = new Map<string, boolean>();
 
+    /**
+     * The language the answering tier reported for exactly this answer text (pi-agent ≥ 0.10.1 `language`). The
+     * transports hand the TTS only the text, so the TTS looks the language up by it.
+     */
+    private reportedLanguage(text: string): string | undefined {
+        return this.piAgent?.languageOf(text) || undefined;
+    }
+
     /** Per source: when the cloud model last asked back about a script (see {@link cloudOnlyReason}). */
     private readonly scriptTopics = new Map<string, number>();
 
@@ -4663,7 +4666,25 @@ class Assistant extends Adapter {
             // task) — its `tts` state says it there.
             const satellite = this.requestOrigin.getStore()?.satellite || '';
             const tts = satellite ? `${this.namespace}.satellites.${satellite}.tts` : '';
-            return await harness.ask({ text, conversation: source, instructions, language, images, satellite, tts });
+            const answer = await harness.ask({
+                text,
+                conversation: source,
+                instructions,
+                language,
+                images,
+                satellite,
+                tts,
+            });
+            const spokenIn = harness.languageOf(answer);
+            if (spokenIn) {
+                // the voice of the satellite may not speak it: the TTS takes a voice of this language
+                this.journal?.step({
+                    stage: 'cloud',
+                    title: `${harness.instance} answered in '${spokenIn}'`,
+                    data: { language: spokenIn },
+                });
+            }
+            return answer;
         } catch (e) {
             if (localFallback) {
                 this.log.warn(`pi-agent failed (${(e as Error).message}) — asking the local LLM instead.`);
@@ -8580,6 +8601,10 @@ class Assistant extends Adapter {
         const cfg: Record<string, unknown> = { ...this.config, sttFallback: '', ttsFallback: '' };
         for (const key of VOICE_FORM_FIELDS) {
             const value = form[key];
+            if (Array.isArray(value)) {
+                cfg[key] = value; // the table "voice per language"
+                continue;
+            }
             if (typeof value !== 'string' || (VOICE_FORM_SECRETS.includes(key) && !value.trim())) {
                 continue;
             }

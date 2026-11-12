@@ -4,6 +4,7 @@
  */
 import * as sdk from 'microsoft-cognitiveservices-speech-sdk';
 import { isoToLocale } from './lang';
+import { voiceFitsLanguage } from './speechLanguage';
 import type { SttEngine } from './stt';
 import type { TtsEngine, TtsResult } from './tts';
 
@@ -97,7 +98,8 @@ export class AzureTts implements TtsEngine {
     ): Promise<TtsResult> {
         const speechConfig = sdk.SpeechConfig.fromSubscription(this.key, this.region);
         speechConfig.speechSynthesisOutputFormat = sdk.SpeechSynthesisOutputFormat.Raw24Khz16BitMonoPcm;
-        if (this.voice) {
+        // the set voice only for its language (de-DE-KatjaNeural reads no Russian); otherwise Azure's voice for it
+        if (this.voice && voiceFitsLanguage(this.voice, lang)) {
             speechConfig.speechSynthesisVoiceName = this.voice;
         } else {
             speechConfig.speechSynthesisLanguage = isoToLocale(lang);
