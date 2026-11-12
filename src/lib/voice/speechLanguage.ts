@@ -104,6 +104,94 @@ export function scriptLanguage(text: string): string {
     }
 }
 
+/** Short words only English or only German uses, as they come in spoken commands and questions. */
+const ENGLISH_WORDS = new Set([
+    'the',
+    'is',
+    'it',
+    "it's",
+    'what',
+    "what's",
+    'how',
+    'which',
+    'are',
+    'of',
+    'to',
+    'turn',
+    'switch',
+    'set',
+    'off',
+    'on',
+    'please',
+    'time',
+    'today',
+    'date',
+    'lights',
+    'minutes',
+    'hours',
+    'cancel',
+    'my',
+    'me',
+    'tell',
+    'much',
+]);
+const GERMAN_WORDS = new Set([
+    'der',
+    'die',
+    'das',
+    'den',
+    'dem',
+    'ist',
+    'es',
+    'wie',
+    'was',
+    'welche',
+    'welcher',
+    'sind',
+    'von',
+    'zu',
+    'auf',
+    'an',
+    'aus',
+    'ein',
+    'schalte',
+    'schalt',
+    'mach',
+    'mache',
+    'bitte',
+    'uhr',
+    'spät',
+    'heute',
+    'minuten',
+    'stunden',
+    'licht',
+    'viel',
+    'im',
+    'mir',
+    'sag',
+    'wieviel',
+    'wird',
+]);
+
+/**
+ * German or English for a text in Latin letters, by its short words ("what time is it" → en, "Schalte das Licht
+ * aus" → de); '' when they do not tell. Device and room names in the other language do not count.
+ */
+export function latinLanguage(text: string): string {
+    let en = 0;
+    let de = 0;
+    for (const word of String(text || '')
+        .toLowerCase()
+        .split(/[^a-zäöüß']+/)) {
+        if (ENGLISH_WORDS.has(word)) {
+            en++;
+        } else if (GERMAN_WORDS.has(word)) {
+            de++;
+        }
+    }
+    return en > de ? 'en' : de > en ? 'de' : '';
+}
+
 /** Languages the rule-based NLU has answer texts for. */
 const NLU_LANGUAGES = ['de', 'en', 'ru'];
 
@@ -116,7 +204,7 @@ const NLU_LANGUAGES = ['de', 'en', 'ru'];
  * @param voiceLanguage the language of the satellites
  */
 export function nluAnswerLanguage(question: string, voiceLanguage: string): string {
-    const asked = scriptLanguage(question);
+    const asked = scriptLanguage(question) || latinLanguage(question);
     return NLU_LANGUAGES.includes(asked) && asked !== baseLanguage(voiceLanguage) ? asked : '';
 }
 

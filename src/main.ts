@@ -4254,8 +4254,11 @@ class Assistant extends Adapter {
      * transports hand the TTS only the text, so the TTS looks the language up by it.
      */
     private reportedLanguage(text: string): string | undefined {
-        return this.piAgent?.languageOf(text) || undefined;
+        return this.piAgent?.languageOf(text) || this.nluAnswers.get(text.trim()) || undefined;
     }
+
+    /** Answers of the rule NLU in another language than the voice language (answer → language), the newest 50. */
+    private readonly nluAnswers = new Map<string, string>();
 
     /** Per source: when the cloud model last asked back about a script (see {@link cloudOnlyReason}). */
     private readonly scriptTopics = new Map<string, number>();
@@ -5334,9 +5337,19 @@ class Assistant extends Adapter {
         // The NLU understands de/en/ru whatever the voice language is; its answer follows the question when the
         // letters tell its language (Cyrillic → ru), and the voice of that language speaks it.
         const asked = nluAnswerLanguage(question, this.config.voiceLanguage || this.language || 'en');
-        return asked
-            ? this.nluLanguage.run(asked, () => this.runLocalNlu(question, source))
-            : this.runLocalNlu(question, source);
+        if (!asked) {
+            return this.runLocalNlu(question, source);
+        }
+        const answer = await this.nluLanguage.run(asked, () => this.runLocalNlu(question, source));
+        if (answer) {
+            // the TTS learns the language by the text (an English answer must not get the German voice)
+            this.nluAnswers.delete(answer.trim());
+            this.nluAnswers.set(answer.trim(), asked);
+            if (this.nluAnswers.size > 50) {
+                this.nluAnswers.delete(this.nluAnswers.keys().next().value as string);
+            }
+        }
+        return answer;
     }
 
     /** {@link tryLocalNlu} in the language of its answer. */

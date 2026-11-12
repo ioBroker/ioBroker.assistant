@@ -3,7 +3,12 @@
 // language; and the Piper voice of the settings only for its own language.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { scriptLanguage, speechLanguage, nluAnswerLanguage } = require('../../build/lib/voice/speechLanguage');
+const {
+    scriptLanguage,
+    speechLanguage,
+    nluAnswerLanguage,
+    latinLanguage,
+} = require('../../build/lib/voice/speechLanguage');
 const { PiperTts } = require('../../build/lib/voice/piper');
 const { PiAgentHarness } = require('../../build/lib/piAgent');
 
@@ -86,6 +91,18 @@ test('nluAnswerLanguage: a Russian question on a German satellite gets a Russian
     // the voice language itself, Latin letters and languages without NLU texts keep the voice language
     assert.equal(nluAnswerLanguage('Сколько сейчас времени?', 'ru'), '');
     assert.equal(nluAnswerLanguage('Wie spät ist es?', 'de'), '');
-    assert.equal(nluAnswerLanguage('What time is it?', 'de'), '');
+    assert.equal(nluAnswerLanguage('What time is it?', 'de'), 'en');
+    assert.equal(nluAnswerLanguage('What time is it?', 'en'), '');
+    assert.equal(nluAnswerLanguage('Wie spät ist es?', 'en'), 'de');
+    assert.equal(nluAnswerLanguage('Testlampe', 'de'), '');
     assert.equal(nluAnswerLanguage('Скільки зараз часу?', 'de'), '');
+});
+
+test('latinLanguage: German or English by the short words, device names do not count', () => {
+    assert.equal(latinLanguage('What time is it?'), 'en');
+    assert.equal(latinLanguage('Turn off the Küchenlicht'), 'en');
+    assert.equal(latinLanguage('Schalte das Licht aus'), 'de');
+    assert.equal(latinLanguage('Wie spät ist es?'), 'de');
+    assert.equal(latinLanguage("What's the temperature in the Wohnzimmer?"), 'en');
+    assert.equal(latinLanguage('Testlampe'), '');
 });
