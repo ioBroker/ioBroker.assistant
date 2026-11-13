@@ -1509,7 +1509,31 @@
                     "lg": 12,
                     "xl": 12,
                     "items": [
-                        { "type": "text", "attr": "language", "title": "Language (e.g. ru)", "width": "14%" },
+                        {
+                            "type": "autocomplete",
+                            "attr": "language",
+                            "title": "Language (e.g. ru)",
+                            "width": "14%",
+                            "freeSolo": true,
+                            "options": [
+                                { "label": "en – English", "value": "en" },
+                                { "label": "de – Deutsch", "value": "de" },
+                                { "label": "ru – Русский", "value": "ru" },
+                                { "label": "uk – Українська", "value": "uk" },
+                                { "label": "fr – Français", "value": "fr" },
+                                { "label": "it – Italiano", "value": "it" },
+                                { "label": "es – Español", "value": "es" },
+                                { "label": "nl – Nederlands", "value": "nl" },
+                                { "label": "pl – Polski", "value": "pl" },
+                                { "label": "pt – Português", "value": "pt" },
+                                { "label": "cs – Čeština", "value": "cs" },
+                                { "label": "sv – Svenska", "value": "sv" },
+                                { "label": "tr – Türkçe", "value": "tr" },
+                                { "label": "el – Ελληνικά", "value": "el" },
+                                { "label": "zh – 中文", "value": "zh" },
+                                { "label": "ja – 日本語", "value": "ja" }
+                            ]
+                        },
                         {
                             "type": "autocompleteSendTo",
                             "attr": "voice",
