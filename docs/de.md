@@ -432,6 +432,10 @@ wähle:
   nur für diese Sprache; andere Sprachen bekommen die Standardstimme des Anbieters oder die Stimme ihrer Zeile in
   dieser Tabelle (z. B. `ru` → `ru_RU-dmitri-medium`). Piper lädt die Stimmen der Tabelle beim Start (je ~60 MB).
   OpenAI-Stimmen sprechen jede Sprache.
+  Eine Frage in einer anderen Sprache bekommt ihre Antwort auch in dieser Sprache: Kyrillisch verrät Russisch,
+  Englisch und Deutsch werden an ihren kleinen Wörtern erkannt („what time is it“ an einem deutschen Satelliten →
+  englische Antwort und Stimme). Das nutzen die eingebauten Antworten (Uhrzeit, Geräte, Timer …); kurze Befehle wie
+  „Licht an“ bleiben in der eingestellten Sprache.
 
 **OpenRouter** bietet mit einem Schlüssel die Sprachmodelle vieler Hersteller: Whisper, Deepgram,
 ElevenLabs Scribe und Voxtral für die Erkennung; ElevenLabs, Gemini TTS, Microsoft MAI-Voice, Deepgram Aura,

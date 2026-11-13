@@ -240,6 +240,7 @@ train it twice.
 
 ### **WORK IN PROGRESS**
 * (@GermanBluefox) Added the short form of the web component manifests (tag, name, icon, size) to `common.webComponents`, so that hosts like Aura can list the components before the adapter is installed; the build writes it with `iob-web-components sync-io-package`
+* (@GermanBluefox) The built-in answers (time, devices, timers, weather …) come in the language the question was asked in, not always in the voice language: "скажи, сколько сейчас времени" on a German satellite is answered in Russian, "what time is it" in English and with an English voice
 
 ### 1.7.0 (2026-11-12)
 * (@sadam6752-tech) A Piper voice set for one language is only used for it, a Russian answer on a German satellite gets a Russian voice instead of being spelled letter by letter; the language pi-agent 0.10.1 reports for an answer is used for its voice (#27)

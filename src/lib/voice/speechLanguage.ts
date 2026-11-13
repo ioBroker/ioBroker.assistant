@@ -133,6 +133,109 @@ export function speechLanguage(text: string, configured: string, reported?: stri
 }
 
 /**
+ * Words that say a Latin-script question is English or German. Only words of one of the two: "in", "an", "die",
+ * "was", "will", "so", "man" are both and say nothing. Kept to what short spoken commands and questions use.
+ */
+const FUNCTION_WORDS: Record<'en' | 'de', ReadonlySet<string>> = {
+    en: new Set(
+        (
+            "the what what's whats is are it it's its how turn switch please light lights time me my of to and you your " +
+            'on off set tell which where when who open close this that temperature weather today tomorrow now much many ' +
+            'does do can could would there all up down timer alarm minutes hours at for be play stop'
+        ).split(' '),
+    ),
+    de: new Set(
+        (
+            'der den dem des das ist wie wer wo welche welcher welches schalte schalt mach mache ein eine einen aus bitte ' +
+            'licht spät uhr und im es mir mein meine ich du sind auf zu wieviel viel wetter heute morgen jetzt gibt ' +
+            'alle stelle stell setze öffne schließe temperatur minuten stunden wecker um nach noch lange sag sage mal ' +
+            'kannst spiele spiel'
+        ).split(' '),
+    ),
+};
+
+/** Function words of `lang` in the words of a text; 0 for a language without a list. */
+function functionWords(words: string[], lang: string): number {
+    const list = FUNCTION_WORDS[lang as 'en' | 'de'];
+    return list ? words.filter(w => list.has(w)).length : 0;
+}
+
+/**
+ * The language a question is asked in, for the fixed answers of the rule NLU ("скажи, сколько сейчас времени" on a
+ * German satellite was answered in German). Another script than the configured language's tells it by the letters
+ * (like {@link speechLanguage}); for Latin letters English and German are told apart by function words — only with
+ * at least two of them and more than twice as many as of the configured language, so a German command with an
+ * English device name stays German and a French question on a French system is not taken for German.
+ *
+ * @returns ISO-639-1 code, or `configured` unchanged when nothing speaks against it
+ */
+export function questionLanguage(text: string, configured: string): string {
+    const question = String(text || '');
+    const script = dominantScript(question);
+    if (!script) {
+        return configured;
+    }
+    if (script !== 'latin') {
+        return speechLanguage(question, configured);
+    }
+    const words = question.toLowerCase().match(/[\p{L}']+/gu) || [];
+    const base = baseLanguage(configured);
+    let best = '';
+    let most = 0;
+    for (const lang of ['en', 'de']) {
+        const hits = functionWords(words, lang);
+        if (hits > most) {
+            best = lang;
+            most = hits;
+        }
+    }
+    if (!best || best === base || most < 2 || most <= 2 * functionWords(words, base)) {
+        return configured;
+    }
+    return best;
+}
+
+/** How many answers {@link AnswerLanguages} remembers. */
+const KEPT_LANGUAGES = 50;
+
+/**
+ * The language of recent answers, by their text. An answer travels as plain text through the tiers and transports to
+ * the TTS; this finds its language again there. The key is the text without control markers ([[LISTEN]], [[DONE]]):
+ * the assistant takes them out before speaking.
+ */
+export class AnswerLanguages {
+    private readonly byText = new Map<string, string>();
+
+    private static key(text: string): string {
+        return String(text || '')
+            .replace(/\[\[[A-Z]+\]\]/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    /** Remember the language of an answer; anything but an ISO code (`ru`, `en-us`) is ignored. */
+    remember(text: string, language: string): void {
+        const lang = String(language || '')
+            .trim()
+            .toLowerCase();
+        const key = AnswerLanguages.key(text);
+        if (!key || !/^[a-z]{2,3}(-[a-z]{2,4})?$/.test(lang)) {
+            return;
+        }
+        this.byText.delete(key);
+        this.byText.set(key, lang);
+        if (this.byText.size > KEPT_LANGUAGES) {
+            this.byText.delete(this.byText.keys().next().value as string);
+        }
+    }
+
+    /** The language remembered for this answer, '' for none. */
+    languageOf(text: string): string {
+        return this.byText.get(AnswerLanguages.key(text)) || '';
+    }
+}
+
+/**
  * Can this voice speak the language? Told by the locale at the start of its name (`de_DE-thorsten-medium`,
  * `de-DE-KatjaNeural`, `de-DE-Klaus:MAI-Voice-2`); a name without a locale (OpenAI `alloy`, Gemini `Kore`) and a
  * multilingual Azure voice can speak every language.

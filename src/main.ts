@@ -144,7 +144,7 @@ import { MAX_TTS_CHARS, parseTtsMaxChars, spokenLengthHint } from './lib/voice/t
 import { CaptureStore, type DiscardedCapture } from './lib/voice/captures';
 import { downloadFfmpegStatic, ffmpegStaticPath } from './lib/voice/ffmpegStatic';
 import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
-import { parseVoiceTable } from './lib/voice/speechLanguage';
+import { AnswerLanguages, baseLanguage, parseVoiceTable, questionLanguage } from './lib/voice/speechLanguage';
 import { AdapterInstaller, type InstallerAdapter } from './lib/installer';
 import {
     attachmentNote,
@@ -602,6 +602,8 @@ class Assistant extends Adapter {
         /** Id of the satellite under `satellites.*` a voice request came from; '' for chat, Telegram, scripts. */
         satellite: string;
         attachments: Attachments;
+        /** Language the question was asked in ({@link questionLanguage}); fixed answers are given in it. */
+        language: string;
     }>();
     /** Who is at home (roadmap B1); mirrored into `presence.*`. Null until onReady. */
     private presence: PresenceTracker | null = null;
@@ -4003,9 +4005,12 @@ class Assistant extends Adapter {
         return this.requestOrigin.getStore()?.attachments ?? NO_ATTACHMENTS;
     }
 
-    /** Language of fixed replies: the voice language, else the system language. */
+    /**
+     * Language of fixed replies: the language the request being answered was asked in, else the voice language, else
+     * the system language.
+     */
     private answerLanguage(): string {
-        return String(this.config.voiceLanguage || this.language || 'en');
+        return this.requestOrigin.getStore()?.language || String(this.config.voiceLanguage || this.language || 'en');
     }
 
     /**
@@ -4076,14 +4081,25 @@ class Assistant extends Adapter {
         const satellite = fromSatellite ? this.knownSatelliteId(origin.satellite || source, origin.room || '') : '';
         // The journal shows "[picture] What is in this picture?", like the conversation history
         const shown = historyText(question, attachments.images.length, !!attachments.video);
-        return this.requestOrigin.run({ source, room: origin.room || '', voice, satellite, attachments }, () =>
-            this.journal
-                ? this.journal.run(shown, source, origin, () => {
-                      this.traceSpeechInput(question, origin);
-                      this.traceAttachments(attachments);
-                      return this.answerTracked(question, source);
-                  })
-                : this.answerTracked(question, source),
+        const configured = String(this.config.voiceLanguage || this.language || 'en');
+        // "скажи, сколько сейчас времени" on a German satellite: the time comes in Russian
+        const language = questionLanguage(question, configured);
+        return this.requestOrigin.run(
+            { source, room: origin.room || '', voice, satellite, attachments, language },
+            () =>
+                this.journal
+                    ? this.journal.run(shown, source, origin, () => {
+                          this.traceSpeechInput(question, origin);
+                          this.traceAttachments(attachments);
+                          if (language !== configured) {
+                              this.journal?.step({
+                                  stage: 'request',
+                                  title: `Question in '${language}', not '${configured}': fixed answers in '${language}'`,
+                              });
+                          }
+                          return this.answerTracked(question, source);
+                      })
+                    : this.answerTracked(question, source),
         );
     }
 
@@ -4168,6 +4184,15 @@ class Assistant extends Adapter {
                 result = this.doneText();
             }
         }
+        // An answer to a question in another language than the satellite's: its voice is told by this (an English
+        // answer on a German satellite has the same letters, see LanguageTts)
+        const language = this.answerLanguage();
+        if (
+            result &&
+            baseLanguage(language) !== baseLanguage(String(this.config.voiceLanguage || this.language || 'en'))
+        ) {
+            this.answerLanguages.remember(result, language);
+        }
         this.journal?.step({
             stage: 'answer',
             title: toned
@@ -4228,12 +4253,12 @@ class Assistant extends Adapter {
             return '';
         }
         const limit = parseTtsMaxChars(this.config.ttsMaxChars) ?? MAX_TTS_CHARS;
-        return spokenLengthHint(limit, String(this.config.voiceLanguage || this.language || 'en'));
+        return spokenLengthHint(limit, this.answerLanguage());
     }
 
     /** What [[DONE]] says where no beep can be played */
     private doneText(): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         return lang === 'ru' ? 'Готово.' : lang === 'de' ? 'Erledigt.' : 'Done.';
     }
 
@@ -4245,8 +4270,11 @@ class Assistant extends Adapter {
      * transports hand the TTS only the text, so the TTS looks the language up by it.
      */
     private reportedLanguage(text: string): string | undefined {
-        return this.piAgent?.languageOf(text) || undefined;
+        return this.piAgent?.languageOf(text) || this.answerLanguages.languageOf(text) || undefined;
     }
+
+    /** Answers given in the language of a question other than the configured one (see {@link answerTracked}). */
+    private readonly answerLanguages = new AnswerLanguages();
 
     /** Per source: when the cloud model last asked back about a script (see {@link cloudOnlyReason}). */
     private readonly scriptTopics = new Map<string, number>();
@@ -4351,7 +4379,7 @@ class Assistant extends Adapter {
      * LLM. Localized (de/en/ru) spoken-style reply; uses the host's local timezone via {@link Intl}.
      */
     private executeTimeIntent(intent: NluIntent): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const locale = lang === 'de' ? 'de-DE' : lang === 'ru' ? 'ru-RU' : 'en-GB';
         const now = new Date();
         if (intent.action === 'dateQuery') {
@@ -4456,7 +4484,7 @@ class Assistant extends Adapter {
             this.log.info(`Ring stopped by voice (${n} session(s)).`);
             this.journal?.note({ tier: 'stop' });
             this.journal?.step({ stage: 'stop', title: `Stop word: silenced ${n} ringing timer/alarm(s)` });
-            const lang = String(this.config.voiceLanguage || this.language || 'en');
+            const lang = this.answerLanguage();
             return lang === 'ru' ? 'Хорошо.' : lang === 'de' ? 'Ok.' : 'Okay.';
         }
         // An open question from `askUser` claims the next utterance of that source as its answer — before
@@ -4754,7 +4782,7 @@ class Assistant extends Adapter {
 
     /** Reply when nothing local understood the request and there is no cloud LLM (provider "none"). */
     private localOnlyFallback(): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         if (lang === 'ru') {
             return 'Извини, этого я не поняла. Без облачной языковой модели я понимаю только простые команды для устройств, таймеры и будильники.';
         }
@@ -5576,7 +5604,7 @@ class Assistant extends Adapter {
         if (!device || !intent.stateId) {
             throw new Error('deferred intent without a device');
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const pick = (rus: string, ger: string, eng: string): string =>
             lang === 'ru' ? rus : lang === 'de' ? ger : eng;
         const room = intent.room || device.room;
@@ -5775,7 +5803,7 @@ class Assistant extends Adapter {
         if (!res.report) {
             throw new Error(res.error || 'no weather report');
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const text = buildWeatherAnswer(res.report, lang, intent.when);
         if (!text) {
             throw new Error(`the weather report has no data for '${intent.when || 'now'}'`);
@@ -5789,7 +5817,7 @@ class Assistant extends Adapter {
      * of an ESPHome device, the `volume` message of a UDP satellite.
      */
     private async executeVolumeIntent(intent: NluIntent, source: string): Promise<string> {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const satId = intent.room ? this.resolveSatelliteId(intent.room) : this.announceTargetForSource(source);
         const absolute = typeof intent.value === 'number' ? intent.value : null;
         const delta = intent.delta || 0;
@@ -5855,7 +5883,7 @@ class Assistant extends Adapter {
 
     /** Localized "this part did not work" sentence for a failed part of a combined command. */
     private nluFailureText(intent: NluIntent): string {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const what = intent.device?.name ? ` (${intent.device.name})` : '';
         return lang === 'ru'
             ? `Одну команду${what} выполнить не удалось.`
@@ -6067,7 +6095,7 @@ class Assistant extends Adapter {
             return '';
         }
         // Respond in the assistant's interaction language (voice language, else system).
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -6168,7 +6196,7 @@ class Assistant extends Adapter {
         if (!mcp) {
             throw new Error('mcp not ready');
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -6218,7 +6246,7 @@ class Assistant extends Adapter {
         if (!mcp) {
             throw new Error('mcp not ready');
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -6713,7 +6741,7 @@ class Assistant extends Adapter {
         if (!mgr) {
             return '';
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -7006,7 +7034,7 @@ class Assistant extends Adapter {
         if (!mgr) {
             return '';
         }
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const ru = lang === 'ru';
         const de = lang === 'de';
         const pick = (rus: string, ger: string, eng: string): string => (ru ? rus : de ? ger : eng);
@@ -7296,7 +7324,7 @@ class Assistant extends Adapter {
         kind: YouTubeKind | 'auto',
         playerName?: string,
     ): Promise<YouTubePlayResult> {
-        const lang = String(this.config.voiceLanguage || this.language || 'en');
+        const lang = this.answerLanguage();
         const player = this.youtubePlayerFor(playerName);
         if (!player) {
             const names = this.youtubePlayers.map(p => p.name).join(', ');

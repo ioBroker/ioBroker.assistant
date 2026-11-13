@@ -32,6 +32,14 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   Schichten: `LanguageTts(Fallback(VoicePerLanguage(Cached…), Cached))`. STT bleibt bei `voiceLanguage` (Whisper
   bekommt `language` → erkennt nichts; Auto-Erkennung wäre ein Opt-in, bei kurzen Befehlen unzuverlässig).
   Tests: `speechLanguage.test.js`, `answerLanguage.test.js`. Nicht am Gerät.
+  **Sprache der Frage** (Feldbericht Alex F. 2026-11-12: „скажи, сколько сейчас времени“ → NLU-Zeit auf Deutsch):
+  `questionLanguage(text, configured)` — fremde Schrift → wie `speechLanguage`; Latein → Funktionswörter en/de
+  (`FUNCTION_WORDS`, ohne zweideutige wie in/an/die/was), Wechsel nur bei ≥ 2 Treffern und > 2× so vielen wie die
+  eingestellte Sprache. `answer()` legt sie in `requestOrigin.language`, `answerLanguage()` liefert sie (sonst Config)
+  — die festen Antworten (Zeit, Geräte, Timer, Wecker, Wetter, Lautstärke, Kalender, YouTube, Stoppwort, Fehler) nutzen
+  sie; System-Prompt-Hinweise, Gerätenamen, STT und spätere Timer-Ansagen bleiben bei der Config. Antworten in einer
+  anderen Sprache merkt sich `answerLanguages` (`AnswerLanguages`, auch von `PiAgentHarness` genutzt) → `reportedLanguage`
+  → englische Stimme für englische Antwort. Journal-Schritt „Question in 'en' …“.
 - **Modell-Manager für das lokale LLM** (Nutzerwunsch 2026-11-10, Branch `feat/local-model-manager`). `src/lib/llmModels.ts`
   `ModelManager`: Ordner `localLlmModelDir` (absolut, leer = `<Datenverzeichnis>/models` = bisheriger Ort), `list()` =
   `*.gguf` mit Größe + Quelle aus `<Ordner>/models.json`, `disk()` per `fs.statfs` (nächster existierender Elternordner),
