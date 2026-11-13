@@ -432,6 +432,11 @@ wähle:
   nur für diese Sprache; andere Sprachen bekommen die Standardstimme des Anbieters oder die Stimme ihrer Zeile in
   dieser Tabelle (z. B. `ru` → `ru_RU-dmitri-medium`). Piper lädt die Stimmen der Tabelle beim Start (je ~60 MB).
   OpenAI-Stimmen sprechen jede Sprache.
+  Bei OpenAI und OpenRouter kann eine Zeile auch ein eigenes **TTS-Modell** nennen, das für diese Sprache das Modell
+  oben ersetzt (z. B. `ru` → `elevenlabs/eleven-multilingual-v2`, der Rest bleibt bei `eleven-flash-v2.5`). Eine Zeile
+  mit Modell, aber ohne Stimme behält bei OpenAI die Stimme oben; ein anderes OpenRouter-Modell nimmt seine erste Stimme
+  für die Sprache, weil die Stimmen zum Modell gehören. Azure, AWS und Piper haben keine Modellwahl — dort zählt nur
+  die Stimme.
   Eine Frage in einer anderen Sprache bekommt ihre Antwort auch in dieser Sprache: Kyrillisch verrät Russisch,
   Englisch und Deutsch werden an ihren kleinen Wörtern erkannt („what time is it“ an einem deutschen Satelliten →
   englische Antwort und Stimme). Das nutzen die eingebauten Antworten (Uhrzeit, Geräte, Timer …); kurze Befehle wie

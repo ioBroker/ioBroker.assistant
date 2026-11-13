@@ -23,7 +23,7 @@ import * as path from 'node:path';
 import { CachedTts } from './ttsCache';
 import { FallbackStt, FallbackTts, type NamedEngine } from './fallback';
 import { isoToLocale } from './lang';
-import { LanguageTts, VoicePerLanguage } from './speechLanguage';
+import { LanguageTts, VoicePerLanguage, type LanguageVoice } from './speechLanguage';
 import type { VoiceLogger } from './download';
 
 export type SpeechProvider = 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk' | 'parakeet' | 'piper';
@@ -81,8 +81,11 @@ export interface EngineContext {
      * it; an answer in another language gets the default voice of that language.
      */
     language?: string;
-    /** Table "voice per language" (ISO code → voice of the main TTS provider); absent = the voices above. */
-    voicesByLanguage?: Record<string, string>;
+    /**
+     * Table "voice per language" (ISO code → voice and/or model of the main TTS provider); absent = the voices above.
+     * A model only for OpenAI and OpenRouter, the others have no choice.
+     */
+    voicesByLanguage?: Record<string, LanguageVoice>;
     /** Language the answering tier reported for exactly this text (pi-agent `language`); absent → by its letters. */
     reportedLanguage?: (text: string) => string | undefined;
     /** Instance of ioBroker.ai-parakeet for the provider `parakeet`, e.g. 'ai-parakeet.0'. */
@@ -185,9 +188,40 @@ function voiceKey(provider: SpeechProvider): keyof VoiceNames | '' {
     return provider === 'vosk' || provider === 'parakeet' ? '' : provider;
 }
 
+/** Providers whose TTS model can be chosen. */
+function hasTtsModel(provider: SpeechProvider): boolean {
+    return provider === 'openai' || provider === 'openrouter';
+}
+
 /**
- * The main provider with the table "voice per language": one engine per row with that voice. The table names voices
- * of the main provider, so the fallback provider does not get it.
+ * The engine context of one row of the table "voice per language": its voice and model instead of the ones set above.
+ * Another OpenRouter model without a voice of its own gets none — the voices belong to the model, the engine then
+ * takes the first one of the model for the language.
+ */
+function rowContext(
+    provider: SpeechProvider,
+    key: keyof VoiceNames,
+    lang: string,
+    row: LanguageVoice,
+    ctx: EngineContext,
+): EngineContext {
+    const model = hasTtsModel(provider) ? row.model : '';
+    const otherModel =
+        provider === 'openrouter' && !!model && model !== (ctx.openrouterTtsModel || DEFAULT_OPENROUTER_TTS_MODEL);
+    const voice = row.voice || (otherModel ? '' : ctx.voices[key]);
+    return {
+        ...ctx,
+        // the voice of a row is for its language (Polly names say nothing about it)
+        language: lang,
+        voices: { ...ctx.voices, [key]: voice },
+        ttsModel: provider === 'openai' && model ? model : ctx.ttsModel,
+        openrouterTtsModel: provider === 'openrouter' && model ? model : ctx.openrouterTtsModel,
+    };
+}
+
+/**
+ * The main provider with the table "voice per language": one engine per row with that voice and model. The table
+ * names voices and models of the main provider, so the fallback provider does not get it.
  */
 function withLanguageVoices(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
     const main = cachedTts(provider, ctx);
@@ -197,12 +231,17 @@ function withLanguageVoices(provider: SpeechProvider, ctx: EngineContext): TtsEn
         return main;
     }
     const byLanguage: Record<string, TtsEngine> = {};
-    for (const [lang, voice] of rows) {
+    for (const [lang, row] of rows) {
+        if (row.model && !hasTtsModel(provider)) {
+            ctx.log.warn(`TTS model '${row.model}' for '${lang}' ignored: ${provider} has no model choice`);
+            if (!row.voice) {
+                continue;
+            }
+        }
         try {
-            // the voice of a row is for its language (Polly names say nothing about it)
-            byLanguage[lang] = cachedTts(provider, { ...ctx, language: lang, voices: { ...ctx.voices, [key]: voice } });
+            byLanguage[lang] = cachedTts(provider, rowContext(provider, key, lang, row, ctx));
         } catch (e) {
-            ctx.log.warn(`Voice '${voice}' for '${lang}' unavailable: ${(e as Error).message}`);
+            ctx.log.warn(`Voice '${row.voice || row.model}' for '${lang}' unavailable: ${(e as Error).message}`);
         }
     }
     return new VoicePerLanguage(main, byLanguage);
@@ -222,7 +261,8 @@ function cachedTts(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
                 ? ctx.voices.piper
                 : provider === 'openrouter'
                   ? `${ctx.openrouterTtsModel || DEFAULT_OPENROUTER_TTS_MODEL}-${ctx.voices.openrouter}`
-                  : ctx.voices.openai;
+                  : // the model too: another model must not serve the audio of the old one
+                    `${ctx.ttsModel ? `${ctx.ttsModel}-` : ''}${ctx.voices.openai}`;
     const dir = path.join(ctx.dataDir, 'ttscache', `${provider}-${(voice || 'default').replace(/[^\w.-]/g, '_')}`);
     return new CachedTts(buildTtsEngine(provider, ctx), { dir, log: ctx.log, maxChars: ctx.ttsMaxChars });
 }
