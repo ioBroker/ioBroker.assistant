@@ -238,7 +238,7 @@ train it twice.
     ### **WORK IN PROGRESS**
 -->
 ### **WORK IN PROGRESS**
-* (@GermanBluefox) The table "Voice per answer language" has a column for the TTS model (OpenAI and OpenRouter): e.g. Russian answers with `elevenlabs/eleven-multilingual-v2`, the rest with the model set above. An OpenAI model change no longer serves cached audio of the old model
+* (@GermanBluefox) The table "Voice per answer language" has a column for the TTS model (OpenAI and OpenRouter): e.g. Russian answers with `elevenlabs/eleven-multilingual-v2`, the rest with the model set above. An OpenAI model change no longer serves cached audio of the old model. Voice and model of a row are offered in drop-downs, and ▶ at the end of a row speaks a test sentence with it
 
 ### 1.8.0 (2026-11-13)
 * (@GermanBluefox) Added the short form of the web component manifests (tag, name, icon, size) to `common.webComponents`, so that hosts like Aura can list the components before the adapter is installed; the build writes it with `iob-web-components sync-io-package`

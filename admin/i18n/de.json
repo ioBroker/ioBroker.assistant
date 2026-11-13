@@ -263,5 +263,7 @@
   "Voice per answer language": "Stimme pro Antwortsprache",
   "An answer in another language than the satellites listen in (e.g. pi-agent answers a Russian question in Russian) is spoken with the voice of its language, not spelled letter by letter by the voice above. Without a row the provider's default voice for that language is used. Voice names of the speech output provider, e.g. ru → ru_RU-dmitri-medium (Piper), ru-RU-SvetlanaNeural (Azure), Tatyana (AWS). The model (OpenAI and OpenRouter only) replaces the TTS model above for this language, e.g. ru → elevenlabs/eleven-multilingual-v2; without a voice another OpenRouter model takes its first voice for the language.": "Eine Antwort in einer anderen Sprache als der der Satelliten (z. B. beantwortet pi-agent eine russische Frage auf Russisch) wird mit einer Stimme dieser Sprache gesprochen, statt von der Stimme oben Buchstabe für Buchstabe vorgelesen zu werden. Ohne Zeile nimmt der Anbieter seine Standardstimme für die Sprache. Stimmnamen des Sprachausgabe-Anbieters, z. B. ru → ru_RU-dmitri-medium (Piper), ru-RU-SvetlanaNeural (Azure), Tatyana (AWS). Das Modell (nur OpenAI und OpenRouter) ersetzt für diese Sprache das TTS-Modell oben, z. B. ru → elevenlabs/eleven-multilingual-v2; ohne Stimme nimmt ein anderes OpenRouter-Modell seine erste Stimme für die Sprache.",
   "Language (e.g. ru)": "Sprache (z. B. ru)",
-  "TTS model (optional)": "TTS-Modell (optional)"
+  "TTS model (optional)": "TTS-Modell (optional)",
+  "Voice (optional)": "Stimme (optional)",
+  "Test": "Test"
 }

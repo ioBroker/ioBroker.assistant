@@ -421,6 +421,8 @@ speech recognition/synthesis available; **it does not open any network port**. T
   language (e.g. `ru` → `elevenlabs/eleven-multilingual-v2`, the rest stays on `eleven-flash-v2.5`). A row with a
   model but no voice keeps the voice above for OpenAI; another OpenRouter model takes its first voice for the language,
   because the voices belong to the model. Azure, AWS and Piper have no model choice — there it is the voice alone.
+  Voice and model are offered in drop-downs (the voices for the language and model of the row); ▶ at the end of a
+  row speaks a test sentence in its language with exactly this row, also before saving.
   A question in another language gets its answer in that language too: Cyrillic tells Russian, and English and
   German are told apart by their small words ("what time is it" on a German satellite → English answer and
   voice). This is what the built-in answers (time, devices, timers …) use; short commands like "Licht an" stay in

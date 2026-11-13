@@ -4,6 +4,7 @@ import LocalLlmProgress from './LocalLlmProgress';
 import LocalModelsComponent from './LocalModelsComponent';
 import SatellitesComponent from './SatellitesComponent';
 import VoiceTestComponent from './VoiceTestComponent';
+import VoiceRowTestComponent from './VoiceRowTestComponent';
 
 export default {
     DeviceAclComponent,
@@ -12,4 +13,5 @@ export default {
     LocalModelsComponent,
     SatellitesComponent,
     VoiceTestComponent,
+    VoiceRowTestComponent,
 };

@@ -209,5 +209,8 @@
     "custom_assistant_slow": "lente",
     "custom_assistant_llm_benchmark": "test en cours",
     "Model folder": "Dossier des modèles",
-    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Chemin absolu, p. ex. /mnt/ssd/llm. Vide = dossier de données de l'instance. Les modèles déjà téléchargés ailleurs ne sont pas déplacés."
+    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Chemin absolu, p. ex. /mnt/ssd/llm. Vide = dossier de données de l'instance. Les modèles déjà téléchargés ailleurs ne sont pas déplacés.",
+    "custom_assistant_Start the instance to test the voice": "Démarrez l'instance pour tester la voix",
+    "custom_assistant_Try this voice": "Essayer cette voix",
+    "custom_assistant_synthesis": "synthèse"
 }

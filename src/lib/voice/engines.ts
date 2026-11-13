@@ -332,7 +332,13 @@ export async function listSttModels(provider: SpeechProvider, language: string):
     return provider === 'vosk' ? listVoskModels(language) : [];
 }
 
-/** TTS model names for the settings dropdown — only OpenRouter has a choice worth listing. */
+/** OpenAI TTS models (no list API that tells speech models apart). */
+const OPENAI_TTS_MODELS = ['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts'];
+
+/** TTS model names for the settings dropdown; the other providers have no model choice. */
 export async function listTtsModels(provider: SpeechProvider): Promise<string[]> {
-    return provider === 'openrouter' ? (await listOpenRouterSpeechModels('speech')).map(m => m.id) : [];
+    if (provider === 'openrouter') {
+        return (await listOpenRouterSpeechModels('speech')).map(m => m.id);
+    }
+    return provider === 'openai' ? OPENAI_TTS_MODELS : [];
 }

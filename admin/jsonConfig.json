@@ -1199,7 +1199,10 @@
                     "xl": 4
                 },
                 "ttsModel": {
-                    "type": "text",
+                    "type": "autocompleteSendTo",
+                    "command": "getTtsModels",
+                    "jsonData": "{\"ttsProvider\":\"openai\"}",
+                    "freeSolo": true,
                     "label": "OpenAI TTS model (optional)",
                     "help": "Empty = tts-1. Also: tts-1-hd, gpt-4o-mini-tts.",
                     "hidden": "!data.voiceEnabled || data.ttsProvider !== 'openai'",
@@ -1506,9 +1509,37 @@
                     "lg": 12,
                     "xl": 12,
                     "items": [
-                        { "type": "text", "attr": "language", "title": "Language (e.g. ru)", "width": "20%" },
-                        { "type": "text", "attr": "voice", "title": "Voice", "width": "40%" },
-                        { "type": "text", "attr": "model", "title": "TTS model (optional)", "width": "40%" }
+                        { "type": "text", "attr": "language", "title": "Language (e.g. ru)", "width": "14%" },
+                        {
+                            "type": "autocompleteSendTo",
+                            "attr": "voice",
+                            "title": "Voice (optional)",
+                            "width": "38%",
+                            "command": "getVoices",
+                            "jsonData": "{\"ttsProvider\":\"${globalData.ttsProvider}\",\"language\":\"${data.language || globalData.voiceLanguage}\",\"openrouterTtsModel\":\"${data.model || globalData.openrouterTtsModel}\",\"voiceCredentialType\":\"${globalData.voiceCredentialType}\",\"voiceApiKey\":\"${globalData.voiceApiKey}\",\"voiceCredentialId\":\"${globalData.voiceCredentialId}\",\"azureSpeechKey\":\"${globalData.azureSpeechKey}\",\"azureSpeechRegion\":\"${globalData.azureSpeechRegion}\",\"azureCredentialId\":\"${globalData.azureCredentialId}\",\"awsAccessKeyId\":\"${globalData.awsAccessKeyId}\",\"awsSecretAccessKey\":\"${globalData.awsSecretAccessKey}\",\"awsRegion\":\"${globalData.awsRegion}\",\"awsCredentialId\":\"${globalData.awsCredentialId}\"}",
+                            "alsoDependsOn": ["language", "model"],
+                            "freeSolo": true
+                        },
+                        {
+                            "type": "autocompleteSendTo",
+                            "attr": "model",
+                            "title": "TTS model (optional)",
+                            "width": "38%",
+                            "command": "getTtsModels",
+                            "jsonData": "{\"ttsProvider\":\"${globalData.ttsProvider}\"}",
+                            "freeSolo": true
+                        },
+                        {
+                            "type": "custom",
+                            "attr": "_test",
+                            "title": "Test",
+                            "width": "10%",
+                            "i18n": true,
+                            "url": "custom/customComponents.js",
+                            "name": "ConfigCustomAssistant/Components/VoiceRowTestComponent",
+                            "bundlerType": "module",
+                            "guiApi": 2
+                        }
                     ]
                 },
                 "_ffmpegPanel": {

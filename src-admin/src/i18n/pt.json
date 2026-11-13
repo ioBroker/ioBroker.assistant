@@ -209,5 +209,8 @@
     "custom_assistant_slow": "lento",
     "custom_assistant_llm_benchmark": "testando",
     "Model folder": "Pasta dos modelos",
-    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Caminho absoluto, p. ex. /mnt/ssd/llm. Vazio = pasta de dados da instância. Modelos já baixados em outro lugar não são movidos."
+    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Caminho absoluto, p. ex. /mnt/ssd/llm. Vazio = pasta de dados da instância. Modelos já baixados em outro lugar não são movidos.",
+    "custom_assistant_Start the instance to test the voice": "Inicie a instância para testar a voz",
+    "custom_assistant_Try this voice": "Experimentar esta voz",
+    "custom_assistant_synthesis": "síntese"
 }

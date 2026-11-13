@@ -437,6 +437,8 @@ wähle:
   mit Modell, aber ohne Stimme behält bei OpenAI die Stimme oben; ein anderes OpenRouter-Modell nimmt seine erste Stimme
   für die Sprache, weil die Stimmen zum Modell gehören. Azure, AWS und Piper haben keine Modellwahl — dort zählt nur
   die Stimme.
+  Stimme und Modell gibt es als Auswahlliste (die Stimmen für Sprache und Modell der Zeile); ▶ am Ende einer Zeile
+  spricht einen Testsatz in ihrer Sprache mit genau dieser Zeile, auch vor dem Speichern.
   Eine Frage in einer anderen Sprache bekommt ihre Antwort auch in dieser Sprache: Kyrillisch verrät Russisch,
   Englisch und Deutsch werden an ihren kleinen Wörtern erkannt („what time is it“ an einem deutschen Satelliten →
   englische Antwort und Stimme). Das nutzen die eingebauten Antworten (Uhrzeit, Geräte, Timer …); kurze Befehle wie
