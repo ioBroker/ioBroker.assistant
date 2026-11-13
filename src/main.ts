@@ -56,6 +56,7 @@ import { benchmarkCases, runBenchmark } from './lib/llmBenchmark';
 import { resolveApiKey, resolveVoiceCredentials, type LlmKey } from './lib/credentials';
 import { ConversationStore, type ConversationTurn } from './lib/context';
 import { PendingQuestions, ANY_SOURCE, ASK_TIMEOUT_MS, endsWithQuestion } from './lib/ask';
+import { isLateReply } from './lib/messages';
 import { PresenceTracker, buildPresencePrompt, parsePresenceRows, type PresenceInfo } from './lib/presence';
 import { describeTargets, findTarget, isBroadcast, parseTargetRows, type TargetGroup } from './lib/targets';
 import { matchRoutine, parseRoutineRows, type Routine } from './lib/routines';
@@ -3088,6 +3089,13 @@ class Assistant extends Adapter {
     /** Allow scripts to ask via sendTo('assistant.0', 'ask', { text: '...' }, cb). */
     private async onMessage(obj: ioBroker.Message): Promise<void> {
         if (!obj?.command) {
+            return;
+        }
+
+        // A reply whose callback is gone (we restarted while the other adapter answered) is no request: answering it
+        // would send it back, and a caller that does the same keeps both adapters in a loop.
+        if (isLateReply(obj)) {
+            this.log.debug(`Ignoring a late reply from ${obj.from} to "${obj.command}"`);
             return;
         }
 
