@@ -237,7 +237,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.9.0 (2026-11-13)
 * (@GermanBluefox) The table "Voice per answer language" has a column for the TTS model (OpenAI and OpenRouter): e.g. Russian answers with `elevenlabs/eleven-multilingual-v2`, the rest with the model set above. An OpenAI model change no longer serves cached audio of the old model. Voice and model of a row are offered in drop-downs, and ▶ at the end of a row speaks a test sentence with it
 
 ### 1.8.0 (2026-11-13)
