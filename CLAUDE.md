@@ -29,6 +29,14 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   Sprache → `en`. Eine eingestellte Stimme nur für ihre Sprache (`voiceFitsLanguage` = Locale am Namensanfang,
   Azure `Multilingual` = alle): Piper, Azure, OpenRouter; Polly über `EngineContext.language`. Tabelle `ttsVoices`
   `{language, voice}` → `VoicePerLanguage` (eine Engine + Cache pro Zeile, nur Hauptanbieter, `prepare` lädt alle).
+  Spalte `model` (Nutzerwunsch 2026-11-13): `parseVoiceTable` → `{voice, model}`, `engines.rowContext()` setzt pro
+  Zeile `ttsModel`/`openrouterTtsModel` (nur OpenAI/OpenRouter, sonst Warnung, Zeile nur mit Modell entfällt);
+  anderes OpenRouter-Modell ohne Stimme → Stimme '' (erste des Modells für die Sprache), OpenAI behält die Stimme.
+  OpenAI-Cache-Ordner enthält jetzt das Modell, wenn eins gesetzt ist. Tabellenzellen: `autocompleteSendTo` (in einer
+  Tabelle ist `data` die Zeile, `globalData` die ganze Config; fehlende Felder kommen als Text `'undefined'` an →
+  `getVoices`/`getTtsModels` ignorieren den), Test-Spalte = Custom-Komponente `VoiceRowTestComponent` (`tts`-sendTo
+  mit `config` = Formular + `ttsVoices: [row]`, Testsatz aus `voiceSamples.ts`). ⚠️ Module Federation teilt nur Icons,
+  die das Projekt schon nutzt — ein neues (`ErrorOutline`) bricht den Build mit `MISSING_EXPORT`.
   Schichten: `LanguageTts(Fallback(VoicePerLanguage(Cached…), Cached))`. STT bleibt bei `voiceLanguage` (Whisper
   bekommt `language` → erkennt nichts; Auto-Erkennung wäre ein Opt-in, bei kurzen Befehlen unzuverlässig).
   Tests: `speechLanguage.test.js`, `answerLanguage.test.js`. Nicht am Gerät.

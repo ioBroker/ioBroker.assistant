@@ -1287,12 +1287,18 @@ class Assistant extends Adapter {
     }): Promise<string[]> {
         try {
             // Merge the form's config-shaped fields over the saved config (ttsProvider/language handled apart).
+            // 'undefined' is a field the form does not have (a pattern `${globalData.x}` in a table writes it).
             const overrides = Object.fromEntries(
-                Object.entries(msg).filter(([k, v]) => v !== undefined && k !== 'ttsProvider' && k !== 'language'),
+                Object.entries(msg).filter(
+                    ([k, v]) => v !== undefined && v !== 'undefined' && k !== 'ttsProvider' && k !== 'language',
+                ),
             ) as Partial<AdapterConfig>;
             const cfg = { ...this.config, ...overrides };
-            const provider = msg.ttsProvider || cfg.ttsProvider || 'openai';
-            const language = msg.language || cfg.voiceLanguage || this.language || '';
+            const provider =
+                (msg.ttsProvider && msg.ttsProvider !== ('undefined' as SpeechProvider) ? msg.ttsProvider : '') ||
+                cfg.ttsProvider ||
+                'openai';
+            const language = (msg.language !== 'undefined' && msg.language) || cfg.voiceLanguage || this.language || '';
             const creds = await resolveVoiceCredentials(this, cfg, await this.speechLlmKey());
             return await listVoices(provider, this.voiceContext(cfg, creds), language);
         } catch (e) {
@@ -3207,7 +3213,11 @@ class Assistant extends Adapter {
                 models =
                     obj.command === 'getSttModels'
                         ? await listSttModels(msg.sttProvider || cfg.sttProvider || 'openai', language)
-                        : await listTtsModels(msg.ttsProvider || cfg.ttsProvider || 'openai');
+                        : await listTtsModels(
+                              (msg.ttsProvider !== ('undefined' as SpeechProvider) && msg.ttsProvider) ||
+                                  cfg.ttsProvider ||
+                                  'openai',
+                          );
             } catch (e) {
                 this.log.warn(`${obj.command} failed: ${(e as Error).message}`);
             }

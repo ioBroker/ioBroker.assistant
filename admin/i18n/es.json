@@ -261,6 +261,9 @@
   "Status": "Estado",
   "ffmpeg": "ffmpeg",
   "Voice per answer language": "Voice per answer language",
-  "An answer in another language than the satellites listen in (e.g. pi-agent answers a Russian question in Russian) is spoken with the voice of its language, not spelled letter by letter by the voice above. Without a row the provider's default voice for that language is used. Voice names of the speech output provider, e.g. ru → ru_RU-dmitri-medium (Piper), ru-RU-SvetlanaNeural (Azure), Tatyana (AWS).": "An answer in another language than the satellites listen in (e.g. pi-agent answers a Russian question in Russian) is spoken with the voice of its language, not spelled letter by letter by the voice above. Without a row the provider's default voice for that language is used. Voice names of the speech output provider, e.g. ru → ru_RU-dmitri-medium (Piper), ru-RU-SvetlanaNeural (Azure), Tatyana (AWS).",
-  "Language (e.g. ru)": "Language (e.g. ru)"
+  "An answer in another language than the satellites listen in (e.g. pi-agent answers a Russian question in Russian) is spoken with the voice of its language, not spelled letter by letter by the voice above. Without a row the provider's default voice for that language is used. Voice names of the speech output provider, e.g. ru → ru_RU-dmitri-medium (Piper), ru-RU-SvetlanaNeural (Azure), Tatyana (AWS). The model (OpenAI and OpenRouter only) replaces the TTS model above for this language, e.g. ru → elevenlabs/eleven-multilingual-v2; without a voice another OpenRouter model takes its first voice for the language.": "An answer in another language than the satellites listen in (e.g. pi-agent answers a Russian question in Russian) is spoken with the voice of its language, not spelled letter by letter by the voice above. Without a row the provider's default voice for that language is used. Voice names of the speech output provider, e.g. ru → ru_RU-dmitri-medium (Piper), ru-RU-SvetlanaNeural (Azure), Tatyana (AWS). El modelo (solo OpenAI y OpenRouter) sustituye para este idioma el modelo TTS de arriba, p. ej. ru → elevenlabs/eleven-multilingual-v2; sin voz, otro modelo de OpenRouter usa su primera voz para el idioma.",
+  "Language (e.g. ru)": "Language (e.g. ru)",
+  "TTS model (optional)": "Modelo TTS (opcional)",
+  "Voice (optional)": "Voz (opcional)",
+  "Test": "Prueba"
 }

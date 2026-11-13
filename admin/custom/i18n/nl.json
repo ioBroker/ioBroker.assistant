@@ -209,5 +209,8 @@
     "custom_assistant_slow": "traag",
     "custom_assistant_llm_benchmark": "test loopt",
     "Model folder": "Modelmap",
-    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Absoluut pad, bijv. /mnt/ssd/llm. Leeg = gegevensmap van de instantie. Elders gedownloade modellen worden niet verplaatst."
+    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Absoluut pad, bijv. /mnt/ssd/llm. Leeg = gegevensmap van de instantie. Elders gedownloade modellen worden niet verplaatst.",
+    "custom_assistant_Start the instance to test the voice": "Start de instantie om de stem te testen",
+    "custom_assistant_Try this voice": "Deze stem proberen",
+    "custom_assistant_synthesis": "synthese"
 }

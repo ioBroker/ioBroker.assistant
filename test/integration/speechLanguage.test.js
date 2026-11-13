@@ -77,16 +77,21 @@ test('voiceFitsLanguage: by the locale at the start of the name', () => {
     assert.equal(voiceFitsLanguage('de_DE-thorsten-medium', ''), true);
 });
 
-test('parseVoiceTable: ISO code → voice, incomplete rows skipped', () => {
+test('parseVoiceTable: ISO code → voice and model, rows without either skipped', () => {
     assert.deepEqual(
         parseVoiceTable([
             { language: 'ru', voice: ' ru_RU-dmitri-medium ' },
-            { language: 'en-US', voice: 'en_US-lessac-medium' },
+            { language: 'en-US', voice: 'en_US-lessac-medium', model: '' },
+            { language: 'uk', voice: '', model: ' elevenlabs/eleven-multilingual-v2 ' },
             { language: '', voice: 'x' },
-            { language: 'fr', voice: '' },
+            { language: 'fr', voice: '', model: '' },
             null,
         ]),
-        { ru: 'ru_RU-dmitri-medium', en: 'en_US-lessac-medium' },
+        {
+            ru: { voice: 'ru_RU-dmitri-medium', model: '' },
+            en: { voice: 'en_US-lessac-medium', model: '' },
+            uk: { voice: '', model: 'elevenlabs/eleven-multilingual-v2' },
+        },
     );
     assert.deepEqual(parseVoiceTable(undefined), {});
 });
@@ -148,7 +153,7 @@ test('createTtsEngine: the language layer is outside, a row of the table gets it
             openrouterSttModel: '',
             openrouterTtsModel: '',
             language: 'de',
-            voicesByLanguage: { ru: 'ru-RU-SvetlanaNeural' },
+            voicesByLanguage: { ru: { voice: 'ru-RU-SvetlanaNeural', model: '' } },
         };
         const tts = createTtsEngine('azure', ctx);
         assert.equal(tts.constructor.name, 'LanguageTts');
@@ -156,6 +161,65 @@ test('createTtsEngine: the language layer is outside, a row of the table gets it
         // one cache directory per voice: the Russian row does not share the German one
         assert.equal(tts.inner.constructor.name, 'VoicePerLanguage');
         assert.deepEqual(Object.keys(tts.inner.byLanguage), ['ru']);
+    } finally {
+        fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+});
+
+test('createTtsEngine: the model of a row replaces the TTS model for its language', async () => {
+    const os = require('node:os');
+    const path = require('node:path');
+    const fs = require('node:fs');
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'speechlang-'));
+    const engineOf = cached => cached.engine;
+    try {
+        const base = {
+            creds: { openaiKey: 'k', openrouterKey: 'k', azureKey: 'k', azureRegion: 'westeurope', aws: {} },
+            voices: { openai: 'nova', azure: 'de-DE-KatjaNeural', aws: '', piper: '', openrouter: 'george' },
+            dataDir,
+            log,
+            voskModel: '',
+            sttModel: '',
+            ttsModel: '',
+            openrouterSttModel: '',
+            openrouterTtsModel: '',
+            language: 'de',
+        };
+        // OpenRouter: another model without a voice gets none (the voices belong to the model), with a voice that one
+        const router = createTtsEngine('openrouter', {
+            ...base,
+            voicesByLanguage: {
+                ru: { voice: '', model: 'elevenlabs/eleven-multilingual-v2' },
+                uk: { voice: 'Kore', model: 'google/gemini-3.1-flash-tts-preview' },
+                en: { voice: 'adam', model: '' },
+            },
+        });
+        const rows = router.inner.byLanguage;
+        const ru = engineOf(rows.ru);
+        assert.equal(ru.model, 'elevenlabs/eleven-multilingual-v2');
+        assert.equal(ru.voice, '');
+        assert.equal(engineOf(rows.uk).model, 'google/gemini-3.1-flash-tts-preview');
+        assert.equal(engineOf(rows.uk).voice, 'Kore');
+        // a row with only a voice keeps the model set above
+        assert.equal(engineOf(rows.en).model, 'elevenlabs/eleven-flash-v2.5');
+        assert.equal(engineOf(router.inner.fallback).model, 'elevenlabs/eleven-flash-v2.5');
+
+        // OpenAI: the voice above stays, the model changes, and the cache directory is a different one
+        const openai = createTtsEngine('openai', {
+            ...base,
+            voicesByLanguage: { ru: { voice: '', model: 'gpt-4o-mini-tts' } },
+        });
+        const row = openai.inner.byLanguage.ru;
+        assert.equal(engineOf(row).model, 'gpt-4o-mini-tts');
+        assert.equal(engineOf(row).voice, 'nova');
+        assert.notEqual(row.opts.dir, openai.inner.fallback.opts.dir);
+
+        // Azure has no model choice: a row with only a model is left out
+        const azure = createTtsEngine('azure', {
+            ...base,
+            voicesByLanguage: { ru: { voice: '', model: 'x' }, uk: { voice: 'uk-UA-PolinaNeural', model: 'x' } },
+        });
+        assert.deepEqual(Object.keys(azure.inner.byLanguage), ['uk']);
     } finally {
         fs.rmSync(dataDir, { recursive: true, force: true });
     }

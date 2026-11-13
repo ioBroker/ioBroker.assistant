@@ -11,6 +11,8 @@ import {
 import { ConfigGeneric, type ConfigGenericProps, type ConfigGenericState } from '@iobroker/json-config';
 import { I18n } from '@iobroker/gui-components';
 
+import { sampleFor } from './voiceSamples';
+
 // Register this component's translations into the shared admin I18n.
 const translations: Record<string, Record<string, string>> = {};
 const i18nModules = import.meta.glob('./i18n/*.json', { eager: true }) as Record<
@@ -54,21 +56,6 @@ interface VoiceTestState extends ConfigGenericState {
     recording: boolean;
     sttResult: SttResult | null;
 }
-
-/** Sentence to try a voice with, in the voice language */
-const SAMPLES: Record<string, string> = {
-    de: 'Hallo, ich bin dein ioBroker-Assistent. Im Wohnzimmer sind es 21,5 Grad.',
-    en: "Hello, I'm your ioBroker assistant. It is 21.5 degrees in the living room.",
-    ru: 'Привет, я твой ассистент ioBroker. В гостиной 21,5 градуса.',
-    fr: 'Bonjour, je suis ton assistant ioBroker. Il fait 21,5 degrés dans le salon.',
-    it: 'Ciao, sono il tuo assistente ioBroker. In soggiorno ci sono 21,5 gradi.',
-    es: 'Hola, soy tu asistente de ioBroker. En el salón hace 21,5 grados.',
-    nl: 'Hallo, ik ben je ioBroker-assistent. In de woonkamer is het 21,5 graden.',
-    pl: 'Cześć, jestem twoim asystentem ioBroker. W salonie jest 21,5 stopnia.',
-    pt: 'Olá, sou o teu assistente ioBroker. Na sala estão 21,5 graus.',
-    uk: 'Привіт, я твій асистент ioBroker. У вітальні 21,5 градуса.',
-    'zh-cn': '你好，我是你的 ioBroker 助手。客厅现在是 21.5 度。',
-};
 
 /** Rate of the recordings sent to speech recognition (what the satellites send, too) */
 const RECORD_RATE = 16000;
@@ -164,7 +151,7 @@ export default class VoiceTestComponent extends ConfigGeneric<ConfigGenericProps
     }
 
     private get sentence(): string {
-        return this.state.text.trim() || SAMPLES[this.language] || SAMPLES.en;
+        return this.state.text.trim() || sampleFor(this.language);
     }
 
     async componentDidMount(): Promise<void> {
@@ -407,7 +394,7 @@ export default class VoiceTestComponent extends ConfigGeneric<ConfigGenericProps
                         variant="standard"
                         fullWidth
                         value={text}
-                        placeholder={SAMPLES[this.language] || SAMPLES.en}
+                        placeholder={sampleFor(this.language)}
                         label={I18n.t('custom_assistant_Test sentence')}
                         onChange={e => this.setState({ text: e.target.value })}
                         onKeyDown={e => {

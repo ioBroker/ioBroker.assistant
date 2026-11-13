@@ -1199,7 +1199,10 @@
                     "xl": 4
                 },
                 "ttsModel": {
-                    "type": "text",
+                    "type": "autocompleteSendTo",
+                    "command": "getTtsModels",
+                    "jsonData": "{\"ttsProvider\":\"openai\"}",
+                    "freeSolo": true,
                     "label": "OpenAI TTS model (optional)",
                     "help": "Empty = tts-1. Also: tts-1-hd, gpt-4o-mini-tts.",
                     "hidden": "!data.voiceEnabled || data.ttsProvider !== 'openai'",
@@ -1498,7 +1501,7 @@
                     "newLine": true,
                     "type": "table",
                     "label": "Voice per answer language",
-                    "help": "An answer in another language than the satellites listen in (e.g. pi-agent answers a Russian question in Russian) is spoken with the voice of its language, not spelled letter by letter by the voice above. Without a row the provider's default voice for that language is used. Voice names of the speech output provider, e.g. ru → ru_RU-dmitri-medium (Piper), ru-RU-SvetlanaNeural (Azure), Tatyana (AWS).",
+                    "help": "An answer in another language than the satellites listen in (e.g. pi-agent answers a Russian question in Russian) is spoken with the voice of its language, not spelled letter by letter by the voice above. Without a row the provider's default voice for that language is used. Voice names of the speech output provider, e.g. ru → ru_RU-dmitri-medium (Piper), ru-RU-SvetlanaNeural (Azure), Tatyana (AWS). The model (OpenAI and OpenRouter only) replaces the TTS model above for this language, e.g. ru → elevenlabs/eleven-multilingual-v2; without a voice another OpenRouter model takes its first voice for the language.",
                     "hidden": "!data.voiceEnabled",
                     "xs": 12,
                     "sm": 12,
@@ -1506,8 +1509,61 @@
                     "lg": 12,
                     "xl": 12,
                     "items": [
-                        { "type": "text", "attr": "language", "title": "Language (e.g. ru)", "width": "30%" },
-                        { "type": "text", "attr": "voice", "title": "Voice", "width": "70%" }
+                        {
+                            "type": "autocomplete",
+                            "attr": "language",
+                            "title": "Language (e.g. ru)",
+                            "width": "14%",
+                            "freeSolo": true,
+                            "options": [
+                                { "label": "en – English", "value": "en" },
+                                { "label": "de – Deutsch", "value": "de" },
+                                { "label": "ru – Русский", "value": "ru" },
+                                { "label": "uk – Українська", "value": "uk" },
+                                { "label": "fr – Français", "value": "fr" },
+                                { "label": "it – Italiano", "value": "it" },
+                                { "label": "es – Español", "value": "es" },
+                                { "label": "nl – Nederlands", "value": "nl" },
+                                { "label": "pl – Polski", "value": "pl" },
+                                { "label": "pt – Português", "value": "pt" },
+                                { "label": "cs – Čeština", "value": "cs" },
+                                { "label": "sv – Svenska", "value": "sv" },
+                                { "label": "tr – Türkçe", "value": "tr" },
+                                { "label": "el – Ελληνικά", "value": "el" },
+                                { "label": "zh – 中文", "value": "zh" },
+                                { "label": "ja – 日本語", "value": "ja" }
+                            ]
+                        },
+                        {
+                            "type": "autocompleteSendTo",
+                            "attr": "voice",
+                            "title": "Voice (optional)",
+                            "width": "38%",
+                            "command": "getVoices",
+                            "jsonData": "{\"ttsProvider\":\"${globalData.ttsProvider}\",\"language\":\"${data.language || globalData.voiceLanguage}\",\"openrouterTtsModel\":\"${data.model || globalData.openrouterTtsModel}\",\"voiceCredentialType\":\"${globalData.voiceCredentialType}\",\"voiceApiKey\":\"${globalData.voiceApiKey}\",\"voiceCredentialId\":\"${globalData.voiceCredentialId}\",\"azureSpeechKey\":\"${globalData.azureSpeechKey}\",\"azureSpeechRegion\":\"${globalData.azureSpeechRegion}\",\"azureCredentialId\":\"${globalData.azureCredentialId}\",\"awsAccessKeyId\":\"${globalData.awsAccessKeyId}\",\"awsSecretAccessKey\":\"${globalData.awsSecretAccessKey}\",\"awsRegion\":\"${globalData.awsRegion}\",\"awsCredentialId\":\"${globalData.awsCredentialId}\"}",
+                            "alsoDependsOn": ["language", "model"],
+                            "freeSolo": true
+                        },
+                        {
+                            "type": "autocompleteSendTo",
+                            "attr": "model",
+                            "title": "TTS model (optional)",
+                            "width": "38%",
+                            "command": "getTtsModels",
+                            "jsonData": "{\"ttsProvider\":\"${globalData.ttsProvider}\"}",
+                            "freeSolo": true
+                        },
+                        {
+                            "type": "custom",
+                            "attr": "_test",
+                            "title": "Test",
+                            "width": "10%",
+                            "i18n": true,
+                            "url": "custom/customComponents.js",
+                            "name": "ConfigCustomAssistant/Components/VoiceRowTestComponent",
+                            "bundlerType": "module",
+                            "guiApi": 2
+                        }
                     ]
                 },
                 "_ffmpegPanel": {

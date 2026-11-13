@@ -209,5 +209,8 @@
     "custom_assistant_slow": "慢",
     "custom_assistant_llm_benchmark": "测试中",
     "Model folder": "模型文件夹",
-    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "绝对路径，例如 /mnt/ssd/llm。为空 = 实例的数据文件夹。已下载到其他位置的模型不会被移动。"
+    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "绝对路径，例如 /mnt/ssd/llm。为空 = 实例的数据文件夹。已下载到其他位置的模型不会被移动。",
+    "custom_assistant_Start the instance to test the voice": "启动实例以测试声音",
+    "custom_assistant_Try this voice": "试听此声音",
+    "custom_assistant_synthesis": "合成"
 }

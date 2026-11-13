@@ -249,17 +249,24 @@ export function voiceFitsLanguage(voice: string, lang: string): boolean {
     return locale[1] === iso;
 }
 
-/** Parse the config table "voice per language" into ISO code → voice; rows without both are skipped. */
-export function parseVoiceTable(rows: unknown): Record<string, string> {
-    const table: Record<string, string> = {};
+/** A row of the table "voice per language": the voice and/or the TTS model ('' = the ones set above). */
+export interface LanguageVoice {
+    voice: string;
+    model: string;
+}
+
+/** Parse the config table "voice per language" into ISO code → voice and model; rows without either are skipped. */
+export function parseVoiceTable(rows: unknown): Record<string, LanguageVoice> {
+    const table: Record<string, LanguageVoice> = {};
     if (!Array.isArray(rows)) {
         return table;
     }
-    for (const row of rows as { language?: unknown; voice?: unknown }[]) {
+    for (const row of rows as { language?: unknown; voice?: unknown; model?: unknown }[]) {
         const lang = baseLanguage(typeof row?.language === 'string' ? row.language : '');
         const voice = typeof row?.voice === 'string' ? row.voice.trim() : '';
-        if (lang && voice) {
-            table[lang] = voice;
+        const model = typeof row?.model === 'string' ? row.model.trim() : '';
+        if (lang && (voice || model)) {
+            table[lang] = { voice, model };
         }
     }
     return table;

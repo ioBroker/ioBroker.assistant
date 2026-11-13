@@ -209,5 +209,8 @@
     "custom_assistant_slow": "медленно",
     "custom_assistant_llm_benchmark": "идёт тест",
     "Model folder": "Папка моделей",
-    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Абсолютный путь, например /mnt/ssd/llm. Пусто = папка данных инстанции. Уже скачанные в другое место модели не переносятся."
+    "Absolute path, e.g. /mnt/ssd/llm. Empty = data folder of the instance. Models already downloaded elsewhere are not moved.": "Абсолютный путь, например /mnt/ssd/llm. Пусто = папка данных инстанции. Уже скачанные в другое место модели не переносятся.",
+    "custom_assistant_Start the instance to test the voice": "Запустите экземпляр, чтобы проверить голос",
+    "custom_assistant_Try this voice": "Попробовать этот голос",
+    "custom_assistant_synthesis": "синтез"
 }
