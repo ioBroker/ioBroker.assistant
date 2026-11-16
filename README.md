@@ -237,7 +237,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.9.1 (2026-11-16)
 * (@GermanBluefox) The adapter ai-parakeet was renamed to voice: the speech recognition, the instance selection and the button "Install ioBroker.voice" use `voice` now. A saved instance `ai-parakeet.<n>` switches to `voice.<n>` by itself as soon as that instance exists
 
 ### 1.9.0 (2026-11-13)
