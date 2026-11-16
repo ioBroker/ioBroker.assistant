@@ -142,6 +142,12 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   js-controller), main per Wegwerf-Harness. ⚠️ ai-parakeet ist (Stand 2026-11-05) weder auf npm noch im Repository —
   der Knopf meldet das, bis es veröffentlicht ist; pi-agent nur in „latest“ → bei stable kommt es von npm. Nicht
   gegen einen echten Host gelaufen.
+  **Umbenannt (2026-11-16): ai-parakeet → voice** (Repo `ioBroker/ioBroker.voice`, npm `iobroker.voice`). Instanzfeld,
+  Knopf „Install ioBroker.voice“ und `HELPER_ADAPTERS` nutzen `voice`; Texte sagen `ioBroker.voice` (sonst verwechselbar
+  mit dem Tab „Voice“). `main.followRenamedParakeet()` am Anfang von `onReady`: steht `parakeetInstance` auf
+  `ai-parakeet.<n>` und gibt es `system.adapter.voice.<n>`, schreibt es `voice.<n>` in die eigene Config (Neustart).
+  `renamedParakeetInstance()` in `parakeet.ts`, Test in `parakeet.test.js`. voice übernimmt beim ersten Start selbst
+  Einstellungen, Modell und Uploads von `ai-parakeet.<n>` und stoppt die alte Instanz.
 - **Musik/Internetradio per URL auf ESPHome-Satelliten** (Wunsch des Firmware-Entwicklers, 2026-11-05, Punkte 8+9;
   Punkt 10 „Titel“ = die `text`-Entity der Firmware, nichts im Assistant). State `controls.<player>.url` →
   `playMediaUrl()`: `MediaPlayerCommandRequest{has_media_url, media_url, has_announcement:true, announcement:false}`

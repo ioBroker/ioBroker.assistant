@@ -88,9 +88,9 @@ export interface EngineContext {
     voicesByLanguage?: Record<string, LanguageVoice>;
     /** Language the answering tier reported for exactly this text (pi-agent `language`); absent → by its letters. */
     reportedLanguage?: (text: string) => string | undefined;
-    /** Instance of ioBroker.ai-parakeet for the provider `parakeet`, e.g. 'ai-parakeet.0'. */
+    /** Instance of ioBroker.voice for the provider `parakeet`, e.g. 'voice.0'. */
     parakeetInstance?: string;
-    /** Message bus to other instances (ai-parakeet); absent → `parakeet` cannot be used. */
+    /** Message bus to other instances (voice); absent → `parakeet` cannot be used. */
     sendMessage?: MessageSender;
 }
 

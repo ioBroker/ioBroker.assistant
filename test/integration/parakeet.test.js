@@ -1,8 +1,8 @@
 'use strict';
-// ai-parakeet as speech recognition (sendTo) and the installer behind "Install pi-agent" / "Install ai-parakeet".
+// ioBroker.voice (formerly ai-parakeet) as speech recognition (sendTo) and the installer behind "Install pi-agent" / "Install ioBroker.voice".
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { ParakeetStt } = require('../../build/lib/voice/parakeet.js');
+const { ParakeetStt, renamedParakeetInstance } = require('../../build/lib/voice/parakeet.js');
 const { createSttEngine, createTtsEngine } = require('../../build/lib/voice/engines.js');
 const { AdapterInstaller } = require('../../build/lib/installer.js');
 
@@ -23,7 +23,7 @@ function ctx(over = {}) {
 
 test('parakeet: PCM goes as base64 with rate and the hints as prompt; the answer is the text', async () => {
     const sent = [];
-    const stt = new ParakeetStt('ai-parakeet.0', async (instance, command, message) => {
+    const stt = new ParakeetStt('voice.0', async (instance, command, message) => {
         sent.push({ instance, command, message });
         return { text: '  Schalte das Licht im Wohnzimmer ein. ', rawText: 'x', audioSeconds: 2 };
     });
@@ -32,7 +32,7 @@ test('parakeet: PCM goes as base64 with rate and the hints as prompt; the answer
     assert.equal(text, 'Schalte das Licht im Wohnzimmer ein.');
     assert.deepEqual(sent, [
         {
-            instance: 'ai-parakeet.0',
+            instance: 'voice.0',
             command: 'transcribe',
             message: { pcm: pcm.toString('base64'), sampleRate: 16000, prompt: 'Wohnzimmer, ioBroker' },
         },
@@ -45,30 +45,30 @@ test('parakeet: PCM goes as base64 with rate and the hints as prompt; the answer
 
 test('parakeet: an error of the adapter, no answer and empty text', async () => {
     const answer = { value: { error: 'The adapter is not ready' } };
-    const stt = new ParakeetStt('ai-parakeet.1', async () => answer.value);
-    await assert.rejects(stt.transcribe(Buffer.alloc(4), 16000, 'de'), /ai-parakeet\.1: The adapter is not ready/);
+    const stt = new ParakeetStt('voice.1', async () => answer.value);
+    await assert.rejects(stt.transcribe(Buffer.alloc(4), 16000, 'de'), /voice\.1: The adapter is not ready/);
     answer.value = undefined;
     await assert.rejects(stt.transcribe(Buffer.alloc(4), 16000, 'de'), /gave no answer/);
     answer.value = { text: '' };
     assert.equal(await stt.transcribe(Buffer.alloc(4), 16000, 'de'), '');
     // a stopped instance: the sender rejects (main checks alive), the error goes on to the fallback engine
-    const dead = new ParakeetStt('ai-parakeet.0', () => Promise.reject(new Error('ai-parakeet.0 is not running')));
+    const dead = new ParakeetStt('voice.0', () => Promise.reject(new Error('voice.0 is not running')));
     await assert.rejects(dead.transcribe(Buffer.alloc(4), 16000, 'de'), /not running/);
 });
 
 test('parakeet: factory', () => {
     const send = async () => ({ text: '' });
     assert.equal(
-        createSttEngine('parakeet', ctx({ parakeetInstance: 'ai-parakeet.0', sendMessage: send })).constructor.name,
+        createSttEngine('parakeet', ctx({ parakeetInstance: 'voice.0', sendMessage: send })).constructor.name,
         'ParakeetStt',
     );
-    assert.throws(() => createSttEngine('parakeet', ctx({ sendMessage: send })), /needs an ai-parakeet instance/);
-    assert.throws(() => createSttEngine('parakeet', ctx({ parakeetInstance: 'ai-parakeet.0' })), /not available/);
+    assert.throws(() => createSttEngine('parakeet', ctx({ sendMessage: send })), /needs an instance of ioBroker.voice/);
+    assert.throws(() => createSttEngine('parakeet', ctx({ parakeetInstance: 'voice.0' })), /not available/);
     assert.throws(() => createTtsEngine('parakeet', ctx()), /not text-to-speech/);
     // as fallback behind a cloud engine
     const both = createSttEngine(
         'openai',
-        ctx({ creds: { ...ctx().creds, openaiKey: 'sk-x' }, sttFallback: 'parakeet', parakeetInstance: 'ai-parakeet.0', sendMessage: send }),
+        ctx({ creds: { ...ctx().creds, openaiKey: 'sk-x' }, sttFallback: 'parakeet', parakeetInstance: 'voice.0', sendMessage: send }),
     );
     assert.equal(both.constructor.name, 'FallbackStt');
 });
@@ -177,16 +177,16 @@ test('installer: not in the repository → npm, then "add"', async () => {
 });
 
 test('installer: installed without an instance → only "add"', async () => {
-    const sys = fakeSystem({ repo: [], objects: { 'system.adapter.ai-parakeet': { type: 'adapter', common: {} } } });
-    assert.deepEqual(await sys.make().ensure('ai-parakeet'), { instance: 'ai-parakeet.0', installed: true });
-    assert.deepEqual(sys.commands, ['pi: add ai-parakeet']);
+    const sys = fakeSystem({ repo: [], objects: { 'system.adapter.voice': { type: 'adapter', common: {} } } });
+    assert.deepEqual(await sys.make().ensure('voice'), { instance: 'voice.0', installed: true });
+    assert.deepEqual(sys.commands, ['pi: add voice']);
 });
 
 test('installer: neither in the repository nor on npm → an error that says both', async () => {
     const sys = fakeSystem();
-    await assert.rejects(sys.make().ensure('ai-parakeet'), err => {
-        assert.match(err.message, /ai-parakeet could not be installed/);
-        assert.match(err.message, /repository \(exit code 51: Unknown packet name ai-parakeet/);
+    await assert.rejects(sys.make().ensure('voice'), err => {
+        assert.match(err.message, /voice could not be installed/);
+        assert.match(err.message, /repository \(exit code 51: Unknown packet name voice/);
         assert.match(err.message, /npm \(exit code 1: npm error 404 Not Found/);
         return true;
     });
@@ -194,12 +194,12 @@ test('installer: neither in the repository nor on npm → an error that says bot
 });
 
 test('installer: one at a time; invalid names; a command that hangs times out', async () => {
-    const sys = fakeSystem({ repo: ['pi-agent', 'ai-parakeet'] });
+    const sys = fakeSystem({ repo: ['pi-agent', 'voice'] });
     const installer = sys.make();
     const first = installer.ensure('pi-agent');
-    await assert.rejects(installer.ensure('ai-parakeet'), /pi-agent is being installed right now/);
+    await assert.rejects(installer.ensure('voice'), /pi-agent is being installed right now/);
     await first;
-    assert.deepEqual(await installer.ensure('ai-parakeet'), { instance: 'ai-parakeet.0', installed: true });
+    assert.deepEqual(await installer.ensure('voice'), { instance: 'voice.0', installed: true });
     await assert.rejects(installer.ensure('pi-agent; rm -rf /'), /Invalid adapter name/);
     assert.equal(installer.handleMessage('cmdExit', { id: 'unknown', data: 0 }), true, 'a late second cmdExit');
     assert.equal(installer.handleMessage('ask', {}), false);
@@ -208,4 +208,12 @@ test('installer: one at a time; invalid names; a command that hangs times out', 
     const slow = fakeSystem({ hang: true });
     await assert.rejects(slow.make(50).ensure('pi-agent'), /iobroker add pi-agent still runs on pi after 1 min/);
     assert.deepEqual(slow.commands, ['pi: add pi-agent']);
+});
+
+test('parakeet: a saved ai-parakeet instance moves to voice with the same number', () => {
+    assert.equal(renamedParakeetInstance('ai-parakeet.0'), 'voice.0');
+    assert.equal(renamedParakeetInstance(' system.adapter.ai-parakeet.2 '), 'voice.2');
+    assert.equal(renamedParakeetInstance('voice.0'), null);
+    assert.equal(renamedParakeetInstance(''), null);
+    assert.equal(renamedParakeetInstance('ai-parakeet.x'), null);
 });

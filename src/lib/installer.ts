@@ -1,5 +1,5 @@
 /**
- * Installs a helper adapter (pi-agent, ai-parakeet) and creates an instance of it, from a button in the settings.
+ * Installs a helper adapter (pi-agent, voice) and creates an instance of it, from a button in the settings.
  *
  * The host does it, as for the admin: `sendToHost(host, 'cmdExec', { id, data: 'add pi-agent' })` runs
  * `iobroker add pi-agent` there and reports back to this instance with the messages `cmdStdout`, `cmdStderr` and

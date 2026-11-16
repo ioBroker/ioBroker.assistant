@@ -216,7 +216,7 @@ export interface AdapterConfig {
 
     /** Speech provider for recognition / synthesis (independently selectable). Vosk/Piper run locally. */
     sttProvider: 'openai' | 'openrouter' | 'azure' | 'aws' | 'vosk' | 'parakeet';
-    /** Instance of ioBroker.ai-parakeet for the STT provider (or fallback) `parakeet`, e.g. 'ai-parakeet.0'. */
+    /** Instance of ioBroker.voice for the STT provider (or fallback) `parakeet`, e.g. 'voice.0'. */
     parakeetInstance: string;
     ttsProvider: 'openai' | 'openrouter' | 'azure' | 'aws' | 'piper';
     /**

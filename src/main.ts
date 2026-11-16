@@ -141,6 +141,7 @@ import {
     type SpeechProvider,
 } from './lib/voice/engines';
 import { pcmFromResponse } from './lib/voice/openrouter';
+import { renamedParakeetInstance } from './lib/voice/parakeet';
 import { MAX_TTS_CHARS, parseTtsMaxChars, spokenLengthHint } from './lib/voice/ttsCache';
 import { CaptureStore, type DiscardedCapture } from './lib/voice/captures';
 import { downloadFfmpegStatic, ffmpegStaticPath } from './lib/voice/ffmpegStatic';
@@ -294,13 +295,13 @@ const VOICE_FORM_SECRETS = [
     'sttServerKey',
 ];
 
-/** How long ai-parakeet may take for one recognition (queue, loading an unloaded model, a slow host). */
+/** How long ioBroker.voice may take for one recognition (queue, loading an unloaded model, a slow host). */
 const PARAKEET_TIMEOUT_MS = 60_000;
 
 /** Adapters a button in the settings installs, and the setting that gets their instance. */
 const HELPER_ADAPTERS = new Map<string, 'piAgentInstance' | 'parakeetInstance'>([
     ['pi-agent', 'piAgentInstance'],
-    ['ai-parakeet', 'parakeetInstance'],
+    ['voice', 'parakeetInstance'],
 ]);
 
 /** An empty `ask` from the same caller is reported at most this often. */
@@ -495,7 +496,7 @@ class Assistant extends Adapter {
     private agent: LlmAgent | null = null;
     /** Provider "pi-agent": the cloud tier is a pi-agent instance instead of {@link agent}. */
     private piAgent: PiAgentHarness | null = null;
-    /** Installs pi-agent / ai-parakeet from the settings; created on the first use. */
+    /** Installs pi-agent / voice from the settings; created on the first use. */
     private installer: AdapterInstaller | null = null;
     /** The cloud LLM of the instance (own or system-wide settings); `null` without one. */
     private llm: ResolvedLlm | null = null;
@@ -630,7 +631,38 @@ class Assistant extends Adapter {
         this.on('unload', this.onUnload.bind(this));
     }
 
+    /**
+     * ioBroker.voice was called ai-parakeet up to its 0.1.x. Once its instance `voice.<n>` exists, the setting
+     * `ai-parakeet.<n>` moves to it; the instance then restarts. True if it was changed.
+     */
+    private async followRenamedParakeet(): Promise<boolean> {
+        const next = renamedParakeetInstance(this.config.parakeetInstance || '');
+        if (!next) {
+            return false;
+        }
+        try {
+            const target = await this.getForeignObjectAsync(`system.adapter.${next}`);
+            if (!target) {
+                return false;
+            }
+            this.log.info(
+                `ai-parakeet was renamed to voice: the speech recognition now uses ${next} instead of ${this.config.parakeetInstance}`,
+            );
+            await this.extendForeignObjectAsync(`system.adapter.${this.namespace}`, {
+                native: { parakeetInstance: next },
+            });
+            return true;
+        } catch (e) {
+            this.log.warn(`Could not switch the speech recognition to ${next}: ${(e as Error).message}`);
+            return false;
+        }
+    }
+
     private async onReady(): Promise<void> {
+        if (await this.followRenamedParakeet()) {
+            // The instance restarts with the new setting.
+            return;
+        }
         const cfg = this.config;
         // Provider "none": no cloud LLM at all — only the local tiers (routines, rule-based NLU, timers,
         // alarms, the local model) answer. The ioBroker tools are still built: the NLU switches through them.
@@ -3099,7 +3131,7 @@ class Assistant extends Adapter {
             return;
         }
 
-        // Output of a command the host runs for us (installing pi-agent / ai-parakeet).
+        // Output of a command the host runs for us (installing pi-agent / voice).
         if (this.installer?.handleMessage(obj.command, obj.message)) {
             return;
         }
@@ -3109,7 +3141,7 @@ class Assistant extends Adapter {
             return;
         }
 
-        // Settings buttons "Install pi-agent" / "Install ai-parakeet".
+        // Settings buttons "Install pi-agent" / "Install ioBroker.voice".
         if (obj.command === 'installAdapter') {
             const result = await this.installHelperAdapter(obj.message);
             if (obj.callback) {
@@ -5530,7 +5562,7 @@ class Assistant extends Adapter {
     }
 
     /**
-     * Settings button: install pi-agent or ai-parakeet on this host if needed, create an instance if there is
+     * Settings button: install pi-agent or voice on this host if needed, create an instance if there is
      * none, and put it into the form (`native`). Takes minutes on a Raspberry Pi; the log shows the steps.
      */
     private async installHelperAdapter(message: unknown): Promise<Record<string, unknown>> {

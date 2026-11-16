@@ -1,12 +1,21 @@
 /**
- * Speech recognition by the adapter ioBroker.ai-parakeet (NVIDIA Parakeet TDT 0.6B v3 on the CPU, 25 European
+ * Speech recognition by the adapter ioBroker.voice (NVIDIA Parakeet TDT 0.6B v3 on the CPU, 25 European
  * languages, detected automatically).
  *
- * Over the message bus, not over its HTTP API: `sendTo('ai-parakeet.0', 'transcribe', { pcm, sampleRate, prompt })`
+ * Over the message bus, not over its HTTP API: `sendTo('voice.0', 'transcribe', { pcm, sampleRate, prompt })`
  * works on any host of a multihost system without an address, and an API key set there does not matter. The PCM goes
  * as base64 — a Buffer would be serialised as a JSON array of numbers.
  */
 import { hintsToPrompt, type SttEngine } from './stt';
+
+/**
+ * ioBroker.voice was called ai-parakeet up to its version 0.1.x. For a saved instance `ai-parakeet.<n>` this returns
+ * `voice.<n>`, the instance that takes over its settings; null for anything else.
+ */
+export function renamedParakeetInstance(instance: string): string | null {
+    const match = /^(?:system\.adapter\.)?ai-parakeet\.(\d+)$/.exec(instance.trim());
+    return match ? `voice.${match[1]}` : null;
+}
 
 /** Sends a message to another instance and resolves with its answer; rejects when it is not running or times out. */
 export type MessageSender = (instance: string, command: string, message: Record<string, unknown>) => Promise<unknown>;
@@ -17,7 +26,7 @@ export class ParakeetStt implements SttEngine {
         private readonly send: MessageSender,
     ) {
         if (!instance) {
-            throw new Error('Parakeet speech recognition needs an ai-parakeet instance');
+            throw new Error('Parakeet speech recognition needs an instance of ioBroker.voice');
         }
     }
 
