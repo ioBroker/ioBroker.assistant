@@ -574,6 +574,29 @@ A ThirdReality speaker ships nine models with `okay_nabu` active and two slots. 
 switch: **`okay_nabu` is the only one trained on anything but English** (en, nl, fr, de, it, es, sv), so
 on a German setup the factory default is also the best choice.
 
+#### Shipped wake words (one click)
+
+The adapter comes with a few microWakeWord models (currently "ioBroker", "Hey Bro" and "Alisa", ru). In the
+device settings they are listed below the wake-word chips under **Shipped with the adapter** (dashed, with an
+upload icon). One click stores the model like an upload, offers it to every ESPHome satellite and **switches it
+on at this device** — the device downloads it then. If an **older version of the same word** is active there
+(e.g. "20261028 Iobroker" or "ioBroker"), the new one takes its place (same slot, same sensitivity). If every
+slot holds another word, it is only added to the list and the dialog says to switch another one off first.
+
+Models from a training run are named `YYYYMMDD-HHMMSS-<hash>-microwakeword-<word>.tflite`; in the device's list
+they show up short as `YYMMDD_<word>`, e.g. `261103_iobroker` — you can see which version runs, and a new
+version (new date) becomes a new entry. A model a device already downloaded keeps its old name there.
+
+From a script: `listWakeWords` also returns `bundled: [{id, phrase, languages, size, installed}]`, and
+
+```js
+sendTo('assistant.0', 'installWakeWord', { id: '261103_iobroker_2ae6f3f7', satellite: 'Salon' }, r =>
+    log(JSON.stringify(r)), // { ok, id, phrase, activated, replaced: [phrases], full } or { error }
+);
+```
+
+`satellite` is the state id under `satellites.`; without it the word is only offered.
+
 #### Uploading your own wake word
 
 Besides the built-in models you can put your own **microWakeWord models** on the ESPHome satellites, e.g.
@@ -592,7 +615,8 @@ person icon. Only when you **activate** it there does the device download the mo
   [Custom wake word](#custom-wake-word-eg-iobroker)) is an **openWakeWord** model — for ESPHome, train the
   same phrase again with microWakeWord.
 - Without a `.json` the adapter takes the phrase from the file name, the language from `voiceLanguage` and
-  the usual 0.97 cutoff. Fine-tune the sensitivity on the device afterwards with
+  the usual 0.97 cutoff. When the file name carries a training date (`20261117-…-iobroker.tflite`), the dialog
+  suggests the short name `261117_iobroker` — even if the `.json` only says "ioBroker". Fine-tune the sensitivity on the device afterwards with
   `wake_word_1_sensitivity`/`wake_word_2_sensitivity`.
 - The files are stored in the instance's file storage under `assistant.0/wakewords/`. The id contains part
   of the model's checksum, so a retrained model is a **new** wake word — a device that already has the old
@@ -1190,6 +1214,7 @@ Everything the assistant can do is reachable from a script. The reply always arr
 | `playYouTube` | `{ query, kind?: 'channel'/'video'/'playlist', player? }` | `{ ok, text, title?, id? }` — search, switch the TV on, play (§4) |
 | `getWakeWords` / `setWakeWords` | `{}` / `{ device, wakeWords }` | §6 |
 | `uploadWakeWord` / `listWakeWords` / `deleteWakeWord` | `{ model, fileName?, config?, phrase?, languages? }` / `{}` / `{ id }` | §6, own wake word |
+| `installWakeWord` | `{ id, satellite? }` | §6, shipped wake words |
 | `getControls` / `setControl` | `{}` / `{ device, control, value }` | §6 |
 | `getDevices` / `setDeviceName` / `translateName` | `{ language? }` / `{ stateId, name, language }` / … | the device list the assistant sees, and its names (§5) |
 | `clearCache` | `{}` | re-read devices, rooms and functions now |

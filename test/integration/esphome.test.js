@@ -1828,6 +1828,27 @@ test('a wake word uploaded while connected reaches the device with the next offe
     assert.equal(device.externals[0]?.id, word.id);
 });
 
+test('a wake word selected right after it was offered is activated without waiting for the echo', async t => {
+    const offers = [];
+    let media;
+    const { device, satellites, reported, name } = await connectedSatellite(
+        t,
+        {},
+        { externalWakeWords: () => offers },
+        m => (media = m),
+    );
+    // One click in the settings: store + offer, then select at once — before the device listed it.
+    const word = prepareWakeWord({ model: microModel('d'), fileName: 'hey_bro.tflite' }, 'en');
+    offers.push(offerFor(media, word));
+    satellites.refreshWakeWords();
+    assert.ok(!satellites.wakeWords(name).available.some(w => w.id === word.id), 'not yet echoed');
+    assert.equal(satellites.setWakeWords(name, ['okay_nabu', word.id]), true);
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    assert.equal(device.local[0]?.sha, word.sha256, 'downloaded');
+    assert.deepEqual(reported.at(-1).active, ['okay_nabu', word.id]);
+});
+
 test('a wake word the device cannot download is reported, and the old selection stays', async t => {
     const warnings = [];
     const word = prepareWakeWord({ model: microModel('c'), fileName: 'broken.tflite' }, 'de');

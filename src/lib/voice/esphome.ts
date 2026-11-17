@@ -1746,7 +1746,11 @@ class EsphomeConnection {
      * so we ask for one instead of assuming the write took.
      */
     setWakeWords(ids: string[]): void {
-        const known = this.wakeWordConfig?.available.map(w => w.id) ?? [];
+        // Our own offers count as known even before the device echoed its list with them: every offer went out
+        // with the configuration request sent when it was added, and the device handles messages in order, so
+        // it has the offer when this SetConfiguration arrives (an install selects a word right after uploading).
+        const offered = (this.opts.externalWakeWords?.() ?? []).map(w => w.id);
+        const known = [...new Set([...(this.wakeWordConfig?.available.map(w => w.id) ?? []), ...offered])];
         const wanted = [...new Set(ids.map(i => i.trim()).filter(Boolean))];
         const unknown = wanted.filter(i => !known.includes(i));
         if (unknown.length) {

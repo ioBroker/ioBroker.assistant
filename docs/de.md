@@ -596,6 +596,31 @@ Ein ThirdReality-Lautsprecher bringt neun Modelle mit, aktiv ist `okay_nabu`, zw
 Wichtig vor dem Umstellen: **nur `okay_nabu` ist auf mehr als Englisch trainiert** (en, nl, fr, de, it,
 es, sv) — auf einem deutschen System ist die Werkseinstellung also zugleich die beste Wahl.
 
+#### Mitgelieferte Wake-Words (ein Klick)
+
+Der Adapter bringt einige microWakeWord-Modelle mit (derzeit „ioBroker“, „Hey Bro“ und „Alisa“, ru). In den
+Geräte-Einstellungen stehen sie unter den Wake-Word-Chips bei **Mit dem Adapter geliefert** (gestrichelt, mit
+Upload-Symbol). Ein Klick legt das Modell wie ein hochgeladenes ab, bietet es allen ESPHome-Satelliten an und
+**aktiviert es an diesem Gerät** — das Gerät lädt es dann herunter. Ist dort schon eine **ältere Version
+desselben Worts** aktiv (z. B. „20261028 Iobroker“ oder „ioBroker“), nimmt die neue deren Platz ein (gleicher
+Slot, gleiche Empfindlichkeit). Sind alle Plätze mit anderen Wörtern belegt, steht das Wort danach nur in der
+Liste, und der Dialog sagt, dass erst ein anderes abgewählt werden muss.
+
+Modelle aus einem Trainingslauf heißen `JJJJMMTT-HHMMSS-<hash>-microwakeword-<wort>.tflite`; in der Liste des
+Geräts erscheinen sie kurz als `JJMMTT_<wort>`, z. B. `261103_iobroker` — so sieht man, welche Version läuft,
+und eine neue Version (neues Datum) wird zu einem neuen Eintrag. Ein Modell, das ein Gerät schon geladen hat,
+behält dort den Namen von damals.
+
+Aus einem Skript: `listWakeWords` liefert zusätzlich `bundled: [{id, phrase, languages, size, installed}]`, und
+
+```js
+sendTo('assistant.0', 'installWakeWord', { id: '261103_iobroker_2ae6f3f7', satellite: 'Salon' }, r =>
+    log(JSON.stringify(r)), // { ok, id, phrase, activated, replaced: [Phrasen], full } oder { error }
+);
+```
+
+`satellite` ist die State-id unter `satellites.`; ohne sie wird das Wort nur angeboten.
+
 #### Eigenes Wake-Word hochladen
 
 Neben den eingebauten Modellen kannst du eigene **microWakeWord-Modelle** auf die ESPHome-Satelliten
@@ -615,7 +640,8 @@ dauerhaft.
   [Eigenes Wake-Word](#eigenes-wake-word-z-b-iobroker)), ist ein **openWakeWord**-Modell — für ESPHome
   musst du dieselbe Phrase mit microWakeWord neu trainieren.
 - Ohne `.json` nimmt der Adapter die Phrase aus dem Dateinamen, die Sprache aus `voiceLanguage` und die
-  übliche Schwelle 0,97. Die Empfindlichkeit stellst du danach am Gerät mit
+  übliche Schwelle 0,97. Trägt der Dateiname ein Trainingsdatum (`20261117-…-iobroker.tflite`), schlägt der
+  Dialog den Kurznamen `261117_iobroker` vor — auch wenn die `.json` nur „ioBroker“ sagt. Die Empfindlichkeit stellst du danach am Gerät mit
   `wake_word_1_sensitivity`/`wake_word_2_sensitivity` nach.
 - Gespeichert wird im Dateispeicher der Instanz unter `assistant.0/wakewords/`. Die id enthält einen Teil
   der Modell-Prüfsumme, ein neu trainiertes Modell ist also ein **neues** Wake-Word — ein Gerät, das das
@@ -1228,6 +1254,7 @@ Alles, was der Assistent kann, ist aus einem Skript erreichbar. Die Antwort komm
 | `playYouTube` | `{ query, kind?: 'channel'/'video'/'playlist', player? }` | `{ ok, text, title?, id? }` — suchen, Fernseher einschalten, abspielen (§4) |
 | `getWakeWords` / `setWakeWords`                      | `{}` / `{ device, wakeWords }`                                           | §6                                                                           |
 | `uploadWakeWord` / `listWakeWords` / `deleteWakeWord` | `{ model, fileName?, config?, phrase?, languages? }` / `{}` / `{ id }`  | §6, eigenes Wake-Word                                                        |
+| `installWakeWord`                                     | `{ id, satellite? }`                                                  | §6, mitgelieferte Wake-Words                                                 |
 | `getControls` / `setControl`                         | `{}` / `{ device, control, value }`                                      | §6                                                                           |
 | `getDevices` / `setDeviceName` / `translateName`     | `{ language? }` / `{ stateId, name, language }` / …                      | die Geräteliste, die der Assistent sieht, und ihre Namen (§5)                |
 | `clearCache`                                         | `{}`                                                                     | Geräte, Räume und Funktionen jetzt neu einlesen                              |

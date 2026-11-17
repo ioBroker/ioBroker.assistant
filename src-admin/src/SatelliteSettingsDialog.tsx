@@ -45,6 +45,45 @@ interface PendingUpload {
     phrase: string;
 }
 
+/** A wake word shipped with the adapter, installed with one click. */
+interface BundledWakeWord {
+    id: string;
+    phrase: string;
+    languages: string[];
+    /** Already stored like an upload — then it is in the device's list. */
+    installed: boolean;
+}
+
+/**
+ * `20261103-085427-9b0f-microwakeword-iobroker.tflite` → `261103_iobroker`: the short name of a training run's
+ * output, as the adapter gives it (`trainingName` in `wakeWords.ts`). `null` without a training date in the name.
+ */
+function trainingName(fileName: string): string | null {
+    let date = '';
+    const words = fileName
+        .replace(/^.*[\\/]/, '')
+        .toLowerCase()
+        .replace(/\.(tflite|json|onnx)$/, '')
+        .normalize('NFKD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/ß/g, 'ss')
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean)
+        .filter(token => {
+            const m = !date && /^20(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/.exec(token);
+            if (m) {
+                date = `${m[1]}${m[2]}${m[3]}`;
+                return false;
+            }
+            return !(
+                /^\d{4,}$/.test(token) ||
+                (/^[0-9a-f]{4,8}$/.test(token) && /\d/.test(token) && /[a-f]/.test(token)) ||
+                ['microwakeword', 'openwakeword', 'wakeword'].includes(token)
+            );
+        });
+    return date ? `${date}_${words.join('_') || 'wake_word'}`.slice(0, 40) : null;
+}
+
 /** `hey_hannah.tflite` → `Hey Hannah`, the phrase guess for a model without its JSON. */
 function phraseFromFileName(name: string): string {
     return name
@@ -162,6 +201,60 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
     const [busy, setBusy] = React.useState(false);
     const [notice, setNotice] = React.useState<{ severity: 'success' | 'error'; text: string } | null>(null);
     const [confirmDelete, setConfirmDelete] = React.useState<WakeWord | null>(null);
+    const [bundled, setBundled] = React.useState<BundledWakeWord[]>([]);
+
+    const { sendTo } = props;
+    const loadBundled = React.useCallback(async (): Promise<void> => {
+        try {
+            const res = (await sendTo('listWakeWords', {})) as { bundled?: BundledWakeWord[] };
+            setBundled(Array.isArray(res?.bundled) ? res.bundled : []);
+        } catch {
+            setBundled([]); // an adapter without shipped wake words, or not running
+        }
+    }, [sendTo]);
+    // Once per opened dialog (`sendTo` is a new function on every render); installing or deleting reloads it.
+    React.useEffect(() => {
+        void loadBundled();
+    }, []);
+
+    /** One click: the adapter stores the shipped wake word, offers it and switches it on at this satellite. */
+    const installBundled = async (word: BundledWakeWord): Promise<void> => {
+        setNotice(null);
+        setBusy(true);
+        try {
+            const res = (await sendTo('installWakeWord', { id: word.id, satellite: props.satId })) as {
+                error?: string;
+                phrase?: string;
+                activated?: boolean;
+                replaced?: string[];
+                full?: boolean;
+            };
+            const phrase = res?.phrase || word.phrase;
+            if (res?.error) {
+                setNotice({ severity: 'error', text: res.error });
+            } else if (res?.full) {
+                setNotice({
+                    severity: 'error',
+                    text: I18n.t('custom_assistant_wake_word_installed_full', phrase, phrase),
+                });
+            } else if (res?.replaced?.length) {
+                setNotice({
+                    severity: 'success',
+                    text: I18n.t('custom_assistant_wake_word_installed_replaced', phrase, res.replaced.join(', ')),
+                });
+            } else {
+                setNotice({ severity: 'success', text: I18n.t('custom_assistant_wake_word_installed', phrase) });
+            }
+        } catch (e) {
+            setNotice({ severity: 'error', text: String((e as Error).message || e) });
+        } finally {
+            setBusy(false);
+            void loadBundled();
+        }
+    };
+
+    /** Shipped wake words not yet in the device's list — once installed they are ordinary chips above. */
+    const shipped = bundled.filter(b => !b.installed && !available?.words?.some(w => w.id === b.id));
 
     /** Read the picked files: one `.tflite`, optionally its `.json` (whose phrase pre-fills the form). */
     const onFilesPicked = async (files: FileList | null): Promise<void> => {
@@ -187,7 +280,8 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
                 model: await readAsBase64(model),
                 config,
                 configName: json?.name || '',
-                phrase: phrase || phraseFromFileName(model.name),
+                // A training run's JSON says only "ioBroker" — every version would look the same in the list.
+                phrase: trainingName(model.name) || phrase || phraseFromFileName(model.name),
             });
         } catch (e) {
             setNotice({ severity: 'error', text: String((e as Error).message || e) });
@@ -200,7 +294,7 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
         }
         setBusy(true);
         try {
-            const res = (await props.sendTo('uploadWakeWord', {
+            const res = (await sendTo('uploadWakeWord', {
                 model: upload.model,
                 fileName: upload.fileName,
                 config: upload.config || undefined,
@@ -219,6 +313,7 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
             setNotice({ severity: 'error', text: String((e as Error).message || e) });
         } finally {
             setBusy(false);
+            void loadBundled(); // the same files as a shipped one: that one is installed now
         }
     };
 
@@ -226,7 +321,7 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
         setConfirmDelete(null);
         setBusy(true);
         try {
-            const res = (await props.sendTo('deleteWakeWord', { id: word.id })) as { error?: string };
+            const res = (await sendTo('deleteWakeWord', { id: word.id })) as { error?: string };
             setNotice(
                 res?.error
                     ? { severity: 'error', text: res.error }
@@ -236,6 +331,8 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
             setNotice({ severity: 'error', text: String((e as Error).message || e) });
         } finally {
             setBusy(false);
+            // A deleted shipped wake word can be installed again.
+            void loadBundled();
         }
     };
 
@@ -529,6 +626,42 @@ export default function SatelliteSettingsDialog(props: SatelliteSettingsProps): 
                                 >
                                     {I18n.t('custom_assistant_wake_word_hint')}
                                 </Typography>
+
+                                {shipped.length ? (
+                                    <Box
+                                        sx={{
+                                            display: 'flex',
+                                            flexWrap: 'wrap',
+                                            alignItems: 'center',
+                                            gap: 0.5,
+                                            mt: 1,
+                                        }}
+                                    >
+                                        <Typography
+                                            variant="caption"
+                                            sx={{ mr: 0.5, opacity: 0.7 }}
+                                        >
+                                            {I18n.t('custom_assistant_Shipped with the adapter')}:
+                                        </Typography>
+                                        {shipped.map(b => (
+                                            <Tooltip
+                                                key={b.id}
+                                                title={`${b.languages.length ? `${b.languages.join(', ')} · ` : ''}${I18n.t('custom_assistant_bundled_wake_word_hint')}`}
+                                            >
+                                                <Chip
+                                                    size="small"
+                                                    variant="outlined"
+                                                    color="primary"
+                                                    label={b.phrase}
+                                                    icon={<UploadIcon />}
+                                                    disabled={busy}
+                                                    onClick={() => void installBundled(b)}
+                                                    sx={{ borderStyle: 'dashed' }}
+                                                />
+                                            </Tooltip>
+                                        ))}
+                                    </Box>
+                                ) : null}
 
                                 {confirmDelete ? (
                                     <Alert

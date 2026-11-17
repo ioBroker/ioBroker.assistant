@@ -19,6 +19,8 @@
  * - Downloaded models stay on the device; the API has no way to remove them.
  */
 import { createHash } from 'node:crypto';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 /** microWakeWord models are 50–200 KB; anything near this is not one. */
 export const MAX_MODEL_BYTES = 1024 * 1024;
@@ -77,6 +79,124 @@ export function slugify(value: string): string {
         .replace(/^_+|_+$/g, '')
         .slice(0, 40)
         .replace(/_+$/, '');
+}
+
+/** The words of a file name in lower-case ASCII: `C:\x\Hey-Hännah.tflite` → `['hey', 'hannah']`. Not truncated. */
+function nameTokens(value: string): string[] {
+    return value
+        .replace(/^.*[\\/]/, '')
+        .toLowerCase()
+        .replace(/\.(tflite|json|onnx)$/, '')
+        .normalize('NFKD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/ß/g, 'ss')
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean);
+}
+
+/** `20261103` — the date a training run puts in front of its output files. */
+const TRAINING_DATE_RE = /^20(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/;
+
+/**
+ * Parts of a name that say nothing about the word: the time of the training run (`085427`), its short hash
+ * (`9b0f`, also our own 8-character model hash), the model type.
+ */
+function isNoiseToken(token: string): boolean {
+    return (
+        /^\d{4,}$/.test(token) ||
+        (/^[0-9a-f]{4,8}$/.test(token) && /\d/.test(token) && /[a-f]/.test(token)) ||
+        token === 'microwakeword' ||
+        token === 'openwakeword' ||
+        token === 'wakeword'
+    );
+}
+
+/**
+ * The short name of a model from a training run: `20261103-085427-9b0f-microwakeword-iobroker.tflite` →
+ * `261103_iobroker`. The date stays (a newer training of the same word is a newer date), time, hash and model
+ * type go. `null` when the file name carries no training date.
+ *
+ * @param fileName name of the model or JSON file
+ */
+export function trainingName(fileName: string): string | null {
+    let date = '';
+    const words = nameTokens(fileName).filter(token => {
+        const m = !date && TRAINING_DATE_RE.exec(token);
+        if (m) {
+            date = `${m[1]}${m[2]}${m[3]}`;
+            return false;
+        }
+        return !isNoiseToken(token);
+    });
+    return date ? `${date}_${words.join('_') || 'wake_word'}`.slice(0, 40) : null;
+}
+
+/**
+ * How a wake word appears in the device's list: the short {@link trainingName} for a model from a training run
+ * (its JSON says only "ioBroker", which would make every version look the same), otherwise the phrase of the JSON
+ * or one built from the file name.
+ *
+ * @param fileName name of the model file
+ * @param phrase the `wake_word` of the JSON that came with it
+ */
+export function shortWakeWordName(fileName: string, phrase = ''): string {
+    return trainingName(fileName) || phrase.trim() || phraseFromFileName(fileName);
+}
+
+/**
+ * The word without date, time, hash and model type, to tell two versions of the same wake word:
+ * `20261028 Iobroker`, `261103_iobroker`, `ioBroker` and the id `iobroker_1a2b3c4d` are all `iobroker`.
+ */
+export function wakeWordBaseName(value: string): string {
+    return nameTokens(value)
+        .filter(token => !TRAINING_DATE_RE.test(token) && !isNoiseToken(token))
+        .join('_');
+}
+
+/**
+ * The active wake words of a device after switching `add` on. An active older version of the same word gives up
+ * its place (and its slot, so the slot's sensitivity stays) — two versions of one word would both trigger.
+ * Otherwise `add` is appended while the device has a free slot.
+ *
+ * @param active ids active on the device now
+ * @param available what the device offers, for the phrases of the active ids
+ * @param add the wake word to switch on
+ * @param add.id its id
+ * @param add.phrase its phrase, which names the word
+ * @param max how many the device runs at once (0 = no limit known)
+ * @returns the new list and the ids it no longer has, or `null` when every slot is taken by another word
+ */
+export function activateWakeWord(
+    active: string[],
+    available: { id: string; phrase: string }[],
+    add: { id: string; phrase: string },
+    max: number,
+): { active: string[]; replaced: string[] } | null {
+    if (active.includes(add.id)) {
+        return { active: [...active], replaced: [] };
+    }
+    // No usable name (e.g. a Cyrillic phrase): replace nothing rather than every "wake_word_…".
+    const name = wakeWordBaseName(add.phrase);
+    const sameWord = (id: string): boolean => {
+        const phrase = available.find(w => w.id === id)?.phrase || '';
+        return !!name && (wakeWordBaseName(phrase) === name || wakeWordBaseName(id) === name);
+    };
+    const replaced = active.filter(sameWord);
+    if (replaced.length) {
+        const next: string[] = [];
+        for (const id of active) {
+            if (!replaced.includes(id)) {
+                next.push(id);
+            } else if (!next.includes(add.id)) {
+                next.push(add.id);
+            }
+        }
+        return { active: next, replaced };
+    }
+    if (max > 0 && active.length >= max) {
+        return null;
+    }
+    return { active: [...active, add.id], replaced: [] };
 }
 
 /** `hey_hannah` → `Hey Hannah` — a phrase for a model that came without its JSON. */
@@ -277,8 +397,7 @@ export function prepareWakeWord(upload: WakeWordUpload, defaultLanguage = ''): C
     const fileName = upload.fileName || (typeof source.model === 'string' ? source.model : '');
     const phrase = (
         upload.phrase?.trim() ||
-        (typeof source.wake_word === 'string' ? source.wake_word.trim() : '') ||
-        phraseFromFileName(fileName)
+        shortWakeWordName(fileName, typeof source.wake_word === 'string' ? source.wake_word : '')
     ).slice(0, 64);
     if (!phrase) {
         throw new Error('the wake word needs a phrase (what you say to wake the device)');
@@ -293,7 +412,8 @@ export function prepareWakeWord(upload: WakeWordUpload, defaultLanguage = ''): C
     }
 
     const sha256 = createHash('sha256').update(model).digest('hex');
-    const id = `${slugify(fileName) || slugify(phrase) || 'wake_word'}_${sha256.slice(0, 8)}`;
+    // The id is the file name on the device and shows up in its logs: short for a training run's output too.
+    const id = `${slugify(trainingName(fileName) || fileName) || slugify(phrase) || 'wake_word'}_${sha256.slice(0, 8)}`;
 
     const micro = source.micro && typeof source.micro === 'object' ? (source.micro as Record<string, unknown>) : {};
     const config = {
@@ -338,4 +458,45 @@ export function loadWakeWord(id: string, config: Buffer, model: Buffer): CustomW
         size: model.length,
         sha256: createHash('sha256').update(model).digest('hex'),
     };
+}
+
+/** Folder of the wake words shipped with the adapter, relative to the package root. */
+export const BUNDLED_WAKE_WORD_DIR = 'wake-word';
+
+/**
+ * Read the wake words shipped with the adapter: every `<name>.tflite` in `dir` the devices can run, with its
+ * `<name>.json` when there is one. They are prepared exactly like an upload of the same files, so the id is the
+ * one an install stores — `installed` is then just "is this id among the uploaded ones". Models the devices
+ * cannot run (openWakeWord models for other satellites) come back in `skipped` with the reason.
+ *
+ * @param dir the folder
+ * @param defaultLanguage language to record when the JSON names none
+ */
+export async function readBundledWakeWords(
+    dir: string,
+    defaultLanguage = '',
+): Promise<{ words: CustomWakeWord[]; skipped: { file: string; reason: string }[] }> {
+    let files: string[];
+    try {
+        files = await readdir(dir);
+    } catch {
+        return { words: [], skipped: [] }; // not shipped (e.g. a development checkout without the folder)
+    }
+    const words: CustomWakeWord[] = [];
+    const skipped: { file: string; reason: string }[] = [];
+    for (const file of files.filter(f => /\.tflite$/i.test(f)).sort()) {
+        const base = file.replace(/\.tflite$/i, '');
+        const jsonFile = files.find(f => f.toLowerCase() === `${base.toLowerCase()}.json`);
+        try {
+            const model = await readFile(join(dir, file));
+            const config = jsonFile ? await readFile(join(dir, jsonFile), 'utf8') : undefined;
+            const word = prepareWakeWord({ model, fileName: file, config }, defaultLanguage);
+            if (!words.some(w => w.id === word.id)) {
+                words.push(word);
+            }
+        } catch (e) {
+            skipped.push({ file, reason: (e as Error).message });
+        }
+    }
+    return { words, skipped };
 }

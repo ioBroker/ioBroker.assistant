@@ -19,6 +19,22 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Mitgelieferte Wake-Words mit einem Klick + kurze Namen** (Nutzerwunsch 2026-11-17). Ordner `wake-word/` liegt
+  jetzt im Paket (`package.json` `files`, ohne `*.onnx`/`*openwakeword*` — ESPHome kann nur micro). `wakeWords.ts`:
+  `readBundledWakeWords(dir)` = jede `.tflite` (+ gleichnamige `.json`) durch `prepareWakeWord`, openWakeWord landet
+  in `skipped`; `trainingName()` macht aus `20261103-085427-9b0f-microwakeword-iobroker` → `261103_iobroker`
+  (Datum JJMMTT bleibt, Uhrzeit/Hash/Modelltyp fallen weg) — wird Phrase **und** id-Basis (die JSON eines
+  Trainingslaufs sagt nur „ioBroker“, alle Versionen sähen gleich aus; vorher wurde aus dem Dateinamen „20261103
+  085427 9b0f Microwakeword Iobroker“, `slugify` schnitt bei 40 Zeichen ab). `activateWakeWord()`: eine aktive
+  ältere Version desselben Worts (`wakeWordBaseName` ohne Datum/Zeit/Hash/Typ) wird im selben Slot ersetzt, sonst
+  freier Slot, sonst `null`. `main.ts`: `storeCustomWakeWord`, `loadBundledWakeWords` (`<paket>/wake-word`),
+  sendTo `installWakeWord {id, satellite}` → `{activated, replaced, full}`, `listWakeWords` liefert `bundled`
+  (`installed`). `esphome.ts.setWakeWords` kennt jetzt auch die eigenen Angebote (sonst wurde ein direkt nach dem
+  Upload ausgewähltes Wort als „unknown“ verworfen — das Gerät hat das Angebot, weil die ConfigurationRequest
+  vorher rausging). Dialog: Zeile „Mit dem Adapter geliefert“ (gestrichelte Chips, nur nicht installierte),
+  Upload-Vorschlag per `trainingName`. Tests in `wakeWords.test.js` (inkl. echter Ordner: alles außer openWakeWord
+  läuft) und `esphome.test.js` (scheitert gegen den alten Code). ⚠️ Ein schon geladenes Modell behält am Gerät
+  seinen alten Namen (keine Lösch-/Umbenenn-API). Nicht am Gerät.
 - **Antwort in ihrer eigenen Sprache sprechen** (Feldbericht 2026-11-12: pi-agent antwortete russisch, Thorsten
   buchstabierte „kyrillisch a …“). PR #27 (sadam6752-tech): pi-agent 0.10.1 gibt `result.language` zurück
   (`[[lang:xx]]`-Marke des Modells, sonst Schrift), `PiAgentHarness.languageOf(text)` (Schlüssel **ohne**

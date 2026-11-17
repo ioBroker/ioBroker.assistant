@@ -68,6 +68,9 @@
     "admin/",
     "build/",
     "io-package.json",
-    "LICENSE"
+    "LICENSE",
+    "wake-word/",
+    "!wake-word/*.onnx",
+    "!wake-word/*openwakeword*"
   ]
 }

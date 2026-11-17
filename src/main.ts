@@ -121,12 +121,15 @@ import {
     type TranscodeTarget,
 } from './lib/voice/mediaStream';
 import {
+    BUNDLED_WAKE_WORD_DIR,
     WAKE_WORD_DIR,
     WAKE_WORD_ID_RE,
     WAKE_WORD_URL_PREFIX,
+    activateWakeWord,
     loadWakeWord,
     microModelProblem,
     prepareWakeWord,
+    readBundledWakeWords,
     type CustomWakeWord,
 } from './lib/voice/wakeWords';
 import { confirmationTone } from './lib/voice/tone';
@@ -541,6 +544,8 @@ class Assistant extends Adapter {
     private readonly customWakeWords = new Map<string, CustomWakeWord>();
     /** Loads {@link customWakeWords} once from the file storage; later calls wait for the same load. */
     private customWakeWordsLoaded: Promise<void> | null = null;
+    /** The wake words shipped in the package (`wake-word/`), read once on first use. */
+    private bundledWakeWords: Promise<CustomWakeWord[]> | null = null;
     /** Short-term per-source conversation memory (in-memory, TTL) for follow-up questions. */
     private readonly context = new ConversationStore();
     /** Questions the assistant asked and is waiting for an answer to (`askUser`), keyed by source. */
@@ -1769,15 +1774,80 @@ class Assistant extends Adapter {
             },
             this.config.voiceLanguage || this.language || '',
         );
+        const devices = await this.storeCustomWakeWord(word);
+        return { id: word.id, phrase: word.phrase, languages: word.languages, size: word.size, devices };
+    }
+
+    /**
+     * Keep a wake word in the file storage, serve it and offer it to the connected satellites (once per id — the
+     * id carries the model's hash, so the same id is the same model).
+     *
+     * @returns how many satellites got the new offer
+     */
+    private async storeCustomWakeWord(word: CustomWakeWord): Promise<number> {
         if (!this.customWakeWords.has(word.id)) {
             await this.writeFileAsync(this.namespace, `${WAKE_WORD_DIR}/${word.id}.tflite`, word.model);
             await this.writeFileAsync(this.namespace, `${WAKE_WORD_DIR}/${word.id}.json`, word.config);
             this.customWakeWords.set(word.id, word);
             this.serveWakeWord(word);
-            this.log.info(`Custom wake word uploaded: ${word.phrase} (${word.id}, ${word.size} bytes)`);
+            this.log.info(`Custom wake word stored: ${word.phrase} (${word.id}, ${word.size} bytes)`);
         }
-        const devices = this.esphome?.refreshWakeWords() ?? 0;
-        return { id: word.id, phrase: word.phrase, languages: word.languages, size: word.size, devices };
+        return this.esphome?.refreshWakeWords() ?? 0;
+    }
+
+    /** The wake words shipped with the adapter (`wake-word/` in the package) that the devices can run. */
+    private loadBundledWakeWords(): Promise<CustomWakeWord[]> {
+        this.bundledWakeWords ||= readBundledWakeWords(
+            path.join(__dirname, '..', BUNDLED_WAKE_WORD_DIR),
+            this.config.voiceLanguage || this.language || '',
+        ).then(({ words, skipped }) => {
+            for (const s of skipped) {
+                this.log.debug(`Shipped wake word ${s.file} not offered: ${s.reason}`);
+            }
+            return words;
+        });
+        return this.bundledWakeWords;
+    }
+
+    /**
+     * One click in the satellite settings: store a wake word shipped with the adapter like an upload and switch it
+     * on at that satellite — the device downloads it then. An active older version of the same word is replaced
+     * (see {@link activateWakeWord}); when every slot holds another word, it is only offered.
+     *
+     * @param id id of the shipped wake word (from `listWakeWords` → `bundled`)
+     * @param satId satellite state id to switch it on at; without one it is only offered to all
+     */
+    private async installBundledWakeWord(
+        id: string,
+        satId: string,
+    ): Promise<{ id: string; phrase: string; activated: boolean; replaced: string[]; full: boolean }> {
+        await this.loadCustomWakeWords();
+        const word = (await this.loadBundledWakeWords()).find(w => w.id === id);
+        if (!word) {
+            throw new Error(`unknown wake word ${id}`);
+        }
+        await this.storeCustomWakeWord(word);
+        const result = { id: word.id, phrase: word.phrase, activated: false, replaced: [] as string[], full: false };
+        if (!satId) {
+            return result;
+        }
+        const device = this.satDeviceById.get(satId) || satId;
+        const config = this.esphome?.wakeWords(device);
+        if (!config) {
+            throw new Error(`satellite ${device} is not connected`);
+        }
+        const next = activateWakeWord(config.active, config.available, word, config.max);
+        if (!next) {
+            return { ...result, full: true };
+        }
+        if (next.active.join(',') !== config.active.join(',')) {
+            this.esphome?.setWakeWords(device, next.active);
+        }
+        const phrases = next.replaced.map(r => config.available.find(w => w.id === r)?.phrase || r);
+        this.log.info(
+            `ESPHome ${device}: wake word ${word.phrase} switched on${phrases.length ? ` instead of ${phrases.join(', ')}` : ''}`,
+        );
+        return { ...result, activated: true, replaced: phrases };
     }
 
     /**
@@ -3575,8 +3645,15 @@ class Assistant extends Adapter {
         // Settings dialog / scripts: own wake words for the ESPHome satellites (microWakeWord models).
         // uploadWakeWord: { model: base64 .tflite, fileName?, config?: JSON text, phrase?, languages? }
         //   → { ok, id, phrase, languages, size, devices } | { error }
-        // deleteWakeWord: { id } → { ok } | { error };  listWakeWords → { wakeWords: [{id, phrase, …}] }
-        if (obj.command === 'uploadWakeWord' || obj.command === 'deleteWakeWord' || obj.command === 'listWakeWords') {
+        // deleteWakeWord: { id } → { ok } | { error }
+        // listWakeWords → { wakeWords: [{id, phrase, …}], bundled: [{id, phrase, languages, size, installed}] }
+        // installWakeWord: { id (of a bundled one), satellite? } → { ok, id, phrase, activated, replaced, full }
+        if (
+            obj.command === 'uploadWakeWord' ||
+            obj.command === 'deleteWakeWord' ||
+            obj.command === 'listWakeWords' ||
+            obj.command === 'installWakeWord'
+        ) {
             const m = (obj.message || {}) as Record<string, unknown>;
             let payload: Record<string, unknown>;
             try {
@@ -3585,14 +3662,27 @@ class Assistant extends Adapter {
                 } else if (obj.command === 'deleteWakeWord') {
                     await this.deleteCustomWakeWord(typeof m.id === 'string' ? m.id : '');
                     payload = { ok: true };
+                } else if (obj.command === 'installWakeWord') {
+                    payload = {
+                        ok: true,
+                        ...(await this.installBundledWakeWord(
+                            typeof m.id === 'string' ? m.id : '',
+                            typeof m.satellite === 'string' ? m.satellite : '',
+                        )),
+                    };
                 } else {
                     await this.loadCustomWakeWords();
+                    const describe = (w: CustomWakeWord): Record<string, unknown> => ({
+                        id: w.id,
+                        phrase: w.phrase,
+                        languages: w.languages,
+                        size: w.size,
+                    });
                     payload = {
-                        wakeWords: [...this.customWakeWords.values()].map(w => ({
-                            id: w.id,
-                            phrase: w.phrase,
-                            languages: w.languages,
-                            size: w.size,
+                        wakeWords: [...this.customWakeWords.values()].map(describe),
+                        bundled: (await this.loadBundledWakeWords()).map(w => ({
+                            ...describe(w),
+                            installed: this.customWakeWords.has(w.id),
                         })),
                     };
                 }
