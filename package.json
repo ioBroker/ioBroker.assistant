@@ -24,7 +24,7 @@
     "@iobroker/adapter-core": "^3.4.3",
     "@iobroker/mcp-server": "^1.9.2",
     "microsoft-cognitiveservices-speech-sdk": "^1.53.0",
-    "openai": "^7.47.0"
+    "openai": "^7.55.0"
   },
   "devDependencies": {
     "@alcalzone/release-script": "^5.2.1",
