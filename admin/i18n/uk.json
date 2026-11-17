@@ -191,7 +191,7 @@
   "Without an LLM provider only the local tiers answer: the rule-based commands, routines, timers and alarms, and the local model if enabled. Anything else gets a short \"I can't do that\" reply.": "Без LLM-провайдера відповідають лише локальні рівні: команди на основі правил, рутини, таймери й будильники, а також локальна модель, якщо її ввімкнено. На все інше буде коротка відповідь «Цього я не вмію».",
   "Chat": "Чат",
   "Chat history (hours)": "Chat history (hours)",
-  "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.": "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.",
+  "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.": "Як довго вкладка «Чат» показує минулі запити з усіх джерел (сателіти, Telegram, скрипти) зі словом активації, рівнем відповіді, інструментами та id станів. 0 = нічого не записувати.",
   "YouTube players": "Плеєри YouTube",
   "Player": "Плеєр",
   "TV power (optional)": "Живлення ТВ (необов’язково)",

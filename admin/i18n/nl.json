@@ -191,7 +191,7 @@
   "Without an LLM provider only the local tiers answer: the rule-based commands, routines, timers and alarms, and the local model if enabled. Anything else gets a short \"I can't do that\" reply.": "Zonder LLM-provider antwoorden alleen de lokale niveaus: de op regels gebaseerde opdrachten, routines, timers en wekkers, en het lokale model indien ingeschakeld. Al het andere krijgt een kort \"Dat kan ik niet\"-antwoord.",
   "Chat": "Chat",
   "Chat history (hours)": "Chat history (hours)",
-  "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.": "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.",
+  "How long the Chat tab shows past requests from all sources (satellites, Telegram, scripts) with wake word, answering tier, tools and state ids. 0 = record nothing.": "Hoe lang het tabblad Chat eerdere verzoeken uit alle bronnen (satellieten, Telegram, scripts) toont, met wekwoord, antwoordniveau, tools en state-id's. 0 = niets vastleggen.",
   "YouTube players": "YouTube-spelers",
   "Player": "Speler",
   "TV power (optional)": "Tv aanzetten (optioneel)",
