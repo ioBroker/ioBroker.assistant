@@ -1772,6 +1772,40 @@
                         { "type": "text", "attr": "password", "title": "API password (usually empty)", "width": "25%" }
                     ]
                 },
+                "wakeWordLanguages": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "Language per wake word",
+                    "help": "For a household that speaks two languages: give each language its own wake word, and what is said after it is recognised in that language (e.g. Alisa → Русский, Hey Bro → Deutsch). Follow-up questions keep the language of their wake word, and pi-agent asks its yes/no questions in it. Wake word: its name as shown on the satellite or its id, case and spaces do not matter. A wake word without a row uses the voice language. Only speech recognition that is told the language follows it: ioBroker.voice with the model Canary, OpenAI and compatible servers such as Whisper, Azure, AWS, OpenRouter, Vosk; Parakeet detects the language itself.",
+                    "hidden": "!data.voiceEnabled || !data.esphomeEnabled",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 8,
+                    "lg": 6,
+                    "xl": 6,
+                    "items": [
+                        { "type": "text", "attr": "wakeWord", "title": "Wake word", "width": "60%" },
+                        {
+                            "type": "select",
+                            "attr": "language",
+                            "title": "Language",
+                            "width": "40%",
+                            "options": [
+                                { "label": "Deutsch", "value": "de" },
+                                { "label": "English", "value": "en" },
+                                { "label": "Русский", "value": "ru" },
+                                { "label": "Français", "value": "fr" },
+                                { "label": "Italiano", "value": "it" },
+                                { "label": "Español", "value": "es" },
+                                { "label": "Nederlands", "value": "nl" },
+                                { "label": "Polski", "value": "pl" },
+                                { "label": "Português", "value": "pt" },
+                                { "label": "Українська", "value": "uk" },
+                                { "label": "中文", "value": "zh-cn" }
+                            ]
+                        }
+                    ]
+                },
                 "esphomeMediaPort": {
                     "newLine": true,
                     "type": "number",

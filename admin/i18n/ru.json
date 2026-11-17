@@ -265,5 +265,9 @@
   "Language (e.g. ru)": "Язык (например, ru)",
   "TTS model (optional)": "Модель TTS (необязательно)",
   "Voice (optional)": "Голос (необязательно)",
-  "Test": "Тест"
+  "Test": "Тест",
+  "Language per wake word": "Язык для каждого слова активации",
+  "Wake word": "Слово активации",
+  "Language": "Язык",
+  "For a household that speaks two languages: give each language its own wake word, and what is said after it is recognised in that language (e.g. Alisa → Русский, Hey Bro → Deutsch). Follow-up questions keep the language of their wake word, and pi-agent asks its yes/no questions in it. Wake word: its name as shown on the satellite or its id, case and spaces do not matter. A wake word without a row uses the voice language. Only speech recognition that is told the language follows it: ioBroker.voice with the model Canary, OpenAI and compatible servers such as Whisper, Azure, AWS, OpenRouter, Vosk; Parakeet detects the language itself.": "Для дома, где говорят на двух языках: у каждого языка своё слово активации, и сказанное после него распознаётся на этом языке (например, Alisa → Русский, Hey Bro → Deutsch). Уточняющие вопросы сохраняют язык своего слова активации, и pi-agent задаёт на нём вопросы «да/нет». Слово активации: его название, как его показывает сателлит, или его ID; регистр и пробелы не важны. Слово активации без строки использует язык голоса. Языку следует только распознавание речи, которому его передают: ioBroker.voice с моделью Canary, OpenAI и совместимые серверы вроде Whisper, Azure, AWS, OpenRouter, Vosk; Parakeet определяет язык сам."
 }

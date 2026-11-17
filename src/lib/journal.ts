@@ -119,6 +119,8 @@ export interface JournalOrigin {
     satellite?: string;
     room?: string;
     wakeWord?: string;
+    /** Language the speech was recognised in, when its wake word has one (ESPHome); else the voice language applies. */
+    language?: string;
     sttMs?: number;
     audioMs?: number;
     /** Voice activity detection of the utterance (ESPHome) — trace only. */

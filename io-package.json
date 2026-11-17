@@ -278,6 +278,7 @@
     "wyomingPort": 10700,
     "esphomeEnabled": false,
     "esphomeDevices": [],
+    "wakeWordLanguages": [],
     "esphomeMediaPort": 8099,
     "esphomeMediaHost": "",
     "esphomeSilenceMs": 900,

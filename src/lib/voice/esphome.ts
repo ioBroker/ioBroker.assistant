@@ -337,6 +337,8 @@ export interface EsphomeSatellitesOptions {
             room: string;
             /** Wake word of the recording; '' = the mic was re-opened for a follow-up; absent for a button. */
             wakeWord?: string;
+            /** Language the speech was recognised in: the one of the wake word ({@link wakeWordLanguage}), else `language`. */
+            language?: string;
             sttMs?: number;
             audioMs?: number;
             vad?: VadReport;
@@ -345,6 +347,12 @@ export interface EsphomeSatellitesOptions {
     ) => Promise<string>;
     /** The reply was synthesised: how long that took and how long it plays (for the request journal). */
     onSpoken?: (device: string, info: { ms: number; audioMs: number }) => void;
+    /**
+     * Language of a wake word ('' = not set, `language` applies). A wake word starts a conversation in its language:
+     * speech recognition, the yes/no word of the button and the reply voice use it, and so do the follow-ups of that
+     * conversation (their microphone opens without a wake word).
+     */
+    wakeWordLanguage?: (phrase: string, config: WakeWordConfig | null) => string;
     /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
     getHints?: () => string[] | Promise<string[]>;
     /** Where spoken replies are published for the device to fetch. */
@@ -410,6 +418,21 @@ export interface ExternalWakeWordOffer {
 }
 
 /** What a device reports about its wake words: what the firmware ships plus the custom ones we offered. */
+/** How many wake words an ESPHome device with microWakeWord listens for at once, although it reports 1. */
+export const ESPHOME_ACTIVE_WAKE_WORDS = 2;
+
+/**
+ * The number of wake words that may be active at once. ESPHome (`voice_assistant.cpp`, 2026.10) reports
+ * `max_active_wake_words = 1` for microWakeWord, but its `on_set_configuration` enables every id it is sent, and
+ * microWakeWord runs all enabled models side by side (like the Home Assistant Voice PE). Two wake words are what a
+ * household needs that gives each of its two languages its own one (`wakeWordLanguages`). Other limits stay.
+ *
+ * @param reported - `max_active_wake_words` of the device
+ */
+export function activeWakeWordLimit(reported: number): number {
+    return reported === 1 ? ESPHOME_ACTIVE_WAKE_WORDS : reported;
+}
+
 export interface WakeWordConfig {
     /** Ids currently listening, e.g. `['okay_nabu']`. */
     active: string[];
@@ -603,6 +626,8 @@ class EsphomeConnection {
     online = false;
     /** Last wake-word configuration the device reported; null until the handshake answers. */
     wakeWordConfig: WakeWordConfig | null = null;
+    /** Language of the last wake word ({@link EsphomeSatellitesOptions.wakeWordLanguage}); '' = `language`. */
+    private conversationLanguage = '';
     /**
      * One entry per configuration request in flight, in send order (the device answers each one, in
      * order): the ids a preceding `SetConfiguration` asked for, or null. The read-back is the only
@@ -916,7 +941,7 @@ class EsphomeConnection {
                             languages: w.getTrainedLanguagesList(),
                         }))
                         .filter(w => !seen.has(w.id) && !!seen.add(w.id)),
-                    max: config.getMaxActiveWakeWords(),
+                    max: activeWakeWordLimit(config.getMaxActiveWakeWords()),
                 };
                 const active = this.wakeWordConfig.active.join(', ') || '(none active)';
                 const available = this.wakeWordConfig.available.map(w => w.id);
@@ -1084,12 +1109,17 @@ class EsphomeConnection {
 
     /** Pass a button answer on and announce the reply (see {@link onConfirmButton}). */
     private async answerButton(yes: boolean, run: number): Promise<void> {
-        const text = yesNoWord(this.opts.language, yes);
+        const text = yesNoWord(this.speechLanguage(), yes);
         this.opts.log.info(`ESPHome ${this.deviceName}: answered "${text}" with the button`);
         this.status('processing');
         try {
             const answer = (
-                await this.opts.answer(text, { device: this.deviceName, room: this.room, button: yes ? 'yes' : 'no' })
+                await this.opts.answer(text, {
+                    device: this.deviceName,
+                    room: this.room,
+                    language: this.speechLanguage(),
+                    button: yes ? 'yes' : 'no',
+                })
             ).trim();
             if (run !== this.run) {
                 return;
@@ -1100,7 +1130,7 @@ class EsphomeConnection {
             }
             const followUp = this.opts.expectsFollowUp?.(answer, this.deviceName) === true;
             const ttsStart = Date.now();
-            const { pcm, sampleRate } = await this.opts.tts.synthesize(answer, this.opts.language);
+            const { pcm, sampleRate } = await this.opts.tts.synthesize(answer, this.speechLanguage());
             if (run !== this.run) {
                 return;
             }
@@ -1157,6 +1187,11 @@ class EsphomeConnection {
 
     // ── voice pipeline ──────────────────────────────────────────────────────────────────────────────
 
+    /** Language of the current conversation: the one of its wake word, else the voice language. */
+    private speechLanguage(): string {
+        return this.conversationLanguage || this.opts.language;
+    }
+
     private onPipelineRequest(request: VoiceAssistantRequestMsg): void {
         if (!request.getStart()) {
             this.onStopRequest();
@@ -1189,6 +1224,10 @@ class EsphomeConnection {
         // In dialog mode every microphone is the next turn: the phrase is the stale one of the last wake word.
         const dialog = this.dialogOn;
         const followUp = answersQuestion || !phrase || dialog;
+        if (!followUp) {
+            // a new conversation: the language of its wake word; the follow-ups keep it
+            this.conversationLanguage = this.opts.wakeWordLanguage?.(phrase, this.wakeWordConfig) || '';
+        }
 
         this.opts.log.debug(
             `ESPHome ${this.deviceName}: ${
@@ -1596,7 +1635,7 @@ class EsphomeConnection {
             );
             const sttStart = Date.now();
             const text = (
-                await this.opts.stt.transcribe(speech.pcm, MIC_SAMPLE_RATE, this.opts.language, hints)
+                await this.opts.stt.transcribe(speech.pcm, MIC_SAMPLE_RATE, this.speechLanguage(), hints)
             ).trim();
             const sttMs = Date.now() - sttStart;
             if (!current()) {
@@ -1633,6 +1672,7 @@ class EsphomeConnection {
                     device: this.deviceName,
                     room: this.room,
                     wakeWord: capture.wakeWord,
+                    language: this.speechLanguage(),
                     sttMs,
                     audioMs: Math.round(seconds * 1000),
                     // Numbers only, no audio: shows where a request was cut off without keeping recordings.
@@ -1663,7 +1703,7 @@ class EsphomeConnection {
             }
 
             const ttsStart = Date.now();
-            const { pcm: ttsPcm, sampleRate } = await this.opts.tts.synthesize(answer, this.opts.language);
+            const { pcm: ttsPcm, sampleRate } = await this.opts.tts.synthesize(answer, this.speechLanguage());
             if (!current()) {
                 return;
             }

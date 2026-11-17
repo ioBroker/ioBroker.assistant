@@ -637,6 +637,28 @@ sendTo('assistant.0', 'listWakeWords', {}, r => log(JSON.stringify(r)));
 sendTo('assistant.0', 'deleteWakeWord', { id: 'hey_hannah_1a2b3c4d' });
 ```
 
+#### A language per wake word
+
+Speech recognition that detects the language itself often guesses wrong on a short command: in a household that
+speaks German and Russian, "Wie ist das Wetter morgen?" came back as "Листа светерморган." from Parakeet. Give each
+language its own wake word instead and fill the table **Language per wake word** (tab Satellites, below the ESPHome
+satellites), e.g. `Alisa` → Русский, `Hey Bro` → Deutsch:
+
+- what is said after the wake word is recognised in its language, and the reply is spoken in it;
+- the follow-ups of that conversation (a question of the assistant, pi-agent's yes/no, dialog mode) keep it, as their
+  microphone opens without a wake word;
+- pi-agent asks its yes/no questions in it, so "Да" or "Ja" is understood;
+- a wake word without a row uses the voice language, as before.
+
+An ESPHome satellite listens for **two** wake words at once: select both in its settings. ESPHome reports one as
+its limit, but it switches on every wake word it is sent and runs them side by side.
+
+The wake word is its name as the device shows it ("Hey Bro") or its id (`hey_bro`); case and spaces do not matter.
+Only speech recognition that is told the language follows it: OpenAI and compatible servers (Whisper, e.g.
+speaches or faster-whisper behind **Speech recognition server (optional)**), Azure, AWS, OpenRouter and Vosk. With ioBroker.voice choose the model **Canary 1B v2**: it is told the
+language and keeps accented speech in it, at about twice the time of Parakeet (still well below a second). Parakeet
+detects the language itself and ignores it.
+
 #### Device settings
 
 The **Satellites** tab in the instance settings has a gear button on each row that opens the device's

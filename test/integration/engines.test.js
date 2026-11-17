@@ -4,13 +4,27 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createSttEngine, createTtsEngine, listVoices } = require('../../build/lib/voice/engines.js');
 const { isoToLocale } = require('../../build/lib/voice/lang.js');
-const { pcmToWav, hintsToPrompt } = require('../../build/lib/voice/stt.js');
+const { pcmToWav, hintsToPrompt, hintsForLanguage } = require('../../build/lib/voice/stt.js');
+
+test('hintsForLanguage: Latin languages get the names in Latin letters only, others keep all', () => {
+    const hints = ['Wohnzimmer', 'Торшер', 'Küche', 'Starlink', 'Свет Starlink', 'Garage 2', 'Café'];
+    assert.deepEqual(hintsForLanguage(hints, 'de'), ['Wohnzimmer', 'Küche', 'Starlink', 'Garage 2', 'Café']);
+    assert.deepEqual(hintsForLanguage(hints, 'de-DE'), hintsForLanguage(hints, 'de'));
+    assert.deepEqual(hintsForLanguage(hints, 'ru'), hints, 'Russian speakers say "Starlink" too');
+    assert.deepEqual(hintsForLanguage(hints, ''), hints, 'unknown language');
+    assert.equal(hintsForLanguage(undefined, 'de'), undefined);
+});
 
 const silentLog = { info() {}, warn() {}, error() {}, debug() {} };
 
 function ctx(over = {}) {
     return {
-        creds: { openaiKey: '', azureKey: '', azureRegion: '', aws: { accessKeyId: '', secretAccessKey: '', region: '' } },
+        creds: {
+            openaiKey: '',
+            azureKey: '',
+            azureRegion: '',
+            aws: { accessKeyId: '', secretAccessKey: '', region: '' },
+        },
         voices: { openai: 'alloy', azure: '', aws: '', piper: '' },
         dataDir: require('node:os').tmpdir(),
         log: silentLog,
@@ -22,7 +36,15 @@ function ctx(over = {}) {
 }
 
 test('STT factory: constructs / throws per provider', () => {
-    const withKey = ctx({ creds: { ...ctx().creds, openaiKey: 'sk-x', azureKey: 'a', azureRegion: 'r', aws: { accessKeyId: 'A', secretAccessKey: 'S', region: 'eu' } } });
+    const withKey = ctx({
+        creds: {
+            ...ctx().creds,
+            openaiKey: 'sk-x',
+            azureKey: 'a',
+            azureRegion: 'r',
+            aws: { accessKeyId: 'A', secretAccessKey: 'S', region: 'eu' },
+        },
+    });
     assert.equal(createSttEngine('openai', withKey).constructor.name, 'OpenAiStt');
     assert.equal(createSttEngine('azure', withKey).constructor.name, 'AzureStt');
     assert.equal(createSttEngine('aws', withKey).constructor.name, 'AwsStt');
@@ -33,7 +55,15 @@ test('STT factory: constructs / throws per provider', () => {
 });
 
 test('TTS factory: constructs / throws per provider', () => {
-    const withKey = ctx({ creds: { ...ctx().creds, openaiKey: 'sk-x', azureKey: 'a', azureRegion: 'r', aws: { accessKeyId: 'A', secretAccessKey: 'S', region: 'eu' } } });
+    const withKey = ctx({
+        creds: {
+            ...ctx().creds,
+            openaiKey: 'sk-x',
+            azureKey: 'a',
+            azureRegion: 'r',
+            aws: { accessKeyId: 'A', secretAccessKey: 'S', region: 'eu' },
+        },
+    });
     // Every engine comes wrapped in the shared cache/length/SSML layer, so the provider is internal.
     // ...inside the language layer, which speaks every text in its own language (speechLanguage.ts).
     for (const provider of ['openai', 'azure', 'aws', 'piper']) {
@@ -171,8 +201,5 @@ test('STT base URL: an own server gets the audio, its model and its key — neve
 
 test('STT base URL: no OpenAI key needed for an own server', () => {
     assert.throws(() => createSttEngine('openai', ctx()), /API key/);
-    assert.equal(
-        createSttEngine('openai', ctx({ sttBaseUrl: 'http://127.0.0.1:8000' })).constructor.name,
-        'OpenAiStt',
-    );
+    assert.equal(createSttEngine('openai', ctx({ sttBaseUrl: 'http://127.0.0.1:8000' })).constructor.name, 'OpenAiStt');
 });

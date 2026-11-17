@@ -1405,6 +1405,75 @@ test('a screen shows the voice language: set once on connect', async t => {
     );
 });
 
+/**
+ * A satellite that recognises what follows its wake word in the language of `table` (wake word → language, as the
+ * setting `wakeWordLanguages`); the first reply asks a question, so the next microphone is a follow-up.
+ */
+async function languageSatellite(t, table) {
+    const device = fakeDevice({ speechMs: 600, screen: true });
+    const port = await device.listen();
+    const media = new MediaServer({ port: 0, log: silentLog });
+    await media.start();
+    const QUESTION = 'Свет включить? Скажи да или нет.';
+    const heard = [];
+    const spoken = [];
+    const asked = [];
+    const satellites = new EsphomeSatellites({
+        devices: [{ ip: '127.0.0.1', port, room: 'Salon' }],
+        language: 'de',
+        stt: {
+            transcribe: async (pcm, rate, lang) => {
+                heard.push(lang);
+                return 'включи свет';
+            },
+        },
+        tts: {
+            synthesize: async (text, lang) => {
+                spoken.push(lang);
+                return { pcm: Buffer.alloc(text.length * 32), sampleRate: 16000 };
+            },
+        },
+        answer: async (question, ctx) => {
+            asked.push({ question, ctx });
+            return asked.length === 1 ? QUESTION : 'Свет включён.';
+        },
+        wakeWordLanguage: phrase => table[phrase.toLowerCase()] || '',
+        media,
+        silenceMs: 300,
+        log: silentLog,
+        expectsFollowUp: answer => answer === QUESTION,
+    });
+    t.after(async () => {
+        await satellites.stop();
+        await media.stop();
+        await device.close();
+    });
+    await satellites.start();
+    await waitFor(() => device.events.some(e => e.type === 2), 'the end of the first run');
+    return { device, heard, spoken, asked };
+}
+
+test('a wake word with a language: recognition, reply and the follow-up of its conversation use it', async t => {
+    const { device, heard, spoken, asked } = await languageSatellite(t, { 'okay nabu': 'ru' });
+    assert.deepEqual(heard, ['ru'], 'speech recognition in the language of the wake word');
+    assert.equal(asked[0].ctx.language, 'ru', 'the answer knows the language too (pi-agent asks in it)');
+    assert.deepEqual(spoken, ['ru']);
+
+    // The microphone for the answer to the question comes without a new wake word: it keeps the language.
+    device.startPipeline('okay nabu', true);
+    await waitFor(() => asked.length === 2, 'the answer to the question');
+    assert.deepEqual(heard, ['ru', 'ru']);
+    assert.equal(asked[1].ctx.wakeWord, '', 'a follow-up');
+    assert.equal(asked[1].ctx.language, 'ru');
+});
+
+test('a wake word without a language: the voice language, as before', async t => {
+    const { heard, spoken, asked } = await languageSatellite(t, { alisa: 'ru' });
+    assert.deepEqual(heard, ['de']);
+    assert.equal(asked[0].ctx.language, 'de');
+    assert.deepEqual(spoken, ['de']);
+});
+
 test('a yes button answers the open question: the mic closes, the reply is announced', async t => {
     const { device, asked } = await screenSatellite(t);
     assert.equal(device.events.find(e => e.type === 6).data.continue_conversation, '1', 'the question continues');

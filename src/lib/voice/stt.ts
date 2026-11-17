@@ -45,6 +45,27 @@ export function hintsToPrompt(hints: string[] | undefined, maxChars = 800): stri
     return parts.join(', ');
 }
 
+/** Languages written in Latin letters (ISO-639-1), as far as the voice language offers them. */
+const LATIN_LANGUAGES = new Set(['de', 'en', 'fr', 'it', 'es', 'nl', 'pl', 'pt']);
+
+/**
+ * The hints fit for speech in `lang`. Whisper takes its prompt as text that came before the speech, so Russian
+ * device names in the prompt pull German speech towards Cyrillic letters, even with `language: de` (field report
+ * 2026-11-17: "Wie viel urысker ada?"). A language written in Latin letters gets only the hints in Latin letters;
+ * every other language keeps them all, as names like "Starlink" are spoken there too.
+ *
+ * @param hints - Device and room names
+ * @param lang - Language of the speech ('' = unknown: all hints)
+ */
+export function hintsForLanguage(hints: string[] | undefined, lang: string): string[] | undefined {
+    const base = (lang || '').split('-')[0].toLowerCase();
+    if (!hints?.length || !LATIN_LANGUAGES.has(base)) {
+        return hints;
+    }
+    // a letter that is not a Latin one (umlauts and accents are Latin)
+    return hints.filter(h => !/[^\p{Script=Latin}\P{L}]/u.test(h || ''));
+}
+
 /** Wrap raw 16-bit-signed-LE PCM (mono, or interleaved stereo) into a minimal 44-byte WAV container. */
 export function pcmToWav(pcm: Buffer, sampleRate: number, numChannels = 1): Buffer {
     const bitsPerSample = 16;
@@ -112,7 +133,7 @@ export class OpenAiStt implements SttEngine {
         const file = await toFile(pcmToWav(pcm, sampleRate), 'audio.wav', { type: 'audio/wav' });
         // A prompt biases Whisper toward the given domain vocabulary (device/room names) without excluding
         // other words — improves recognition of proper nouns the NLU then needs to match.
-        const prompt = hintsToPrompt(hints);
+        const prompt = hintsToPrompt(hintsForLanguage(hints, lang));
         const res = await this.client.audio.transcriptions.create({
             file,
             model: this.model,

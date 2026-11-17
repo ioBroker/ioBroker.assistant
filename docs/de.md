@@ -662,6 +662,29 @@ sendTo('assistant.0', 'listWakeWords', {}, r => log(JSON.stringify(r)));
 sendTo('assistant.0', 'deleteWakeWord', { id: 'hey_hannah_1a2b3c4d' });
 ```
 
+#### Eine Sprache je Wake-Word
+
+Eine Spracherkennung, die die Sprache selbst erkennt, rät bei kurzen Befehlen oft falsch: in einem Haushalt mit
+Deutsch und Russisch kam „Wie ist das Wetter morgen?“ bei Parakeet als „Листа светерморган.“ zurück. Gib stattdessen
+jeder Sprache ihr eigenes Wake-Word und fülle die Tabelle **Sprache je Aktivierungswort** (Reiter Satelliten, unter
+den ESPHome-Satelliten), z. B. `Alisa` → Русский, `Hey Bro` → Deutsch:
+
+- was nach dem Wake-Word gesagt wird, wird in seiner Sprache erkannt, und die Antwort wird darin gesprochen;
+- die Rückfragen dieses Gesprächs (eine Frage des Assistenten, Ja/Nein von pi-agent, Dialogmodus) behalten sie, weil
+  ihr Mikrofon ohne Wake-Word aufgeht;
+- pi-agent stellt seine Ja/Nein-Fragen darin, damit „Да“ oder „Ja“ verstanden wird;
+- ein Wake-Word ohne Zeile nutzt wie bisher die Sprachsprache.
+
+Ein ESPHome-Satellit hört auf **zwei** Wake-Words gleichzeitig: wähle in seinen Einstellungen beide aus. ESPHome
+meldet eins als Grenze, schaltet aber jedes Wake-Word ein, das es bekommt, und lässt sie nebeneinander laufen.
+
+Das Wake-Word ist sein Name, wie ihn das Gerät zeigt („Hey Bro“), oder seine ID (`hey_bro`); Groß- und
+Kleinschreibung und Leerzeichen sind egal. Nur eine Spracherkennung, der die Sprache mitgeteilt wird, folgt ihr:
+OpenAI und kompatible Server (Whisper, z. B. speaches oder faster-whisper unter **Server für die Spracherkennung (optional)**), Azure, AWS,
+OpenRouter und Vosk. Bei ioBroker.voice wähle das Modell **Canary 1B v2**: ihm wird die Sprache mitgeteilt, und
+es hält Sprache mit Akzent darin, bei etwa doppelter Zeit von Parakeet (immer noch deutlich unter einer Sekunde).
+Parakeet erkennt die Sprache selbst und ignoriert sie.
+
 #### Geräte-Einstellungen
 
 Im Reiter **Satelliten** der Instanz-Einstellungen hat jede Zeile einen Zahnrad-Knopf, der die

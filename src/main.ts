@@ -103,6 +103,7 @@ import {
     type TimerEvent,
     type WakeWordConfig,
 } from './lib/voice/esphome';
+import { describeWakeWordLanguages, parseWakeWordLanguages, wakeWordLanguage } from './lib/voice/wakeWordLanguage';
 import {
     MEDIA_COMMANDS,
     type EsphomeEntity,
@@ -611,6 +612,11 @@ class Assistant extends Adapter {
         attachments: Attachments;
         /** Language the question was asked in ({@link questionLanguage}); fixed answers are given in it. */
         language: string;
+        /**
+         * Language the satellite listens in for this conversation: the one of its wake word (`wakeWordLanguages`),
+         * '' = the voice language. pi-agent asks its yes/no questions in it, so the answer is understood.
+         */
+        listenLanguage: string;
     }>();
     /** Who is at home (roadmap B1); mirrored into `presence.*`. Null until onReady. */
     private presence: PresenceTracker | null = null;
@@ -934,6 +940,12 @@ class Assistant extends Adapter {
             this.serveWakeWord(word);
         }
 
+        const wakeLanguages = parseWakeWordLanguages(cfg.wakeWordLanguages);
+        if (wakeLanguages.size) {
+            this.log.info(
+                `ESPHome satellites: speech recognition by wake word — ${describeWakeWordLanguages(wakeLanguages)}`,
+            );
+        }
         this.esphome = new EsphomeSatellites({
             devices,
             language,
@@ -944,6 +956,7 @@ class Assistant extends Adapter {
                     transport: 'esphome',
                     room: origin.room,
                     wakeWord: origin.wakeWord,
+                    language: origin.language,
                     sttMs: origin.sttMs,
                     audioMs: origin.audioMs,
                     vad: origin.vad,
@@ -951,6 +964,9 @@ class Assistant extends Adapter {
                 }),
             onSpoken: (device, info) => this.reportSpoken(device, info),
             getHints: () => this.buildSttHints(),
+            wakeWordLanguage: wakeLanguages.size
+                ? (phrase, config) => wakeWordLanguage(wakeLanguages, phrase, config?.available)
+                : undefined,
             media: this.media,
             mediaHost: (cfg.esphomeMediaHost || '').trim(),
             silenceMs: cfg.esphomeSilenceMs || 0,
@@ -4221,11 +4237,13 @@ class Assistant extends Adapter {
         const satellite = fromSatellite ? this.knownSatelliteId(origin.satellite || source, origin.room || '') : '';
         // The journal shows "[picture] What is in this picture?", like the conversation history
         const shown = historyText(question, attachments.images.length, !!attachments.video);
-        const configured = String(this.config.voiceLanguage || this.language || 'en');
+        // A wake word with a language of its own: the question was recognised in that language
+        const listenLanguage = origin.language || '';
+        const configured = listenLanguage || String(this.config.voiceLanguage || this.language || 'en');
         // "скажи, сколько сейчас времени" on a German satellite: the time comes in Russian
         const language = questionLanguage(question, configured);
         return this.requestOrigin.run(
-            { source, room: origin.room || '', voice, satellite, attachments, language },
+            { source, room: origin.room || '', voice, satellite, attachments, language, listenLanguage },
             () =>
                 this.journal
                     ? this.journal.run(shown, source, origin, () => {
@@ -4829,7 +4847,9 @@ class Assistant extends Adapter {
         try {
             // pi-agent asks its questions to confirm a write ("… Say yes or no.") in this language, not in the system
             // language: a satellite listening in Russian does not hear a German "Ja"
-            const language = String(this.config.voiceLanguage || this.language || '');
+            const language =
+                this.requestOrigin.getStore()?.listenLanguage ||
+                String(this.config.voiceLanguage || this.language || '');
             // From a satellite: where pi-agent can speak later on its own (a reminder, the end of a background
             // task) — its `tts` state says it there.
             const satellite = this.requestOrigin.getStore()?.satellite || '';
