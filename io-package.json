@@ -1,8 +1,21 @@
 {
   "common": {
     "name": "assistant",
-    "version": "1.9.1",
+    "version": "1.10.0",
     "news": {
+      "1.10.0": {
+        "en": "ESPHome satellites: the adapter ships microWakeWord models (\"ioBroker\", \"Hey Bro\", \"Alisa\"); one click in the satellite settings puts one on the device and switches it on, replacing an older version of the same word\nWake words from a training run get a short name with their date, e.g. `261103_iobroker` instead of \"20261103 085427 9b0f Microwakeword Iobroker\"\nA wake word selected right after it was uploaded is no longer dropped as unknown",
+        "de": "ESPHome-Satelliten: Der Adapter enthält MicroWakeWord-Modelle („ioBroker“, „Hey Bro“, „Alisa“); ein Klick in den Satelliteneinstellungen schaltet es ein und ersetzt eine ältere Version desselben Wortes\nWeckworte eines Laufs erhalten einen Kurznamen mit Datum, z. B. `261103_iobroker` statt „20261103 085427 9b0f Microwakeword Iobroker“\nEin nach dem Upload gewähltes Weckwort gilt nicht mehr als unbekannt",
+        "ru": "Спутники EspHome: адаптер поставляется с моделями MicroWakeWord («IOBroker», «Hey Bro», «Alisa»); одним щелчком мыши в настройках спутника устройство включается и включается, заменяя старую версию того же слова\nСлова для бодрствования из тренировочного забега получают краткое название с указанием даты, например «261103_iobroker» вместо «20261103 085427 9b0f Microwakeword Iobroker»\nСлово для пробуждения, выбранное сразу после загрузки, больше не удаляется как неизвестное",
+        "pt": "Satélites ESPHome: o adaptador vem com modelos MicroWakeWord (“ioBroker”, “Hey Bro”, “Alisa”); um clique nas configurações do satélite o liga, substituindo uma versão antiga da mesma palavra\nUse um nome curto com a data, por exemplo, `261103_iobroker` em vez de “20261103 085427 9b0f Microwakeword Iobroker”\nUma palavra de ativação selecionada logo após o upload não é mais desconhecida",
+        "nl": "ESPhome-satellieten: de adapter wordt geleverd met MicroWakeWord-modellen („IOBroker”, „Hey Bro”, „Alisa”); één klik in de satellietinstellingen zet u er een op het apparaat en schakelt het in, ter vervanging van een oudere versie van hetzelfde woord\nWakewords van een trainingsrun krijgen een korte naam met hun datum, bijvoorbeeld `261103_iobroker` in plaats van „20261103 085427 9b0f Microwakeword Iobroker”\nEen activeringswoord dat werd geselecteerd direct nadat het werd geüpload, wordt niet langer als onbekend weggezet",
+        "fr": "Satellites ESPhome : l'adaptateur intègre les modèles MicroWakeword (« IObroker », « Hey Bro », « Alisa ») ; un clic dans les paramètres du satellite permet d'en connecter un sur l'appareil et de l'allumer, en remplacement de l'ancienne version\nLes mots d'un entraînement reçoivent un nom abrégé avec la date, par exemple « 261103_iobroker » au lieu de « 20261103 085427 9b0f Microwakeword Iobroker »\nUn mot de réveil sélectionné juste après sa mise en ligne n'est plus perdu",
+        "it": "Satelliti ESPHome: l'adattatore fornisce modelli MicroWakeWord («IOBroker», «Hey Bro», «Alisa»); un clic nelle impostazioni del satellite ne attiva uno e lo accende, sostituendo una vecchia\nRisveglia le parole di un allenamento con un nome breve con data, ad esempio `261103_iobroker` invece di «20261103 085427 9b0f Microwakeword Iobroker»\nUna wake word selezionata subito dopo il caricamento non è più sconosciuta",
+        "es": "Satélites ESPhome: el adaptador incluye modelos MicroWakeWord («ioBroker», «Hey Bro», «Alisa»); un clic en la configuración del satélite pone uno en el dispositivo y lo enciende, en sustitución de una versión anterior de la misma palabra\nLas palabras de un entrenamiento reciben un nombre corto con su fecha, por ejemplo, «261103_iobroker» en lugar de «20261103 085427 9b0f Microwakeword Iobroker»\nUna palabra clave seleccionada justo después de subirla ya no aparece por desconocida",
+        "pl": "Satelity ESPhome: adapter dostarcza modele MicroWakeWord („ioBroker”, „Hey Bro”, „Alisa”); jedno kliknięcie w ustawieniach satelity umieszcza urządzenie i włącza je, zastępując starszą wersję tego samego słowa\nSłowa z biegu treningowego otrzymują krótką nazwę z datą, np. „261103_iobroker” zamiast „20261103 085427 9b0f Microwakeword Iobroker”\nSłowo typu wake wybrane zaraz po przesłaniu nie jest już upuszczane jako nieznane",
+        "uk": "Супутники ESPHome: адаптер поставляє моделі MicroWakeWord («IObroker», «Hey Bro», «Alisa»); одним клацанням миші в налаштуваннях супутника ставиться один на пристрій і вмикає його, замінюючи старішу версію того ж слова\nСлова з тренувального пробігу отримують коротку назву з їх датою, наприклад `261103_iobroker` замість «20261103 085427 9b0f Microwakeword Iobroker»\nСлово пробудження, вибране відразу після його завантаження, більше не буде скинуто як невідоме",
+        "zh-cn": "espHome 卫星：适配器提供 MicroWakeWord 型号（“ioBroker”、“Hey Bro”、“Alisa”）；在卫星设置中单击一下即可在设备上打开一个模型，然后将其打开，替换同一个单词的旧版本\n训练中醒来的单词会用一个带有日期的简短名称，例如 “261103_iobroker” 而不是 “20261103 085427 9b0f Microwakeword Iobroker”\n上传后立即选择的唤醒词不会再被删除为未知字词"
+      },
       "1.9.1": {
         "en": "The adapter ai-parakeet was renamed to voice: the speech recognition, the instance selection and the button \"Install ioBroker.voice\" use `voice` now. A saved instance `ai-parakeet.<n>` switches to `voice.<n>` by itself as soon as that instance exists",
         "de": "Der Adapter ai-parakeet wurde in Voice umbenannt: Spracherkennung, Instanzauswahl und „Install ioBroker.Voice“ nutzen jetzt `voice`. Ein gespeichertes Ai-Parakeet. <n>wechselt zu Voice. <n>von selbst, sobald die Instanz da ist",
@@ -80,19 +93,6 @@
         "pl": "Dodano czat asystenta i widok na żywo satelitów głosowych dla Aura i innych pulpitów nawigacyjnych",
         "uk": "Додано чат помічника та живий перегляд голосових супутників для Aura та інших інформаційних панелей",
         "zh-cn": "为 Aura 和其他仪表板添加了助手聊天和语音卫星的实时视图"
-      },
-      "1.4.15": {
-        "en": "OpenAI: use `max_completion_tokens` so newer (reasoning) models like gpt-5-mini work (#21)",
-        "de": "OpenAI: Benutze Max_Completion_Tokens, also neuere Modelle wie GPT-5-Mini Work (#21)",
-        "ru": "OpenAI: используйте max_completion_tokens, чтобы работать новые (разумные) модели, такие как gpt-5-mini (#21)",
-        "pt": "OpenAI: use `max_completion_tokens` para que modelos novos como gpt-5-mini funcionem (#21)",
-        "nl": "OpenAI: gebruik `max_completion_tokens` zodat nieuwere (redenerende) modellen zoals gpt-5-mini werken (#21)",
-        "fr": "OpenAI : utilisez « max_completion_tokens » pour que les nouveaux modèles tels que GPT-5-Mini fonctionnent (#21)",
-        "it": "OpenAI: usa `max_completion_tokens` per far funzionare modelli nuovi come gpt-5-mini (#21)",
-        "es": "OpenAI: use `max_completion_tokens` para que modelos más nuevos como el gpt-5 mini funcionen (#21)",
-        "pl": "OpenAI: użyj `max_completion_tokens`, więc nowsze (rozumowanie) modele, takie jak gpt-5-mini, działają (#21)",
-        "uk": "OpenAI: використовуйте `max_completion_tokens`, щоб працювати новіші (міркувальні) моделі, такі як gpt-5-mini (#21)",
-        "zh-cn": "OpenAI：使用 `max_completion_tokens` 这样像 gpt-5-mini 这样更新（推理）模型就能起作用 (#21)"
       }
     },
     "titleLang": {

@@ -237,7 +237,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.10.0 (2026-11-17)
 * (@GermanBluefox) ESPHome satellites: the adapter ships microWakeWord models ("ioBroker", "Hey Bro", "Alisa"); one click in the satellite settings puts one on the device and switches it on, replacing an older version of the same word
 * (@GermanBluefox) Wake words from a training run get a short name with their date, e.g. `261103_iobroker` instead of "20261103 085427 9b0f Microwakeword Iobroker"
 * (@GermanBluefox) A wake word selected right after it was uploaded is no longer dropped as unknown
@@ -255,19 +255,6 @@ train it twice.
 ### 1.7.0 (2026-11-12)
 * (@sadam6752-tech) A Piper voice set for one language is only used for it, a Russian answer on a German satellite gets a Russian voice instead of being spelled letter by letter; the language pi-agent 0.10.1 reports for an answer is used for its voice (#27)
 * (@GermanBluefox) The language of an answer is taken for every voice: UDP and Wyoming satellites, announcements and the voice test too, and Azure, AWS and OpenRouter voices set for one language are only used for it. New table "Voice per answer language" in the Voice tab (e.g. ru → ru_RU-dmitri-medium); Piper loads its voices at the start. The language pi-agent reports is also found for its questions to confirm, and a mark that the letters contradict is not believed
-
-### 1.6.0 (2026-11-10)
-* (@GermanBluefox) Local LLM: new tab "Local models" to keep several models, pick the active one (saving restarts the instance), choose the folder, see sizes and free space, download presets (with description, size and languages) or own GGUF links, delete models, and see statistics per model (questions, answers, hand-overs, failures, tokens/s, time to the first token, load time). A benchmark on the host checks that the loaded model hands home questions over and answers general ones correctly. The model folder can be picked on the disk of the host (Admin 8.3.11+)
-* (@GermanBluefox) Settings split into topic tabs: AI, Commands, Local models, Devices (with the permissions), Services, Triggers, Voice, Satellites (with the connections of the satellites) and Chat as the last one; rarely needed options (max tokens and system prompt, ffmpeg, end of speech and diagnosis) are in sections that open on a click
-* (@GermanBluefox) Local LLM: refusals like "as an AI language model, I don't have the ability…" are handed over to the next tier instead of being said to the user (found with the new benchmark)
-* (@GermanBluefox) OpenAI reasoning models: reasoning effort from the system AI settings; when function tools are rejected, a chosen effort is kept over the Responses API, otherwise the request is retried with effort 'none' (#25)
-* (@GermanBluefox) A cloud model that runs out of tokens without a word (e.g. in its reasoning) is reported as an error instead of an empty answer that read as "done"
-
-### 1.5.0 (2026-11-09)
-* (@GermanBluefox) Added an assistant chat and a live view of the voice satellites for Aura and other dashboards
-
-### 1.4.15 (2026-11-08)
-* (@GermanBluefox) OpenAI: use `max_completion_tokens` so newer (reasoning) models like gpt-5-mini work (#21)
 
 [Older changelogs can be found there](CHANGELOG_OLD.md)
 
