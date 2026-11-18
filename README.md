@@ -237,7 +237,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.11.0 (2026-11-18)
 * (@sadam6752-tech) ESPHome satellites: a language per wake word (tab Satellites, "Language per wake word", e.g. Alisa → Russian, Hey Bro → German): speech recognition, the reply voice and the follow-ups of that conversation use it, and pi-agent asks its yes/no questions in it
 * (@sadam6752-tech) ESPHome satellites on an ESP32: two wake words can be active at once (the firmware reports a limit of one, but runs every wake word it is sent)
 * (@sadam6752-tech) ioBroker.voice gets the language of the speech (its model Canary 1B v2 uses it, Parakeet ignores it) and only the hints in the alphabet of the language
@@ -257,10 +257,6 @@ train it twice.
 ### 1.8.0 (2026-11-13)
 * (@GermanBluefox) Added the short form of the web component manifests (tag, name, icon, size) to `common.webComponents`, so that hosts like Aura can list the components before the adapter is installed; the build writes it with `iob-web-components sync-io-package`
 * (@GermanBluefox) The built-in answers (time, devices, timers, weather …) come in the language the question was asked in, not always in the voice language: "скажи, сколько сейчас времени" on a German satellite is answered in Russian, "what time is it" in English and with an English voice
-
-### 1.7.0 (2026-11-12)
-* (@sadam6752-tech) A Piper voice set for one language is only used for it, a Russian answer on a German satellite gets a Russian voice instead of being spelled letter by letter; the language pi-agent 0.10.1 reports for an answer is used for its voice (#27)
-* (@GermanBluefox) The language of an answer is taken for every voice: UDP and Wyoming satellites, announcements and the voice test too, and Azure, AWS and OpenRouter voices set for one language are only used for it. New table "Voice per answer language" in the Voice tab (e.g. ru → ru_RU-dmitri-medium); Piper loads its voices at the start. The language pi-agent reports is also found for its questions to confirm, and a mark that the letters contradict is not believed
 
 [Older changelogs can be found there](CHANGELOG_OLD.md)
 
