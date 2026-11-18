@@ -11,11 +11,13 @@ const {
 } = require('../../build/lib/voice/wakeWordLanguage');
 const { activeWakeWordLimit } = require('../../build/lib/voice/esphome');
 
-test('activeWakeWordLimit: ESPHome reports 1 but runs two, other limits stay', () => {
-    assert.equal(activeWakeWordLimit(1), 2);
-    assert.equal(activeWakeWordLimit(2), 2, 'ThirdReality');
-    assert.equal(activeWakeWordLimit(3), 3);
-    assert.equal(activeWakeWordLimit(0), 0, 'no microWakeWord');
+test('activeWakeWordLimit: the ESPHome firmware on an ESP32 reports 1 but runs two, other devices keep theirs', () => {
+    assert.equal(activeWakeWordLimit(1, 'Espressif'), 2);
+    assert.equal(activeWakeWordLimit(1, ''), 1, 'device info not known');
+    assert.equal(activeWakeWordLimit(1, 'Raspberry Pi'), 1, 'ESPHome on another chip: no microWakeWord');
+    assert.equal(activeWakeWordLimit(1, 'ThirdReality'), 1, 'another firmware may mean it');
+    assert.equal(activeWakeWordLimit(2, 'Espressif'), 2);
+    assert.equal(activeWakeWordLimit(0, 'Espressif'), 0, 'no microWakeWord');
 });
 
 test('wakeWordKey: case, spaces and separators do not matter', () => {

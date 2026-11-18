@@ -1465,6 +1465,13 @@ test('a wake word with a language: recognition, reply and the follow-up of its c
     assert.deepEqual(heard, ['ru', 'ru']);
     assert.equal(asked[1].ctx.wakeWord, '', 'a follow-up');
     assert.equal(asked[1].ctx.language, 'ru');
+
+    // The conversation is over (no question): the next one starts without a wake word, in the voice language.
+    await waitFor(() => device.events.filter(e => e.type === 2).length === 2, 'the end of the second run');
+    device.startPipeline('', true);
+    await waitFor(() => asked.length === 3, 'a request without a wake word');
+    assert.deepEqual(heard, ['ru', 'ru', 'de']);
+    assert.equal(asked[2].ctx.language, 'de');
 });
 
 test('a wake word without a language: the voice language, as before', async t => {

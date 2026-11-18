@@ -421,16 +421,21 @@ export interface ExternalWakeWordOffer {
 /** How many wake words an ESPHome device with microWakeWord listens for at once, although it reports 1. */
 export const ESPHOME_ACTIVE_WAKE_WORDS = 2;
 
+/** `manufacturer` of the device info of the ESPHome firmware on an ESP32, the only chip microWakeWord runs on. */
+export const ESPHOME_ESP32 = 'Espressif';
+
 /**
- * The number of wake words that may be active at once. ESPHome (`voice_assistant.cpp`, 2026.10) reports
- * `max_active_wake_words = 1` for microWakeWord, but its `on_set_configuration` enables every id it is sent, and
- * microWakeWord runs all enabled models side by side (like the Home Assistant Voice PE). Two wake words are what a
- * household needs that gives each of its two languages its own one (`wakeWordLanguages`). Other limits stay.
+ * The number of wake words that may be active at once. The ESPHome firmware on an ESP32 (`voice_assistant.cpp`,
+ * 2026.10) reports `max_active_wake_words = 1` for microWakeWord, but its `on_set_configuration` enables every id it
+ * is sent, and microWakeWord runs all enabled models side by side (like the Home Assistant Voice PE). Two wake words
+ * are what a household needs that gives each of its two languages its own one (`wakeWordLanguages`). Every other
+ * device keeps what it reports (linux-voice-assistant, ThirdReality and others may really mean 1).
  *
  * @param reported - `max_active_wake_words` of the device
+ * @param manufacturer - `manufacturer` of its device info ('' = not known yet)
  */
-export function activeWakeWordLimit(reported: number): number {
-    return reported === 1 ? ESPHOME_ACTIVE_WAKE_WORDS : reported;
+export function activeWakeWordLimit(reported: number, manufacturer: string): number {
+    return reported === 1 && manufacturer === ESPHOME_ESP32 ? ESPHOME_ACTIVE_WAKE_WORDS : reported;
 }
 
 export interface WakeWordConfig {
@@ -628,6 +633,10 @@ class EsphomeConnection {
     wakeWordConfig: WakeWordConfig | null = null;
     /** Language of the last wake word ({@link EsphomeSatellitesOptions.wakeWordLanguage}); '' = `language`. */
     private conversationLanguage = '';
+    /** `manufacturer` of the device info: "Espressif" = the ESPHome firmware on an ESP32 ({@link activeWakeWordLimit}) */
+    private manufacturer = '';
+    /** The raised wake word limit was logged (once per device) */
+    private limitLogged = false;
     /**
      * One entry per configuration request in flight, in send order (the device answers each one, in
      * order): the ids a preceding `SetConfiguration` asked for, or null. The read-back is the only
@@ -918,6 +927,7 @@ class EsphomeConnection {
                 const info = message as DeviceInfoResponse;
                 this.deviceName = info.getName() || this.host;
                 this.friendlyName = info.getFriendlyName?.() || info.getName() || '';
+                this.manufacturer = info.getManufacturer?.() || '';
                 this.online = true;
                 this.opts.log.info(
                     `ESPHome satellite online: ${this.deviceName} (${info.getModel()}) @ ${this.host}${this.room ? `, room ${this.room}` : ''}`,
@@ -941,8 +951,15 @@ class EsphomeConnection {
                             languages: w.getTrainedLanguagesList(),
                         }))
                         .filter(w => !seen.has(w.id) && !!seen.add(w.id)),
-                    max: activeWakeWordLimit(config.getMaxActiveWakeWords()),
+                    max: activeWakeWordLimit(config.getMaxActiveWakeWords(), this.manufacturer),
                 };
+                if (this.wakeWordConfig.max !== config.getMaxActiveWakeWords() && !this.limitLogged) {
+                    this.limitLogged = true;
+                    this.opts.log.info(
+                        `ESPHome ${this.deviceName}: allowing ${this.wakeWordConfig.max} active wake words — the firmware ` +
+                            `reports ${config.getMaxActiveWakeWords()}, but microWakeWord on an ESP32 runs every one it is sent`,
+                    );
+                }
                 const active = this.wakeWordConfig.active.join(', ') || '(none active)';
                 const available = this.wakeWordConfig.available.map(w => w.id);
                 this.opts.log.info(
@@ -1227,6 +1244,9 @@ class EsphomeConnection {
         if (!followUp) {
             // a new conversation: the language of its wake word; the follow-ups keep it
             this.conversationLanguage = this.opts.wakeWordLanguage?.(phrase, this.wakeWordConfig) || '';
+        } else if (!answersQuestion && !dialog) {
+            // a conversation that starts without a wake word: the voice language, not the one of an old conversation
+            this.conversationLanguage = '';
         }
 
         this.opts.log.debug(
@@ -1318,6 +1338,10 @@ class EsphomeConnection {
             return;
         }
         this.dialogOn = on;
+        if (!on) {
+            // the dialog was the conversation: the next one starts in the language of its own wake word
+            this.conversationLanguage = '';
+        }
         this.dialogHeardAt = Date.now();
         this.dialogReplyAt = 0;
         this.cancelDialogReopen();
