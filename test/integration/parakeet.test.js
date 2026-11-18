@@ -10,7 +10,12 @@ const silentLog = { info() {}, warn() {}, error() {}, debug() {} };
 
 function ctx(over = {}) {
     return {
-        creds: { openaiKey: '', azureKey: '', azureRegion: '', aws: { accessKeyId: '', secretAccessKey: '', region: '' } },
+        creds: {
+            openaiKey: '',
+            azureKey: '',
+            azureRegion: '',
+            aws: { accessKeyId: '', secretAccessKey: '', region: '' },
+        },
         voices: { openai: 'alloy', azure: '', aws: '', piper: '' },
         dataDir: require('node:os').tmpdir(),
         log: silentLog,
@@ -34,13 +39,16 @@ test('parakeet: PCM goes as base64 with rate and the hints as prompt; the answer
         {
             instance: 'voice.0',
             command: 'transcribe',
-            message: { pcm: pcm.toString('base64'), sampleRate: 16000, prompt: 'Wohnzimmer, ioBroker' },
+            message: { pcm: pcm.toString('base64'), sampleRate: 16000, prompt: 'Wohnzimmer, ioBroker', language: 'de' },
         },
     ]);
 
-    // no hints → no prompt; the language is not sent (the model detects it)
-    await stt.transcribe(pcm, 22050, 'ru');
-    assert.deepEqual(sent[1].message, { pcm: pcm.toString('base64'), sampleRate: 22050 });
+    // no hints → no prompt; the language goes along (Canary uses it, Parakeet ignores it), without the region
+    await stt.transcribe(pcm, 22050, 'ru-RU');
+    assert.deepEqual(sent[1].message, { pcm: pcm.toString('base64'), sampleRate: 22050, language: 'ru' });
+    // no language → none sent
+    await stt.transcribe(pcm, 16000, '');
+    assert.deepEqual(sent[2].message, { pcm: pcm.toString('base64'), sampleRate: 16000 });
 });
 
 test('parakeet: an error of the adapter, no answer and empty text', async () => {
@@ -68,7 +76,12 @@ test('parakeet: factory', () => {
     // as fallback behind a cloud engine
     const both = createSttEngine(
         'openai',
-        ctx({ creds: { ...ctx().creds, openaiKey: 'sk-x' }, sttFallback: 'parakeet', parakeetInstance: 'voice.0', sendMessage: send }),
+        ctx({
+            creds: { ...ctx().creds, openaiKey: 'sk-x' },
+            sttFallback: 'parakeet',
+            parakeetInstance: 'voice.0',
+            sendMessage: send,
+        }),
     );
     assert.equal(both.constructor.name, 'FallbackStt');
 });
@@ -109,7 +122,13 @@ function fakeSystem({ repo = [], npm = [], objects = {}, host = 'pi', hang = fal
             if (verb === 'add') {
                 if (!objs[`system.adapter.${arg}`]) {
                     if (!repo.includes(arg)) {
-                        return reply(message.id, [`Unknown packet name ${arg}. Please install packages from outside the repository using "iobroker url <url-or-package>"!`], 51);
+                        return reply(
+                            message.id,
+                            [
+                                `Unknown packet name ${arg}. Please install packages from outside the repository using "iobroker url <url-or-package>"!`,
+                            ],
+                            51,
+                        );
                     }
                     objs[`system.adapter.${arg}`] = { type: 'adapter', common: {} };
                 }
@@ -119,7 +138,11 @@ function fakeSystem({ repo = [], npm = [], objects = {}, host = 'pi', hang = fal
             if (verb === 'url') {
                 const name = arg.replace(/^iobroker\./, '');
                 if (!npm.includes(name)) {
-                    return reply(message.id, ['npm error code E404', `npm error 404 Not Found - GET https://registry.npmjs.org/${arg}`], 1);
+                    return reply(
+                        message.id,
+                        ['npm error code E404', `npm error 404 Not Found - GET https://registry.npmjs.org/${arg}`],
+                        1,
+                    );
                 }
                 objs[`system.adapter.${name}`] = { type: 'adapter', common: {} };
                 return reply(message.id, ['changed 1 package'], 0);

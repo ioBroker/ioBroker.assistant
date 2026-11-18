@@ -136,6 +136,8 @@ export interface DeviceInfoResponse {
     getModel(): string;
     getEsphomeVersion(): string;
     getMacAddress(): string;
+    /** "Espressif" for the ESPHome firmware on an ESP32 (`api_connection.cpp`), the only chip with microWakeWord. */
+    getManufacturer(): string;
 }
 export interface VoiceAssistantWakeWord {
     getId(): string;

@@ -265,5 +265,9 @@
   "Language (e.g. ru)": "Language (e.g. ru)",
   "TTS model (optional)": "TTS 模型（可选）",
   "Voice (optional)": "声音（可选）",
-  "Test": "测试"
+  "Test": "测试",
+  "Language per wake word": "每个唤醒词的语言",
+  "Wake word": "唤醒词",
+  "Language": "语言",
+  "For a household that speaks two languages: give each language its own wake word, and what is said after it is recognised in that language (e.g. Alisa → Русский, Hey Bro → Deutsch). Follow-up questions keep the language of their wake word, and pi-agent asks its yes/no questions in it. Wake word: its name as shown on the satellite or its id, case and spaces do not matter. A wake word without a row uses the voice language. Only speech recognition that is told the language follows it: ioBroker.voice with the model Canary, OpenAI and compatible servers such as Whisper, Azure, AWS, OpenRouter, Vosk; Parakeet detects the language itself.": "适用于说两种语言的家庭：每种语言都有自己的唤醒词，之后说的话会按该语言识别（例如 Alisa → Русский，Hey Bro → Deutsch）。后续提问保持其唤醒词的语言，pi-agent 也用该语言提出是/否问题。唤醒词：卫星上显示的名称或其 ID；大小写和空格无关紧要。没有对应行的唤醒词使用语音语言。只有会被告知语言的语音识别才会遵循它：使用 Canary 模型的 ioBroker.voice、OpenAI 及兼容服务器如 Whisper、Azure、AWS、OpenRouter、Vosk；Parakeet 会自行识别语言。"
 }
