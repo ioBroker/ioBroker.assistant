@@ -19,6 +19,22 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Eine Sprache je Wake-Word + zwei Wake-Words gleichzeitig** (PR #48, sadam6752-tech, gemergt 2026-11-18, nicht
+  released). Tabelle `wakeWordLanguages` `{wakeWord, language}` (Reiter Satelliten) → `lib/voice/wakeWordLanguage.ts`:
+  Schlüssel `wakeWordLookupKey` = `wakeWordKey(wakeWordBaseName(…))` nur bei ASCII-Namen (sonst ganzer Name) → „ioBroker“
+  passt auf `261103_iobroker`, die id mit Hash und neuere Trainings; Treffer per Phrase oder über `available` per id.
+  `esphome.ts`: `conversationLanguage` für STT, Ja/Nein-Wort des Knopfs, TTS und `origin.language` → `answer()`
+  (`requestOrigin.listenLanguage`, `questionLanguage`-Basis) und pi-agent (`language`). Gesetzt beim Wake-Word einer
+  neuen Runde **oder** bei einer anderen Phrase als der letzten (`lastWakePhrase`; ESPHome wiederholt bei jeder
+  Folge-Runde die alte Phrase, eine andere ist also frisch gesagt — gilt auch in offener Frage/Dialog); zurück auf ''
+  bei Mikro ohne Wake-Word außerhalb eines Gesprächs, Dialog aus, Frage aus ioBroker (`EsphomeSatellites.announce`
+  mit `startConversation` → `fromOutside`) und Dialog an über den State. `activeWakeWordLimit(reported, manufacturer)`:
+  1 → 2 nur bei `manufacturer` „Espressif“ (Stock-ESPHome meldet hart 1, `on_set_configuration` schaltet aber jede id
+  ein; ThirdReality/linux-voice-assistant melden 2), einmal geloggt. `hintsForLanguage` (`stt.ts`): Sprache in
+  lateinischer Schrift bekommt nur lateinische Hints (Whisper schrieb sonst Deutsch kyrillisch) — gilt für alle.
+  `ParakeetStt` schickt `language` (ioBroker.voice ignoriert es bis zum Canary-Modell, ioBroker.voice#10). Fake-Gerät
+  in `esphome.test.js`: `fetch(...).catch` — ein abgebrochener Download nach Testende ließ sonst zufällig den
+  nächsten Test scheitern (ECONNRESET/ECONNREFUSED). Live nur beim Autor (Waveshare ESP32-S3, ESPHome 2026.10.2).
 - **Mitgelieferte Wake-Words mit einem Klick + kurze Namen** (Nutzerwunsch 2026-11-17). Ordner `wake-word/` liegt
   jetzt im Paket (`package.json` `files`, ohne `*.onnx`/`*openwakeword*` — ESPHome kann nur micro). `wakeWords.ts`:
   `readBundledWakeWords(dir)` = jede `.tflite` (+ gleichnamige `.json`) durch `prepareWakeWord`, openWakeWord landet
