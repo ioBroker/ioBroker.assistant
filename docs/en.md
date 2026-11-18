@@ -648,13 +648,16 @@ satellites), e.g. `Alisa` → Русский, `Hey Bro` → Deutsch:
 - the follow-ups of that conversation (a question of the assistant, pi-agent's yes/no, dialog mode) keep it, as their
   microphone opens without a wake word;
 - pi-agent asks its yes/no questions in it, so "Да" or "Ja" is understood;
-- a wake word without a row uses the voice language, as before.
+- another wake word in the middle of the conversation switches to its language;
+- a wake word without a row uses the voice language, as before, and so do a microphone without a wake word after the
+  conversation and questions from ioBroker (`askUser`, triggers, dialog mode via its state) — they are asked in the
+  voice language.
 
 An ESPHome satellite listens for **two** wake words at once: select both in its settings. ESPHome reports one as
 its limit, but it switches on every wake word it is sent and runs them side by side.
 
 The wake word is its name as the device shows it ("Hey Bro") or its id (`hey_bro`); case and spaces do not matter.
-Only speech recognition that is told the language follows it: OpenAI and compatible servers (Whisper, e.g.
+For a trained model the word is enough: `ioBroker` covers `261103_iobroker` and every newer version. Only speech recognition that is told the language follows it: OpenAI and compatible servers (Whisper, e.g.
 speaches or faster-whisper behind **Speech recognition server (optional)**), Azure, AWS, OpenRouter and Vosk. With ioBroker.voice choose the model **Canary 1B v2**: it is told the
 language and keeps accented speech in it, at about twice the time of Parakeet (still well below a second). Parakeet
 detects the language itself and ignores it.

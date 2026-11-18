@@ -5,6 +5,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
     wakeWordKey,
+    wakeWordLookupKey,
     parseWakeWordLanguages,
     wakeWordLanguage,
     describeWakeWordLanguages,
@@ -69,4 +70,25 @@ test('wakeWordLanguage: by phrase, by id through the wake words of the device, e
     assert.equal(wakeWordLanguage(byPhrase, 'Okay Nabu', available), '');
     assert.equal(wakeWordLanguage(byPhrase, '', available), '');
     assert.equal(wakeWordLanguage(new Map(), 'Alisa', available), '');
+});
+
+test('wakeWordLanguage: a trained model matches its word, whatever its date, hash or id', () => {
+    // the shipped ioBroker model reports the phrase "261103_iobroker", its id carries the hash too
+    assert.equal(wakeWordLookupKey('261103_iobroker'), 'iobroker');
+    assert.equal(wakeWordLookupKey('261103_iobroker_2ae6f3f7'), 'iobroker');
+    assert.equal(wakeWordLookupKey('20261117-091512-4c1d-microwakeword-iobroker'), 'iobroker');
+    assert.equal(wakeWordLookupKey('Hey Bro'), 'heybro');
+    // other letters stay whole: "Hey Алиса" is not "Hey Бро"
+    assert.equal(wakeWordLookupKey('Алиса'), 'алиса');
+    assert.notEqual(wakeWordLookupKey('Hey Алиса'), wakeWordLookupKey('Hey Бро'));
+    // only noise: the plain key
+    assert.equal(wakeWordLookupKey('2026'), '2026');
+
+    const byWord = parseWakeWordLanguages([{ wakeWord: 'ioBroker', language: 'de' }]);
+    assert.equal(wakeWordLanguage(byWord, '261103_iobroker'), 'de', 'the row names the word only');
+    assert.equal(wakeWordLanguage(byWord, '261117_iobroker'), 'de', 'a newer training of it');
+    const byVersion = parseWakeWordLanguages([{ wakeWord: '261103_iobroker_2ae6f3f7', language: 'de' }]);
+    assert.equal(wakeWordLanguage(byVersion, '261117_iobroker'), 'de', 'a row with an id covers newer versions');
+    assert.equal(wakeWordLanguage(byWord, 'Okay Nabu'), '');
+    assert.equal(describeWakeWordLanguages(byVersion), 'iobroker → de');
 });

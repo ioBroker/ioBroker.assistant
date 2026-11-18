@@ -956,12 +956,15 @@ function fakeDevice({
                     setTimeout(() => state.sendStop(), stopAfterVadEndMs);
                 }
                 if (type === 8 && data.url) {
-                    void fetch(data.url).then(r => {
-                        state.fetched.push(r);
-                        const done = new pb.VoiceAssistantAnnounceFinished();
-                        done.setSuccess(true);
-                        send(done);
-                    });
+                    // .catch: a download cut off by the end of a test is no failure of the next one
+                    void fetch(data.url)
+                        .then(r => {
+                            state.fetched.push(r);
+                            const done = new pb.VoiceAssistantAnnounceFinished();
+                            done.setSuccess(true);
+                            send(done);
+                        })
+                        .catch(() => {});
                 }
             } else if (name === 'VoiceAssistantAnnounceRequest') {
                 // start_conversation is how a question re-opens the mic — record it like the firmware would.
@@ -970,12 +973,14 @@ function fakeDevice({
                     text: message.getText(),
                     startConversation: message.getStartConversation(),
                 });
-                void fetch(message.getMediaId()).then(r => {
-                    state.fetched.push(r);
-                    const done = new pb.VoiceAssistantAnnounceFinished();
-                    done.setSuccess(true);
-                    send(done);
-                });
+                void fetch(message.getMediaId())
+                    .then(r => {
+                        state.fetched.push(r);
+                        const done = new pb.VoiceAssistantAnnounceFinished();
+                        done.setSuccess(true);
+                        send(done);
+                    })
+                    .catch(() => {});
             } else if (name === 'PingRequest') {
                 send(new pb.PingResponse());
             }
@@ -1450,7 +1455,7 @@ async function languageSatellite(t, table) {
     });
     await satellites.start();
     await waitFor(() => device.events.some(e => e.type === 2), 'the end of the first run');
-    return { device, heard, spoken, asked };
+    return { device, satellites, heard, spoken, asked };
 }
 
 test('a wake word with a language: recognition, reply and the follow-up of its conversation use it', async t => {
@@ -1472,6 +1477,34 @@ test('a wake word with a language: recognition, reply and the follow-up of its c
     await waitFor(() => asked.length === 3, 'a request without a wake word');
     assert.deepEqual(heard, ['ru', 'ru', 'de']);
     assert.equal(asked[2].ctx.language, 'de');
+});
+
+test('another wake word while a question is open: its language, not the one of the question', async t => {
+    const { device, heard, asked } = await languageSatellite(t, { 'okay nabu': 'ru', 'hey bro': 'en' });
+    assert.deepEqual(heard, ['ru']);
+    // A follow-up repeats the last phrase; a different one was just said, even inside the question window.
+    device.startPipeline('hey bro', true);
+    await waitFor(() => asked.length === 2, 'the request after the other wake word');
+    assert.deepEqual(heard, ['ru', 'en']);
+    assert.equal(asked[1].ctx.language, 'en');
+});
+
+test('a question from ioBroker after the conversation: the answer is heard in the voice language', async t => {
+    const { device, satellites, heard, asked } = await languageSatellite(t, { 'okay nabu': 'ru' });
+    // answer the question: the reply asks nothing, the conversation is over
+    device.startPipeline('okay nabu', true);
+    await waitFor(
+        () => asked.length === 2 && device.events.filter(e => e.type === 2).length >= 2,
+        'the end of the conversation',
+    );
+    assert.deepEqual(heard, ['ru', 'ru']);
+
+    // A script asks (askUser): the device opens its microphone with the stale phrase of "okay nabu"
+    assert.equal(await satellites.announce(null, Buffer.alloc(1600), 16000, true), 1);
+    device.startPipeline('okay nabu', true);
+    await waitFor(() => asked.length === 3, 'the answer to the question from ioBroker');
+    assert.equal(heard[2], 'de', 'asked in the voice language, heard in it');
+    assert.equal(asked[2].ctx.wakeWord, '', 'the answer to a question');
 });
 
 test('a wake word without a language: the voice language, as before', async t => {

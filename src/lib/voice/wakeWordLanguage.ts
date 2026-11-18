@@ -4,6 +4,7 @@
  * Speech recognition that guesses the language itself (Parakeet, Whisper without a language) often guesses wrong on a
  * short command: German heard as Russian letters ("Листа светерморган" for "Wie ist das Wetter morgen") or as English.
  */
+import { wakeWordBaseName } from './wakeWords';
 
 /** A row of the table `wakeWordLanguages`. */
 export interface WakeWordLanguageRow {
@@ -34,7 +35,21 @@ export function wakeWordKey(name: string): string {
 }
 
 /**
- * The table of the settings as a map key → language. Rows without a wake word or with an invalid language are left
+ * Key a wake word is looked up by: the {@link wakeWordKey} of its base name, without the date, time, hash and model
+ * type of a trained model. "ioBroker", the phrase "261103_iobroker" of a shipped model and its id
+ * "261103_iobroker_2ae6f3f7" are all `iobroker`, so one row covers every version. A name in other than Latin
+ * letters is taken whole (the base name only knows those).
+ *
+ * @param name - Phrase or id of a wake word, or a row of the table
+ */
+export function wakeWordLookupKey(name: string): string {
+    const text = String(name ?? '');
+    const base = /^[ -~]*$/.test(text) ? wakeWordBaseName(text) : '';
+    return wakeWordKey(base) || wakeWordKey(text);
+}
+
+/**
+ * The table of the settings as a map key ({@link wakeWordLookupKey}) → language. Rows without a wake word or with an invalid language are left
  * out; the first row of a wake word wins.
  *
  * @param rows - `native.wakeWordLanguages`
@@ -43,7 +58,7 @@ export function parseWakeWordLanguages(rows: unknown): Map<string, string> {
     const map = new Map<string, string>();
     const list = Array.isArray(rows) ? rows : rows && typeof rows === 'object' ? Object.values(rows) : [];
     for (const row of list as WakeWordLanguageRow[]) {
-        const key = wakeWordKey(row?.wakeWord ?? '');
+        const key = wakeWordLookupKey(row?.wakeWord ?? '');
         const language = String(row?.language ?? '')
             .trim()
             .toLowerCase();
@@ -66,7 +81,7 @@ export function wakeWordLanguage(map: Map<string, string>, phrase: string, avail
     if (!map.size) {
         return '';
     }
-    const key = wakeWordKey(phrase);
+    const key = wakeWordLookupKey(phrase);
     if (!key) {
         return '';
     }
@@ -75,8 +90,8 @@ export function wakeWordLanguage(map: Map<string, string>, phrase: string, avail
         return direct;
     }
     for (const word of available) {
-        const id = wakeWordKey(word.id);
-        const name = wakeWordKey(word.phrase);
+        const id = wakeWordLookupKey(word.id);
+        const name = wakeWordLookupKey(word.phrase);
         if (id === key || name === key) {
             return map.get(id) || map.get(name) || '';
         }

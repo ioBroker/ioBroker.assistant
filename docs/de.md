@@ -673,13 +673,16 @@ den ESPHome-Satelliten), z. B. `Alisa` → Русский, `Hey Bro` → Deutsch
 - die Rückfragen dieses Gesprächs (eine Frage des Assistenten, Ja/Nein von pi-agent, Dialogmodus) behalten sie, weil
   ihr Mikrofon ohne Wake-Word aufgeht;
 - pi-agent stellt seine Ja/Nein-Fragen darin, damit „Да“ oder „Ja“ verstanden wird;
-- ein Wake-Word ohne Zeile nutzt wie bisher die Sprachsprache.
+- ein anderes Wake-Word mitten im Gespräch wechselt in seine Sprache;
+- ein Wake-Word ohne Zeile nutzt wie bisher die Sprachsprache, ebenso ein Mikrofon ohne Wake-Word nach dem Gespräch
+  und Fragen aus ioBroker (`askUser`, Trigger, Dialogmodus über den State) — sie werden in der Sprachsprache gestellt.
 
 Ein ESPHome-Satellit hört auf **zwei** Wake-Words gleichzeitig: wähle in seinen Einstellungen beide aus. ESPHome
 meldet eins als Grenze, schaltet aber jedes Wake-Word ein, das es bekommt, und lässt sie nebeneinander laufen.
 
 Das Wake-Word ist sein Name, wie ihn das Gerät zeigt („Hey Bro“), oder seine ID (`hey_bro`); Groß- und
-Kleinschreibung und Leerzeichen sind egal. Nur eine Spracherkennung, der die Sprache mitgeteilt wird, folgt ihr:
+Kleinschreibung und Leerzeichen sind egal. Bei einem trainierten Modell reicht das Wort: `ioBroker` gilt für
+`261103_iobroker` und jede neuere Version. Nur eine Spracherkennung, der die Sprache mitgeteilt wird, folgt ihr:
 OpenAI und kompatible Server (Whisper, z. B. speaches oder faster-whisper unter **Server für die Spracherkennung (optional)**), Azure, AWS,
 OpenRouter und Vosk. Bei ioBroker.voice wähle das Modell **Canary 1B v2**: ihm wird die Sprache mitgeteilt, und
 es hält Sprache mit Akzent darin, bei etwa doppelter Zeit von Parakeet (immer noch deutlich unter einer Sekunde).

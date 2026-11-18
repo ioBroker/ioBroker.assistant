@@ -417,7 +417,6 @@ export interface ExternalWakeWordOffer {
     path: string;
 }
 
-/** What a device reports about its wake words: what the firmware ships plus the custom ones we offered. */
 /** How many wake words an ESPHome device with microWakeWord listens for at once, although it reports 1. */
 export const ESPHOME_ACTIVE_WAKE_WORDS = 2;
 
@@ -438,6 +437,7 @@ export function activeWakeWordLimit(reported: number, manufacturer: string): num
     return reported === 1 && manufacturer === ESPHOME_ESP32 ? ESPHOME_ACTIVE_WAKE_WORDS : reported;
 }
 
+/** What a device reports about its wake words: what the firmware ships plus the custom ones we offered. */
 export interface WakeWordConfig {
     /** Ids currently listening, e.g. `['okay_nabu']`. */
     active: string[];
@@ -596,7 +596,7 @@ export class EsphomeSatellites {
         await Promise.all(
             targets.map(c =>
                 c
-                    .announce(pcm, sampleRate, startConversation)
+                    .announce(pcm, sampleRate, startConversation, '', true, true)
                     .catch(e => this.opts.log.warn(`announce to ${c.deviceName} failed: ${(e as Error).message}`)),
             ),
         );
@@ -631,12 +631,22 @@ class EsphomeConnection {
     online = false;
     /** Last wake-word configuration the device reported; null until the handshake answers. */
     wakeWordConfig: WakeWordConfig | null = null;
-    /** Language of the last wake word ({@link EsphomeSatellitesOptions.wakeWordLanguage}); '' = `language`. */
+    /**
+     * Language of the conversation going on ({@link EsphomeSatellitesOptions.wakeWordLanguage}); '' = `language`.
+     * Set by the wake word that starts a conversation; its follow-ups (a question asked, dialog mode) keep it.
+     * Back to '' for a microphone without a wake word outside a conversation, when dialog mode ends, and for a
+     * question or dialog mode started from ioBroker: those are spoken in the voice language.
+     */
     private conversationLanguage = '';
     /** `manufacturer` of the device info: "Espressif" = the ESPHome firmware on an ESP32 ({@link activeWakeWordLimit}) */
     private manufacturer = '';
     /** The raised wake word limit was logged (once per device) */
     private limitLogged = false;
+    /**
+     * Phrase of the last pipeline start. ESPHome never clears it: a follow-up carries the phrase of the wake word
+     * before it. A different phrase is therefore a wake word just said.
+     */
+    private lastWakePhrase = '';
     /**
      * One entry per configuration request in flight, in send order (the device answers each one, in
      * order): the ids a preceding `SetConfiguration` asked for, or null. The read-back is the only
@@ -1241,7 +1251,14 @@ class EsphomeConnection {
         // In dialog mode every microphone is the next turn: the phrase is the stale one of the last wake word.
         const dialog = this.dialogOn;
         const followUp = answersQuestion || !phrase || dialog;
-        if (!followUp) {
+        // Another phrase than last time was just said (a follow-up repeats the last one): its language counts, also
+        // while a question is open or in dialog mode. Unknown after a restart of the adapter: then only a new
+        // conversation sets the language, or the answer to a question from ioBroker would get the old wake word's.
+        const newWakeWord = !!phrase && !!this.lastWakePhrase && phrase !== this.lastWakePhrase;
+        if (phrase) {
+            this.lastWakePhrase = phrase;
+        }
+        if (!followUp || newWakeWord) {
             // a new conversation: the language of its wake word; the follow-ups keep it
             this.conversationLanguage = this.opts.wakeWordLanguage?.(phrase, this.wakeWordConfig) || '';
         } else if (!answersQuestion && !dialog) {
@@ -1367,6 +1384,8 @@ class EsphomeConnection {
             this.dialogTimer = setInterval(() => this.checkDialogIdle(), DIALOG_CHECK_MS);
             this.dialogTimer.unref();
             if (open && this.online && !this.capture && !this.runOpen) {
+                // switched on from ioBroker, not by a request: no wake word, the voice language
+                this.conversationLanguage = '';
                 this.noteDialogReply((open.pcm.length / 2 / open.sampleRate) * 1000);
                 void this.announce(open.pcm, open.sampleRate, true, '', false).catch(e =>
                     this.opts.log.warn(
@@ -1891,6 +1910,8 @@ class EsphomeConnection {
     /**
      * Speak a ready PCM buffer on this device (timers, alarms, `tts.text`, jingles). With
      * `startConversation` the microphone opens once the clip has played, to catch the answer to a question.
+     * `fromOutside`: the question comes from ioBroker (a script, a trigger), not from a request of this device, so its
+     * answer is heard in the voice language.
      */
     async announce(
         pcm: Buffer,
@@ -1898,9 +1919,15 @@ class EsphomeConnection {
         startConversation = false,
         text = '',
         question = true,
+        fromOutside = false,
     ): Promise<void> {
         if (!this.online || !pcm.length) {
             return;
+        }
+        if (startConversation && fromOutside) {
+            // A question of a script or trigger is asked in the voice language: the answer is heard in it, not in
+            // the language of a wake word said hours ago.
+            this.conversationLanguage = '';
         }
         const request = new pb.VoiceAssistantAnnounceRequest();
         request.setMediaId(await this.publish(pcm, sampleRate));
