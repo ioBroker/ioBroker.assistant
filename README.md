@@ -237,7 +237,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.12.1 (2026-11-19)
 * (@GermanBluefox) Voice per answer language: the language is a drop-down now. A language picked from the suggestions was saved as its label (e.g. "de – Deutsch") and the row was never used; such rows get the language code on the first start
 * (@GermanBluefox) Spoken requests: the speech recognition no longer waits for the device names it gets as hints (up to 3 s on large installations each time a minute had passed since the last request); the last list is used while a new one is built
 * (@GermanBluefox) Request details: the speech recognition step shows the language it really got (that of the wake word) and the ioBroker.voice instance instead of the unrelated Vosk model; the speech synthesis step shows the voice, model and language that really spoke (a row of "voice per answer language" or the reserve) instead of the main voice of the settings
@@ -259,9 +259,6 @@ train it twice.
 
 ### 1.9.1 (2026-11-16)
 * (@GermanBluefox) The adapter ai-parakeet was renamed to voice: the speech recognition, the instance selection and the button "Install ioBroker.voice" use `voice` now. A saved instance `ai-parakeet.<n>` switches to `voice.<n>` by itself as soon as that instance exists
-
-### 1.9.0 (2026-11-13)
-* (@GermanBluefox) The table "Voice per answer language" has a column for the TTS model (OpenAI and OpenRouter): e.g. Russian answers with `elevenlabs/eleven-multilingual-v2`, the rest with the model set above. An OpenAI model change no longer serves cached audio of the old model. Voice and model of a row are offered in drop-downs, and ▶ at the end of a row speaks a test sentence with it
 
 [Older changelogs can be found there](CHANGELOG_OLD.md)
 
