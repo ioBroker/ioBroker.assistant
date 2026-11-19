@@ -42,13 +42,17 @@ Optional arbeitet er mit **Satelliten** (Mikrofon-/Lautsprecher-Boxen in jedem R
 
 ### Die gestufte Antwort-Pipeline
 
-Jede Anfrage läuft durch bis zu drei Stufen und stoppt bei der ersten, die antworten kann:
+Jede Anfrage läuft durch bis zu drei Stufen und stoppt bei der ersten, die antworten kann. Der erste Reiter
+der Einstellungen, **Ablauf**, zeigt diese Kette als Diagramm — Quellen → Spracherkennung → lokale Entscheidung →
+lokales LLM → Cloud → Sprachausgabe — mit dem, was gerade eingestellt ist (Anbieter, Reserve, Stimme, Sprache, im
+Journal gemessene Dauer der Spracherkennung und -ausgabe); ein Klick auf einen Schritt öffnet seine Einstellungen.
 
 1. **Regelbasiertes NLU (offline, sofort)** — erkennt einfache Befehle (an/aus, Dimmen, Farbe, Status) auf
    **Deutsch, Englisch und Russisch**. Auch **mehrere Befehle in einem Satz**: *„Schalte das Licht an und
    setze das Rollo auf 30 %"* — und ein Verb für mehrere Geräte: *„Schalte das Licht und die Lampe an"*
    (getrennt durch *und / sowie / dann*, Komma oder Semikolon). Kein Modell, keine Cloud. Schalter:
-   *Einfache Befehle lokal beantworten*.
+   *Einfache Befehle lokal beantworten*. Statt der eingebauten Regeln kann der Adapter **smart-text2command**
+   die Gerätebefehle verstehen (*Gerätebefehle versteht*, siehe unten).
 2. **Lokales LLM (optional)** — ein kleines Modell (über `node-llama-cpp`), bei Bedarf installiert, für
    allgemeine Fragen. Es eskaliert an die Cloud, wenn es aktuelle Gerätedaten braucht. Schalter: *Lokales
    LLM verwenden*. Mit einem Cloud-Anbieter ist es der **Fallback**: es antwortet, wenn die Cloud ausfällt
@@ -394,6 +398,30 @@ Sprachen. Sie wirkt für Sprache **und** Text, Chat und Telegram profitieren als
 Mit **Gespräch merken** funktionieren Nachfragen pro Quelle für ein paar Minuten: „Licht an" — „und in der
 Küche auch", „mach es wieder aus". Der Gesprächsfaden liegt nur im Speicher, einer pro Kanal (Chat,
 Telegram, jeder Satellit).
+
+#### Gerätebefehle mit smart-text2command
+
+Der Adapter [smart-text2command](https://github.com/oweitman/ioBroker.smart-text2command) versteht Befehle mit
+einem lokal trainierten Sprachmodell (NLP.js) statt mit festen Regeln: er lernt eure Formulierungen aus
+Beispielen, kennt eigene Intents (feste Antwort, `sendTo`) und **fragt nach**, wenn Raum, Gerät oder Wert
+unklar sind. Im Reiter **Befehle** (oder im Reiter **Ablauf**) *Gerätebefehle versteht* auf
+**smart-text2command** stellen und die Instanz wählen (ein Knopf installiert sie, wenn es noch keine gibt).
+
+- **Er entscheidet mit seinen eigenen Freigaben.** Ein Gerät wird nur geschaltet, wenn es dort aktiviert und die
+  Aktion freigegeben ist. Die Schreibrechte dieses Adapters (*Steuern von States erlauben*, Geräte-Liste) gelten für ihn
+  nicht — sie gelten weiter für das lokale und das Cloud-Modell.
+- **Was er nicht versteht, geht weiter** (unklare Absicht, unbekannter Raum, ein Gerät, das er nicht freigegeben
+  hat, mehrere Befehle in einem Satz) — an das lokale und das Cloud-Modell, als wäre er nicht gefragt worden.
+- **Timer, Wecker, Uhrzeit, Wetter und Lautstärke** bleiben bei den eingebauten Regeln. Ein Satz mit einem
+  Gerätebefehl geht als Ganzes an smart-text2command, auch wenn darin noch ein Timer steckt.
+- **Rückfragen**: seine Frage („Welche Temperatur? Wohnzimmer oder Schlafzimmer?") öffnet am Satelliten das
+  Mikro; die nächste Äußerung desselben Satelliten oder Chats ist die Antwort („Wohnzimmer"). Passt sie nicht
+  zur Frage, wird sie als neue Anfrage behandelt. Eine offene Frage gilt fünf Minuten.
+- Er versteht **Deutsch und Englisch**. Eine Frage in einer anderen Sprache geht direkt weiter.
+- Mit *Schaltbefehle mit einem Ton bestätigen* gibt es auch hier den Ton statt des Satzes.
+
+Im Chat-Journal steht die Stufe als **smart-text2command** mit dem erkannten Intent; die Details zeigen seine
+ganze Antwort.
 
 ---
 

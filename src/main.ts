@@ -150,6 +150,7 @@ import { MAX_TTS_CHARS, parseTtsMaxChars, spokenLengthHint } from './lib/voice/t
 import { CaptureStore, type DiscardedCapture } from './lib/voice/captures';
 import { downloadFfmpegStatic, ffmpegStaticPath } from './lib/voice/ffmpegStatic';
 import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
+import { SmartText2Command, type T2cOutcome } from './lib/smartT2c';
 import { AnswerLanguages, baseLanguage, parseVoiceTable, questionLanguage } from './lib/voice/speechLanguage';
 import { AdapterInstaller, type InstallerAdapter } from './lib/installer';
 import {
@@ -303,9 +304,10 @@ const VOICE_FORM_SECRETS = [
 const PARAKEET_TIMEOUT_MS = 60_000;
 
 /** Adapters a button in the settings installs, and the setting that gets their instance. */
-const HELPER_ADAPTERS = new Map<string, 'piAgentInstance' | 'parakeetInstance'>([
+const HELPER_ADAPTERS = new Map<string, 'piAgentInstance' | 'parakeetInstance' | 'smartT2cInstance'>([
     ['pi-agent', 'piAgentInstance'],
     ['voice', 'parakeetInstance'],
+    ['smart-text2command', 'smartT2cInstance'],
 ]);
 
 /** An empty `ask` from the same caller is reported at most this often. */
@@ -422,6 +424,23 @@ function iaqLabel(value: unknown, unit: string, lang: string): string {
 /** NLU actions that only switch something; their success is what the confirmation tone replaces. */
 const CONTROL_ACTIONS = new Set(['on', 'off', 'level', 'color', 'volumeSet']);
 
+/**
+ * Rule-NLU intents that are not about a device: with `nluEngine: 'smart-text2command'` the rules keep these, and
+ * every device command goes to smart-text2command.
+ */
+const ASSISTANT_ACTIONS = new Set([
+    'timerSet',
+    'timerQuery',
+    'timerCancel',
+    'alarmSet',
+    'alarmQuery',
+    'alarmCancel',
+    'timeQuery',
+    'dateQuery',
+    'weatherQuery',
+    'volumeSet',
+]);
+
 /** An intent in one line for the request trace: "level Rollo (Büro) = 30", "timerSet 300 s", "alarmSet 7:05". */
 function describeIntent(intent: NluIntent): string {
     let text = intent.action;
@@ -500,6 +519,8 @@ class Assistant extends Adapter {
     private agent: LlmAgent | null = null;
     /** Provider "pi-agent": the cloud tier is a pi-agent instance instead of {@link agent}. */
     private piAgent: PiAgentHarness | null = null;
+    /** `nluEngine: 'smart-text2command'`: device commands go to this instance instead of the built-in rules. */
+    private smartT2c: SmartText2Command | null = null;
     /** Installs pi-agent / voice from the settings; created on the first use. */
     private installer: AdapterInstaller | null = null;
     /** The cloud LLM of the instance (own or system-wide settings); `null` without one. */
@@ -758,6 +779,17 @@ class Assistant extends Adapter {
             this.subscribeForeignObjects('enum.rooms.*');
             this.subscribeForeignObjects('enum.functions.*');
 
+            if (cfg.useLocalNlu && cfg.nluEngine === 'smart-text2command') {
+                const instance = (cfg.smartT2cInstance || '').trim().replace(/^system\.adapter\./, '');
+                if (instance) {
+                    this.smartT2c = new SmartText2Command(this, instance);
+                    this.log.info(`Device commands are understood by ${instance} instead of the built-in rules.`);
+                } else {
+                    this.log.warn(
+                        'Device commands by smart-text2command, but no instance is chosen — the built-in rules answer them.',
+                    );
+                }
+            }
             if (harness) {
                 this.piAgent = new PiAgentHarness(
                     this,
@@ -4617,7 +4649,64 @@ class Assistant extends Adapter {
                 data: errorInfo(e),
             });
         }
+        // Device commands by smart-text2command: after the rules, which keep timers, alarms, time and weather
+        if (this.smartT2c) {
+            const start = Date.now();
+            const outcome = await this.smartT2c.ask(question, source, baseLanguage(this.answerLanguage()));
+            return this.useSmartT2c(outcome, source, Date.now() - start, false);
+        }
         return null;
+    }
+
+    /**
+     * What smart-text2command answered, as the answer of the pipeline; null when it did not take the request (or the
+     * reply to its question), which then goes on to the next tier. Its question ends with [[LISTEN]], so a satellite
+     * opens the microphone for the answer, and the next utterance of the source goes to it first
+     * (see {@link produceAnswer}).
+     */
+    private async useSmartT2c(outcome: T2cOutcome, source: string, ms: number, reply: boolean): Promise<string | null> {
+        const instance = this.smartT2c?.instance || 'smart-text2command';
+        if (outcome.kind === 'pass') {
+            this.log.debug(
+                `${instance} did not take ${reply ? 'the reply to its question' : 'the request'} (source='${source}'): ${outcome.reason}.`,
+            );
+            this.journal?.step({
+                stage: 'smartT2c',
+                title: reply
+                    ? `${instance}: the reply does not answer its question (${outcome.reason}), it is a new request`
+                    : `${instance}: not understood (${outcome.reason}), the request goes on`,
+                ms,
+                data: outcome.result,
+            });
+            return null;
+        }
+        const result = outcome.result;
+        const intent = result.intent ? ` ${result.intent}` : '';
+        this.journal?.note({ tier: 'smartT2c', detail: [instance, result.intent].filter(Boolean).join(' · ') });
+        this.journal?.step({
+            stage: 'smartT2c',
+            title:
+                outcome.kind === 'question'
+                    ? `${instance} asks back${intent}: ${result.clarification?.key || '?'}`
+                    : `${instance}: ${result.status}${intent}`,
+            ms,
+            data: result,
+        });
+        if (outcome.kind === 'question') {
+            this.log.info(`${instance} asks back (source='${source}'): ${outcome.text}`);
+            return `${outcome.text} [[LISTEN]]`;
+        }
+        this.log.info(`Answered by ${instance} (source='${source}').`);
+        // A switch command it handed over needs no sentence, like one of the rules (see tryLocalNlu)
+        if (outcome.control && this.config.confirmWithTone && (await this.playConfirmationTone(source))) {
+            this.journal?.step({
+                stage: 'smartT2c',
+                title: 'Confirmed with a tone instead of words',
+                data: { answer: outcome.text },
+            });
+            return '';
+        }
+        return outcome.text || this.doneText();
     }
 
     private async produceAnswer(
@@ -4689,7 +4778,18 @@ class Assistant extends Adapter {
                 title: `Routines, NLU and local LLM skipped: ${why}`,
                 data: { reason: cloudOnly },
             });
+            this.smartT2c?.forget(source);
         } else {
+            // smart-text2command asked this source back ("Which room?"): the utterance is the answer — before the
+            // routines and the rules, which would read "the kitchen" or "50 percent" as a request of its own
+            if (this.smartT2c?.hasQuestion(source)) {
+                const start = Date.now();
+                const outcome = await this.smartT2c.reply(question, source);
+                const replied = await this.useSmartT2c(outcome, source, Date.now() - start, true);
+                if (replied !== null) {
+                    return replied;
+                }
+            }
             const local = await this.answerLocally(question, source);
             if (local !== null) {
                 return local;
@@ -5518,6 +5618,17 @@ class Assistant extends Adapter {
         const intents = new Nlu(rooms, devices, aliases, {
             weather: !!(this.config.weatherInstance || '').trim(),
         }).parseAll(question);
+        // With smart-text2command the rules keep only timers, alarms, time, weather and volume. A device command goes
+        // to it as a whole, also as a part of a combined one (half of it here and the rest there would be guesswork).
+        if (this.smartT2c && intents.some(i => !ASSISTANT_ACTIONS.has(i.action))) {
+            this.journal?.step({
+                stage: 'nlu',
+                title: `NLU: ${intents.map(i => i.action).join(' + ')} — device commands are left to ${this.smartT2c.instance}`,
+                ms: Date.now() - start,
+                data: { intents },
+            });
+            return null;
+        }
         const blockers = intents.map(i => this.nluBlocker(i, devices.length));
         this.journal?.step({
             stage: 'nlu',

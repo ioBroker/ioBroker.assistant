@@ -1,6 +1,6 @@
 /** What the chat and the request-details dialog share about the adapter's journal (mirrors `src/lib/journal.ts`). */
 
-export type JournalTier = 'stop' | 'askReply' | 'routine' | 'nlu' | 'localLlm' | 'cloud' | 'none';
+export type JournalTier = 'stop' | 'askReply' | 'routine' | 'nlu' | 'smartT2c' | 'localLlm' | 'cloud' | 'none';
 
 export interface JournalTokens {
     input: number;
@@ -64,6 +64,7 @@ export const TIER_LABELS: Record<JournalTier, string> = {
     askReply: 'custom_assistant_Reply to a question',
     routine: 'custom_assistant_Routine',
     nlu: 'custom_assistant_Rule-based NLU',
+    smartT2c: 'smart-text2command',
     localLlm: 'custom_assistant_Local LLM',
     cloud: 'custom_assistant_Cloud LLM',
     none: 'custom_assistant_Not understood',
@@ -74,6 +75,7 @@ export const TIER_COLORS: Record<JournalTier, string> = {
     askReply: '#78909c',
     routine: '#00897b',
     nlu: '#43a047',
+    smartT2c: '#7cb342',
     localLlm: '#8e24aa',
     cloud: '#1e88e5',
     none: '#e53935',

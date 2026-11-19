@@ -30,6 +30,7 @@ export type JournalTier =
     | 'askReply' // the utterance answered an open `askUser` question
     | 'routine'
     | 'nlu'
+    | 'smartT2c' // the adapter smart-text2command (nluEngine) handled a device command
     | 'localLlm'
     | 'cloud'
     | 'none'; // nothing local understood it and there is no cloud provider
@@ -50,7 +51,7 @@ export interface JournalStep {
     t: number;
     /** Duration, for steps that took time. */
     ms?: number;
-    /** Pipeline stage: request, stt, context, stop, askReply, routine, youtube, nlu, localLlm, cloud, tool, state, answer, tts, error. */
+    /** Pipeline stage: request, stt, context, stop, askReply, routine, youtube, nlu, smartT2c, localLlm, cloud, tool, state, answer, tts, error. */
     stage: string;
     title: string;
     level?: 'warn' | 'error';

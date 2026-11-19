@@ -41,13 +41,17 @@ Optionally it works with **satellites** (microphone + speaker boxes in each room
 
 ### The tiered answer pipeline
 
-Every request runs through up to three tiers, stopping at the first that can answer:
+Every request runs through up to three tiers, stopping at the first that can answer. The first tab of the
+settings, **Flow**, shows this chain as a diagram — sources → speech recognition → local decision → local LLM →
+cloud → speech output — with what is set up right now (provider, reserve, voice, language, and how long speech
+recognition and output took in the journal); a click on a step opens its settings.
 
 1. **Rule-based NLU (offline, instant)** — recognises simple commands (on/off, dimming, colour, status)
    in **German, English and Russian**, including **several commands in one sentence**: *"Turn the light on
    and set the blind to 30 %"* — and one verb for several devices: *"Turn the light and the lamp on"*
    (separated by *and / then*, a comma or a semicolon). No model, no cloud. Toggle: *Answer simple commands
-   locally*.
+   locally*. Instead of the built-in rules, the adapter **smart-text2command** can understand the device
+   commands (*Device commands understood by*, see below).
 2. **Local LLM (optional)** — a small model (via `node-llama-cpp`) installed on demand, for general
    questions. It escalates to the cloud when it needs live device data. Toggle: *Use a local LLM*.
    With a cloud provider it is the **fallback**: it answers when the cloud fails (offline, quota, outage).
@@ -381,6 +385,30 @@ language. It applies to voice **and** text, so the chat and Telegram benefit fro
 With **Remember the conversation** on, follow-ups work per source for a few minutes: "turn the light on" —
 "and the kitchen too", "turn it back off". The thread is kept in memory only, one per channel (chat,
 Telegram, each satellite).
+
+#### Device commands by smart-text2command
+
+The adapter [smart-text2command](https://github.com/oweitman/ioBroker.smart-text2command) understands commands
+with a locally trained language model (NLP.js) instead of fixed rules: it learns your phrasing from examples, has
+custom intents (a fixed reply, `sendTo`) and **asks back** when the room, the device or the value is unclear. On
+the tab **Commands** (or the tab **Flow**) set *Device commands understood by* to **smart-text2command** and choose
+the instance (a button installs it when there is none).
+
+- **It decides with its own approvals.** A device is only switched when it is enabled there and the action is
+  approved. The write settings of this adapter (*Allow controlling states*, the device list) do not apply to it —
+  they still apply to the local and the cloud model.
+- **What it does not understand goes on** (unclear intent, unknown room, a device it has not approved, several
+  commands in one sentence) — to the local and the cloud model, as if it had not been asked.
+- **Timers, alarms, the time, the weather and the volume** stay with the built-in rules. A sentence with a device
+  command goes to smart-text2command as a whole, even when it also contains a timer.
+- **Questions**: its question ("Which temperature? Living room or bedroom?") opens the microphone of the
+  satellite; the next utterance of the same satellite or chat is the answer ("living room"). If it does not fit
+  the question, it is handled as a new request. An open question lasts five minutes.
+- It understands **German and English**. A request in another language goes straight on.
+- With *Confirm switch commands with a beep*, it is a beep instead of the sentence here too.
+
+The chat journal shows the stage as **smart-text2command** with the recognised intent; the details show its whole
+answer.
 
 ---
 

@@ -72,6 +72,14 @@ export interface AdapterConfig {
     /** Tier-0: try the built-in rule-based NLU before the LLM (fast, offline, free) for simple commands. */
     useLocalNlu: boolean;
     /**
+     * Who understands device commands in tier 0: `rules` = the built-in NLU (default), `smart-text2command` = the
+     * adapter of that name (`smartT2cInstance`, see `lib/smartT2c.ts`); the rules then keep timers, alarms, time,
+     * weather and volume.
+     */
+    nluEngine?: 'rules' | 'smart-text2command';
+    /** smart-text2command instance for `nluEngine: 'smart-text2command'`, e.g. `smart-text2command.0`. */
+    smartT2cInstance: string;
+    /**
      * NLU synonym dictionary: rewrite spoken/typed variants to canonical terms before matching
      * (e.g. "TV" → "Fernseher", "Deckenlicht" → "Licht Wohnzimmer"). Applied to every input channel
      * (voice + text). `language` empty = all languages, else the ISO code it applies to.

@@ -19,6 +19,31 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **smart-text2command als Gerätebefehl-Stufe + Reiter „Ablauf“** (Nutzerwunsch 2026-11-19, nicht committet, nicht
+  live). Config `nluEngine` (`rules` | `smart-text2command`, nur bei `useLocalNlu`) + `smartT2cInstance` (Knopf
+  `installAdapter`, `HELPER_ADAPTERS`). `src/lib/smartT2c.ts` `SmartText2Command`: `sendTo(<inst>,'processText',
+  {requestId: uuid, sessionId: t2cSessionId(source), language, text, mode:'execute', clarificationId?})` (API:
+  `C:\pWork\ioBroker.smart-text2command\documentation\SENDTO_API.md`; ids nur `[A-Za-z0-9._:-]` → Quelle mit anderen
+  Zeichen bekommt sha1-Kürzel), `interpretT2cResult`: `success`/`cancelled` → Antwort (`control` = Schreib-Intent und
+  alle Aktionen `accepted` → Ton statt Satz), `clarification` → Frage (pro Quelle gemerkt, 5 min wie dort),
+  `INVALID_SELECTION` → als neue Anfrage weiter, `rejected` (UNCLEAR_INTENT, UNKNOWN_ROOM, ACTION_NOT_APPROVED …) und
+  `error` PROCESSING_ERROR → nächste Stufe, anderer `error` mit Text → Antwort (er hat es versucht). „Unsupported
+  language“ → Sprache bis Neustart nicht mehr gefragt (er kann nur de/en). `main.ts`: Rückfrage-Antwort in
+  `produceAnswer` **vor** Routinen/Regeln (`hasQuestion` → `reply` ohne `language`); in `answerLocally` **nach** den
+  Regeln (`ask`), die im t2c-Modus nur `ASSISTANT_ACTIONS` behalten (Timer/Wecker/Zeit/Wetter/Lautstärke) — enthält
+  ein Satz einen Geräte-Intent, gehen die Regeln ganz raus. Frage → Antwort + `[[LISTEN]]` (Mikro auf). Eigene
+  Freigaben dort; `allowWriteStates`/`deviceAcl` gelten nicht für ihn. Journal-Tier `smartT2c` (Backend + GUI
+  `journal.ts`), Stufe `smartT2c` im Trace. Test: `smartT2c.test.js` (Fake prüft Validator-Regeln). **Reiter `_flow`**
+  (erster Reiter, `FlowComponent.tsx`): Diagramm Quellen → Spracherkennung → Lokale Entscheidung (aus/Regeln/smart-t2c) →
+  Lokales LLM → Cloud (aus/Anbieter/pi-agent) → Sprachausgabe in der **echten** Reihenfolge (STT/TTS: Anbieter, Reserve,
+  Modell, Stimme per `getVoices` nur mit provider/language/openrouterTtsModel — Secrets kommen nie in den Browser —,
+  Ø `sttMs`/`ttsMs` aus dem Journal; Beschriftungen per `I18n.t` aus `admin/i18n`, json-config lädt die mit) (ohne `localLlmFirst` steht das lokale LLM als kleine Reserve-Karte unter der Cloud-Karte, kein eigener Schritt —
+  „nur wenn die Cloud ausfällt“; Raster mit 3 Spalten, Pfeil + Schritt pro Zelle), Klick = Dialog, der per `props.onChange({...data, …})` das Formular
+  ändert (Speichern wirkt); Instanzlisten per `getAdapterInstances`, telegram-Instanzen mit `assistantInstance` = wir,
+  Modelle per `listLocalModels`, Zähler pro Stufe aus `getJournal`. Nur schon genutzte MUI-Komponenten/Icons (Module
+  Federation). GUI-Texte: en/de/ru/uk von Hand, Rest per `translate-adapter` **in einem Scratch-Ordner nur mit den neuen
+  Schlüsseln** — direkt auf `src-admin/src` übersetzt es ganze Dateien neu (überschrieb handgeschriebene ru-Texte) und
+  auf `admin/` sortiert es alle Schlüssel um.
 - **Eine Sprache je Wake-Word + zwei Wake-Words gleichzeitig** (PR #48, sadam6752-tech, gemergt 2026-11-18, nicht
   released). Tabelle `wakeWordLanguages` `{wakeWord, language}` (Reiter Satelliten) → `lib/voice/wakeWordLanguage.ts`:
   Schlüssel `wakeWordLookupKey` = `wakeWordKey(wakeWordBaseName(…))` nur bei ASCII-Namen (sonst ganzer Name) → „ioBroker“
@@ -940,7 +965,7 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   gefahrlos (telegram routet die Antwort selbst). → nur `assistantInstance=assistant.0` konfigurieren. Fallback-
   Skript-Rezept für Chat-Adapter OHNE native Integration (Matrix/WhatsApp/Discord …) in `docs/TODO.md`.
 - Admin-Config — `admin/jsonConfig.json` (`i18n: true`), Icon `admin/assistant.svg`,
-  Übersetzungen `admin/i18n/{en,de}.json`. **Reiter nach Themen** (2026-11-10): `_main` KI (Anbieter, Gespräch,
+  Übersetzungen `admin/i18n/{en,de}.json`. **Reiter nach Themen** (2026-11-10): `_flow` Ablauf (Diagramm, seit 2026-11-19) · `_main` KI (Anbieter, Gespräch,
   aufklappbar „Advanced“ = maxTokens/systemPrompt) · `_commands` Befehle (NLU, Ton, Synonyme, Routinen) ·
   `_localModels` · `_devices` (Rechte + `_deviceAcl`) · `_services` Dienste (Wetter/Kalender, Präsenz, YouTube,
   Timer/Wecker, Systemmeldungen) · `_triggers` · `_voice` (inkl. aufklappbar ffmpeg, `_voiceTest`) · `_satellites`

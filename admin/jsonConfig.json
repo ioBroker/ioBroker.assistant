@@ -2,6 +2,25 @@
     "i18n": true,
     "type": "tabs",
     "items": {
+        "_flow": {
+            "type": "panel",
+            "label": "Flow",
+            "items": {
+                "_flowChart": {
+                    "type": "custom",
+                    "i18n": true,
+                    "url": "custom/customComponents.js",
+                    "name": "ConfigCustomAssistant/Components/FlowComponent",
+                    "guiApi": 2,
+                    "bundlerType": "module",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                }
+            }
+        },
         "_main": {
             "type": "panel",
             "label": "AI",
@@ -304,6 +323,75 @@
                     "xl": 4,
                     "newLine": true
                 },
+                "nluEngine": {
+                    "type": "select",
+                    "label": "Device commands understood by",
+                    "help": "The built-in rules, or the adapter smart-text2command: it learns your phrasing from examples, runs only the actions you approved there and asks back when the room or the device is unclear. Timers, alarms, time, weather and volume stay with the built-in rules. What neither understands goes on to the local and the cloud model.",
+                    "options": [
+                        {
+                            "label": "Built-in rules",
+                            "value": "rules"
+                        },
+                        {
+                            "label": "smart-text2command",
+                            "value": "smart-text2command"
+                        }
+                    ],
+                    "default": "rules",
+                    "hidden": "!data.useLocalNlu",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "smartT2cInstance": {
+                    "type": "instance",
+                    "adapter": "smart-text2command",
+                    "label": "smart-text2command instance",
+                    "hidden": "!data.useLocalNlu || data.nluEngine !== 'smart-text2command'",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 4,
+                    "lg": 4,
+                    "xl": 4
+                },
+                "_installSmartT2c": {
+                    "type": "sendTo",
+                    "label": "Install smart-text2command",
+                    "command": "installAdapter",
+                    "jsonData": "{\"adapter\":\"smart-text2command\"}",
+                    "useNative": true,
+                    "showProcess": true,
+                    "variant": "outlined",
+                    "confirm": {
+                        "title": "Install smart-text2command",
+                        "text": "This installs the adapter smart-text2command on the host of this instance and creates an instance of it. It takes a few minutes. Then enable your devices in its settings and approve their actions.",
+                        "ok": "Install",
+                        "cancel": "Cancel"
+                    },
+                    "result": {
+                        "installed": "%s was installed and selected. Save the settings to use it.",
+                        "existing": "%s is already installed and is now selected. Save the settings to use it."
+                    },
+                    "hidden": "!data.useLocalNlu || data.nluEngine !== 'smart-text2command' || !!data.smartT2cInstance",
+                    "xs": 12,
+                    "sm": 6,
+                    "md": 3,
+                    "lg": 3,
+                    "xl": 3
+                },
+                "_smartT2cInfo": {
+                    "newLine": true,
+                    "type": "staticText",
+                    "text": "smart-text2command decides with its own approvals: a device is only switched when it is enabled there and the action is approved; the write settings of this adapter do not apply to it. It understands German and English. A question it asks (\"Which room?\") is answered by the next utterance of the same satellite or chat.",
+                    "hidden": "!data.useLocalNlu || data.nluEngine !== 'smart-text2command'",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12
+                },
                 "confirmWithTone": {
                     "type": "checkbox",
                     "label": "Confirm switch commands with a beep",
@@ -320,7 +408,7 @@
                     "type": "table",
                     "label": "Synonym dictionary",
                     "help": "Rewrite spoken or typed variants to your device/room names before local matching, e.g. \"TV\" to \"Fernseher\". Leave the language empty to apply to all languages. Also used for the text channels.",
-                    "hidden": "!data.useLocalNlu",
+                    "hidden": "!data.useLocalNlu || data.nluEngine === 'smart-text2command'",
                     "xs": 12,
                     "sm": 12,
                     "md": 12,

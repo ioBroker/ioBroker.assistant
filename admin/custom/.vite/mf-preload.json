@@ -1,0 +1,19 @@
+{
+  "hostInit": [
+    "assets/Components-CXCZXPfF.js",
+    "assets/hostInit-DAkV3JS7.js",
+    "assets/index-P2Xu9kJm.js",
+    "customComponents.js",
+    "assets/_virtual_mf-localSharedImportMap___mfe_internal__ConfigCustomAssistant__mf_owner__1-BW8vTmhg.js",
+    "assets/rolldown-runtime-COiEfhsA.js",
+    "assets/_virtual_mf___mfe_internal__ConfigCustomAssistant__mf_owner__180981449891682__loadShare___mf_0_emotion_mf_1_react__loadShare__.js-C2-1g4aP.js",
+    "assets/_virtual_mf___mfe_internal__ConfigCustomAssistant__mf_owner__180981449891682__loadShare___mf_0_iobroker_mf_1_gui_mf_2_components__loadShare__.js-D8m56cQE.js",
+    "assets/_virtual_mf___mfe_internal__ConfigCustomAssistant__mf_owner__180981449891682__loadShare__shared-D4mxOCHq.js",
+    "assets/vite-preload-helper-BbbETgeG.js",
+    "assets/helpers-CwABI1ut.js",
+    "assets/dist-ChhOvPa4.js",
+    "assets/_virtual_mf___mfe_internal__ConfigCustomAssistant__mf_owner__180981449891682__loadShare___mf_0_emotion_mf_1_styled__loadShare__.js-CTuN-6qE.js",
+    "assets/utils-Cqsn1la4.js"
+  ],
+  "remoteEntries": []
+}
