@@ -202,9 +202,8 @@ export class OpenRouterTts implements TtsEngine {
             response_format: mp3 ? 'mp3' : 'pcm',
         } as OpenAI.Audio.SpeechCreateParams);
         const audio = Buffer.from(await res.arrayBuffer());
-        if (mp3) {
-            return this.decode!(audio);
-        }
-        return pcmFromResponse(audio, res.headers.get('content-type') || '');
+        const result = mp3 ? await this.decode!(audio) : pcmFromResponse(audio, res.headers.get('content-type') || '');
+        // the voice really asked for: without one set, the first of the model for the language
+        return { ...result, spokenBy: { provider: 'openrouter', model: this.model, voice, language: lang } };
     }
 }

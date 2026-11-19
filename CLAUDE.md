@@ -89,7 +89,7 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   Spalte `model` (Nutzerwunsch 2026-11-13): `parseVoiceTable` → `{voice, model}`, `engines.rowContext()` setzt pro
   Zeile `ttsModel`/`openrouterTtsModel` (nur OpenAI/OpenRouter, sonst Warnung, Zeile nur mit Modell entfällt);
   anderes OpenRouter-Modell ohne Stimme → Stimme '' (erste des Modells für die Sprache), OpenAI behält die Stimme.
-  OpenAI-Cache-Ordner enthält jetzt das Modell, wenn eins gesetzt ist. Tabellenzellen: `autocompleteSendTo` (in einer
+  OpenAI-Cache-Ordner enthält jetzt das Modell, wenn eins gesetzt ist. Sprachspalte = `select` (war `autocomplete` mit `freeSolo`: Auswahl speicherte das Label „de – Deutsch“ → Zeile griff nie; `cellLanguage` liest den Code vom Anfang, `main.migrateConfig()` schreibt alte Zeilen einmal auf den Code um, zusammen mit dem ai-parakeet-Umzug — 2026-11-19, vitanova). Tabellenzellen: `autocompleteSendTo` (in einer
   Tabelle ist `data` die Zeile, `globalData` die ganze Config; fehlende Felder kommen als Text `'undefined'` an →
   `getVoices`/`getTtsModels` ignorieren den), Test-Spalte = Custom-Komponente `VoiceRowTestComponent` (`tts`-sendTo
   mit `config` = Formular + `ttsVoices: [row]`, Testsatz aus `voiceSamples.ts`). ⚠️ Module Federation teilt nur Icons,
@@ -502,7 +502,7 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   Rückfrage ist die Bestätigung `unavailable` (der wartende Aufrufer ist weg) — so gewollt.
 - **Sprachpfad schneller (Issue #3, znyde87)** — sechs Teile, Assistant + Satelliten-Lib + Wrapper:
   (1) **NLU-Gerätemodell gecacht** (`main.ts.getNluDevices` → `nluDevices`, TTL `NLU_DEVICES_TTL_MS`=60 s,
-  gleichzeitige Anfragen teilen sich den Build, leeres Ergebnis wird nicht gehalten). Vorher pro Sprachbefehl
+  gleichzeitige Anfragen teilen sich den Build, leeres Ergebnis wird nicht gehalten). **STT-Hints** (`buildSttHints` → `getNluDevices(true)`) nehmen seit 2026-11-19 das letzte Modell (`lastNluDevices`), solange ein neues gebaut wird — auf vitanova kostete der Neubau ~2,9 s vor jeder Erkennung, weil Sprachbefehle seltener als 1/min kommen; Vorwärmen in `onReady` bei `voiceEnabled`. Trace-STT-Schritt: `language` = `origin.language` (Wake-Word-Sprache), Modell je Anbieter, bei voice `instance`. TTS-Schritt: `TtsResult.spokenBy` (`TtsVoice` provider/voice/model/language) setzt `CachedTts` (Option `by` aus `engines.cachedTts`, auch bei Cache-Treffern; OpenRouter meldet die selbst gewählte Stimme), die Transporte reichen es als `SpokenInfo.by` an `main.reportSpoken` — vorher stand dort immer die Hauptstimme. Vorher pro Sprachbefehl
   bis zu 3× `list_devices` + Namensauflösung je Gerät (STT-Hints, NLU, Cloud-Geräteliste) — der `ListCache`
   galt nur für die LLM-Tools. Invalidiert über `ListCache.onClear` (alle bisherigen `clear()`-Stellen).
   (2) **Rückfrage-Flag pro Quelle** (`followUps`-Map + `wantsFollowUp`/`followUpFor`) statt des geteilten

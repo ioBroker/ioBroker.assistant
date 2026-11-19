@@ -12,7 +12,7 @@
  */
 import * as net from 'node:net';
 import type { SttEngine } from './stt';
-import type { TtsEngine } from './tts';
+import type { SpokenInfo, TtsEngine } from './tts';
 import { Buffer } from 'node:buffer';
 
 export interface WyomingServerOptions {
@@ -25,7 +25,7 @@ export interface WyomingServerOptions {
     /** `sttMs`: how long recognition took, `audioMs`: length of the recording (both for the journal). */
     answer: (question: string, sttMs: number, audioMs: number) => Promise<string>;
     /** The reply was synthesised: how long that took and how long it plays (for the request journal). */
-    onSpoken?: (info: { ms: number; audioMs: number }) => void;
+    onSpoken?: (info: SpokenInfo) => void;
     /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
     getHints?: () => string[] | Promise<string[]>;
     log: ioBroker.Logger;
@@ -235,14 +235,14 @@ class WyomingConnection {
     }
 
     /** Synthesise and stream `text`; returns how long synthesis took and how long the audio plays. */
-    private async speak(text: string): Promise<{ ms: number; audioMs: number } | null> {
+    private async speak(text: string): Promise<SpokenInfo | null> {
         if (!text) {
             return null;
         }
         try {
             const ttsStart = Date.now();
-            const { pcm, sampleRate } = await this.opts.tts.synthesize(text, this.lang);
-            const spoken = { ms: Date.now() - ttsStart, audioMs: (pcm.length / 2 / sampleRate) * 1000 };
+            const { pcm, sampleRate, spokenBy } = await this.opts.tts.synthesize(text, this.lang);
+            const spoken = { ms: Date.now() - ttsStart, audioMs: (pcm.length / 2 / sampleRate) * 1000, by: spokenBy };
             const meta = { rate: sampleRate, width: 2, channels: 1 };
             this.write('audio-start', meta);
             for (let off = 0; off < pcm.length; off += AUDIO_CHUNK) {

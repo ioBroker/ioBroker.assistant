@@ -4,10 +4,28 @@
  */
 import OpenAI from 'openai';
 
+/** Who spoke a text — the request details show it (the table "voice per language" and the reserve make it vary). */
+export interface TtsVoice {
+    provider: string;
+    /** '' or missing = the default voice of the provider or model for the language */
+    voice?: string;
+    model?: string;
+    language: string;
+}
+
 export interface TtsResult {
     /** Raw mono 16-bit signed LE PCM. */
     pcm: Buffer;
     sampleRate: number;
+    /** Set by the engines of `createTtsEngine` */
+    spokenBy?: TtsVoice;
+}
+
+/** What a transport reports after it synthesized a reply. */
+export interface SpokenInfo {
+    ms: number;
+    audioMs: number;
+    by?: TtsVoice;
 }
 
 export interface TtsEngine {

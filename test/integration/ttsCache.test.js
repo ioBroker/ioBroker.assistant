@@ -95,7 +95,11 @@ test('a long answer is cut and not cached', async t => {
     await tts.synthesize(long, 'en');
     await tts.synthesize(long, 'en');
     assert.equal(calls.text.length, 2, 'not worth caching → synthesised every time');
-    assert.deepEqual(fs.readdirSync(dir).filter(f => f.endsWith('.pcm')), [], 'nothing written');
+    assert.deepEqual(
+        fs.readdirSync(dir).filter(f => f.endsWith('.pcm')),
+        [],
+        'nothing written',
+    );
 });
 
 test('the length limit is configurable, and 0 turns it off', async t => {
@@ -201,7 +205,10 @@ test('a corrupt entry is ignored rather than played at the wrong pitch', async t
     const { engine, calls } = fakeEngine();
     const tts = new CachedTts(engine, { dir, log: silentLog });
     await tts.synthesize('Ok.', 'de');
-    const file = path.join(dir, fs.readdirSync(dir).find(f => f.endsWith('.pcm')));
+    const file = path.join(
+        dir,
+        fs.readdirSync(dir).find(f => f.endsWith('.pcm')),
+    );
     fs.writeFileSync(file, Buffer.from([1, 2, 3])); // too short / nonsense rate
     const res = await tts.synthesize('Ok.', 'de');
     assert.equal(calls.text.length, 2, 'synthesised again');
@@ -234,4 +241,43 @@ test('spokenLengthHint names the limit in the voice language, and is empty witho
     assert.match(spokenLengthHint(600, 'ru'), /5 коротких предложений/);
     assert.match(spokenLengthHint(1440, 'ru'), /12 коротких предложений/);
     assert.match(spokenLengthHint(2640, 'ru'), /22 коротких предложения/);
+});
+
+test('every result says who spoke it, a cached one too (request details, field report 2026-11-19)', async t => {
+    const dir = tmpDir(t);
+    // A voice of a row of the table "voice per language"
+    const row = new CachedTts(fakeEngine().engine, {
+        dir: path.join(dir, 'row'),
+        log: silentLog,
+        by: { provider: 'openrouter', voice: 'tabitha', model: 'heygen/heygen-voice-1-turbo:free' },
+    });
+    const expected = {
+        provider: 'openrouter',
+        voice: 'tabitha',
+        model: 'heygen/heygen-voice-1-turbo:free',
+        language: 'de',
+    };
+    assert.deepEqual((await row.synthesize('Die höchste Temperatur lag bei 23 Grad.', 'de')).spokenBy, expected);
+    assert.deepEqual(
+        (await row.synthesize('Die höchste Temperatur lag bei 23 Grad.', 'de')).spokenBy,
+        expected,
+        'from the cache',
+    );
+
+    // No voice set: the engine reports the one it chose for the language
+    const chooser = new CachedTts(
+        {
+            synthesize: async (text, lang) => ({
+                pcm: Buffer.alloc(320, 7),
+                sampleRate: 24000,
+                spokenBy: { provider: 'openrouter', voice: 'nadine', language: lang },
+            }),
+        },
+        { dir: path.join(dir, 'chooser'), log: silentLog, by: { provider: 'openrouter', voice: '', model: 'm' } },
+    );
+    assert.equal((await chooser.synthesize('Hallo', 'de')).spokenBy.voice, 'nadine');
+
+    // Without `by` nothing is added
+    const plain = new CachedTts(fakeEngine().engine, { dir: path.join(dir, 'plain'), log: silentLog });
+    assert.equal((await plain.synthesize('Hallo', 'de')).spokenBy, undefined);
 });

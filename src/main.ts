@@ -151,7 +151,13 @@ import { CaptureStore, type DiscardedCapture } from './lib/voice/captures';
 import { downloadFfmpegStatic, ffmpegStaticPath } from './lib/voice/ffmpegStatic';
 import { PiAgentHarness, PI_AGENT_TIMEOUT_SEC, composeInstructions } from './lib/piAgent';
 import { SmartText2Command, type T2cOutcome } from './lib/smartT2c';
-import { AnswerLanguages, baseLanguage, parseVoiceTable, questionLanguage } from './lib/voice/speechLanguage';
+import {
+    AnswerLanguages,
+    baseLanguage,
+    normalizeVoiceTable,
+    parseVoiceTable,
+    questionLanguage,
+} from './lib/voice/speechLanguage';
 import { AdapterInstaller, type InstallerAdapter } from './lib/installer';
 import {
     attachmentNote,
@@ -177,7 +183,7 @@ import {
     type ResolvedLlm,
 } from './lib/systemAi';
 import type { SttEngine } from './lib/voice/stt';
-import type { TtsEngine } from './lib/voice/tts';
+import type { SpokenInfo, TtsEngine } from './lib/voice/tts';
 import type { SatelliteState } from './lib/voice/protocol';
 import type { AdapterConfig } from './types';
 
@@ -539,7 +545,10 @@ class Assistant extends Adapter {
         key: string;
         at: number;
         result: Promise<{ rooms: string[]; devices: NluDevice[] }>;
+        done?: boolean;
     } | null = null;
+    /** The last device model that was built, also after its time ran out: the speech recognition hints use it. */
+    private lastNluDevices: { key: string; value: { rooms: string[]; devices: NluDevice[] } } | null = null;
     /** Cache of a `<base>.SET` level state id → its writable boolean sibling switch (`<base>.ON_SET`/`.ON`), or ''. */
     private readonly siblingSwitch = new Map<string, string>();
     /** Tier-1a local LLM (node-llama-cpp), lazily loaded when enabled + installed; null otherwise. */
@@ -665,34 +674,56 @@ class Assistant extends Adapter {
 
     /**
      * ioBroker.voice was called ai-parakeet up to its 0.1.x. Once its instance `voice.<n>` exists, the setting
-     * `ai-parakeet.<n>` moves to it; the instance then restarts. True if it was changed.
+     * `ai-parakeet.<n>` moves to it. The new instance, or '' when nothing changes.
      */
-    private async followRenamedParakeet(): Promise<boolean> {
+    private async renamedParakeet(): Promise<string> {
         const next = renamedParakeetInstance(this.config.parakeetInstance || '');
         if (!next) {
+            return '';
+        }
+        try {
+            if (!(await this.getForeignObjectAsync(`system.adapter.${next}`))) {
+                return '';
+            }
+        } catch {
+            return '';
+        }
+        this.log.info(
+            `ai-parakeet was renamed to voice: the speech recognition now uses ${next} instead of ${this.config.parakeetInstance}`,
+        );
+        return next;
+    }
+
+    /**
+     * Settings that an update made outdated, written in one go; the instance then restarts. True if something was
+     * written.
+     */
+    private async migrateConfig(): Promise<boolean> {
+        const native: Partial<AdapterConfig> = {};
+        const parakeet = await this.renamedParakeet();
+        if (parakeet) {
+            native.parakeetInstance = parakeet;
+        }
+        const voices = normalizeVoiceTable(this.config.ttsVoices);
+        if (voices) {
+            this.log.info('The table "voice per answer language" has a drop-down now: its rows got the language code');
+            native.ttsVoices = voices as AdapterConfig['ttsVoices'];
+        }
+        if (!Object.keys(native).length) {
             return false;
         }
         try {
-            const target = await this.getForeignObjectAsync(`system.adapter.${next}`);
-            if (!target) {
-                return false;
-            }
-            this.log.info(
-                `ai-parakeet was renamed to voice: the speech recognition now uses ${next} instead of ${this.config.parakeetInstance}`,
-            );
-            await this.extendForeignObjectAsync(`system.adapter.${this.namespace}`, {
-                native: { parakeetInstance: next },
-            });
+            await this.extendForeignObjectAsync(`system.adapter.${this.namespace}`, { native });
             return true;
         } catch (e) {
-            this.log.warn(`Could not switch the speech recognition to ${next}: ${(e as Error).message}`);
+            this.log.warn(`Could not update the settings: ${(e as Error).message}`);
             return false;
         }
     }
 
     private async onReady(): Promise<void> {
-        if (await this.followRenamedParakeet()) {
-            // The instance restarts with the new setting.
+        if (await this.migrateConfig()) {
+            // The instance restarts with the new settings.
             return;
         }
         const cfg = this.config;
@@ -860,6 +891,10 @@ class Assistant extends Adapter {
                   ? `Assistant ready (cloud tier: ${this.piAgent.instance}).`
                   : 'Assistant ready without an LLM provider — answering locally only.',
         );
+        if (cfg.voiceEnabled) {
+            // The first spoken request then has its speech recognition hints at hand instead of building them
+            void this.getNluDevices();
+        }
 
         this.models = new ModelManager(this.instanceDataDir(), this.log);
         if (cfg.useLocalLlm) {
@@ -1198,21 +1233,24 @@ class Assistant extends Adapter {
     }
 
     /** A transport synthesised the reply to `source`'s latest request — the journal shows it with that request. */
-    private reportSpoken(source: string, info: { ms: number; audioMs: number }): void {
+    /**
+     * The speech synthesis of a reply into its journal entry: provider, voice, model and language as the engine
+     * reports them (the table "voice per language" and the reserve make them differ from the settings).
+     */
+    private reportSpoken(source: string, info: SpokenInfo): void {
         const cfg = this.config;
-        const provider = cfg.ttsProvider || 'openai';
-        const voices: Record<string, string | undefined> = {
-            openai: cfg.ttsVoice || 'alloy',
-            azure: cfg.azureVoice,
-            aws: cfg.awsVoice,
-            piper: cfg.piperVoice,
-            openrouter: cfg.openrouterVoice,
-        };
+        const main = cfg.ttsProvider || 'openai';
+        const by = info.by;
+        const provider = by?.provider || main;
         this.journal?.spoken(source, {
-            ...info,
+            ms: info.ms,
+            audioMs: info.audioMs,
             provider,
-            fallback: cfg.ttsFallback || undefined,
-            voice: (voices[provider] || '').trim() || undefined,
+            // the reserve spoke: the main provider failed
+            fallback: provider !== main ? `${main} failed` : undefined,
+            voice: by ? by.voice || 'default' : undefined,
+            model: by?.model || undefined,
+            language: by?.language || undefined,
         });
     }
 
@@ -1338,6 +1376,7 @@ class Assistant extends Adapter {
             this.reportSpoken(source, {
                 ms: Date.now() - ttsStart,
                 audioMs: (reply.pcm.length / 2 / reply.sampleRate) * 1000,
+                by: reply.spokenBy,
             });
             const listen = this.followUpFor(source, answer);
             return { text, answer, audio: reply.pcm.toString('base64'), sampleRate: reply.sampleRate, listen };
@@ -4318,18 +4357,28 @@ class Assistant extends Adapter {
         const cfg = this.config;
         const provider = cfg.sttProvider || 'openai';
         const audio = origin.audioMs !== undefined ? `, ${(origin.audioMs / 1000).toFixed(1)} s of audio` : '';
+        // Each provider has its own model setting; ioBroker.voice has none here, its instance chooses
+        const model =
+            provider === 'openai'
+                ? cfg.sttModel
+                : provider === 'openrouter'
+                  ? cfg.openrouterSttModel
+                  : provider === 'vosk'
+                    ? cfg.voskModel
+                    : '';
+        const instance = provider === 'parakeet' ? cfg.parakeetInstance || '' : '';
         this.journal?.step({
             stage: 'stt',
-            title: `Speech recognition: ${provider}${audio}`,
+            title: `Speech recognition: ${instance ? `ioBroker.voice (${instance})` : provider}${audio}`,
             ms: origin.sttMs,
             data: {
                 provider,
+                instance: instance || undefined,
                 fallback: cfg.sttFallback || undefined,
-                model:
-                    (provider === 'openrouter' ? cfg.openrouterSttModel : cfg.sttModel || cfg.voskModel || '').trim() ||
-                    undefined,
+                model: (model || '').trim() || undefined,
                 server: (provider === 'openai' && cfg.sttBaseUrl?.trim()) || undefined,
-                language: cfg.voiceLanguage || this.language || '',
+                // The language of the wake word (ESPHome) when it has one, else the voice language
+                language: origin.language || cfg.voiceLanguage || this.language || '',
                 audioMs: origin.audioMs,
                 wakeWord: origin.wakeWord,
                 vad: origin.vad,
@@ -6184,7 +6233,7 @@ class Assistant extends Adapter {
      */
     private async buildSttHints(): Promise<string[]> {
         try {
-            const { rooms, devices } = await this.getNluDevices();
+            const { rooms, devices } = await this.getNluDevices(true);
             const set = new Set<string>();
             for (const r of rooms) {
                 if (r) {
@@ -6206,8 +6255,12 @@ class Assistant extends Adapter {
     /**
      * Device model for the NLU: friendly name, room, type and controls (controlType → state id). Cached
      * for {@link NLU_DEVICES_TTL_MS}; requests arriving while it is being built wait for the same build.
+     *
+     * `stale`: while a new model is being built, the last one is good enough (speech recognition hints — a voice
+     * request comes more seldom than once a minute, and the build took ~3 s on vitanova before the recognition
+     * could start). The build still runs, so the answer of the same request has the fresh model.
      */
-    private getNluDevices(): Promise<{ rooms: string[]; devices: NluDevice[] }> {
+    private getNluDevices(stale = false): Promise<{ rooms: string[]; devices: NluDevice[] }> {
         if (!this.mcp) {
             return Promise.resolve({ rooms: [], devices: [] });
         }
@@ -6215,18 +6268,29 @@ class Assistant extends Adapter {
         // Russian command matches Russian smartNames.
         const nluLang = (this.config.voiceLanguage || this.language || 'en') as ioBroker.Languages;
         const now = Date.now();
-        const hit = this.nluDevices;
-        if (hit && hit.key === nluLang && now - hit.at < NLU_DEVICES_TTL_MS) {
-            return hit.result;
+        let entry = this.nluDevices;
+        if (!entry || entry.key !== nluLang || now - entry.at >= NLU_DEVICES_TTL_MS) {
+            const built: NonNullable<typeof this.nluDevices> = {
+                key: nluLang,
+                at: now,
+                result: this.buildNluDevices(nluLang),
+            };
+            this.nluDevices = built;
+            void built.result.then(r => {
+                built.done = true;
+                if (r.devices.length) {
+                    this.lastNluDevices = { key: nluLang, value: r };
+                } else if (this.nluDevices === built) {
+                    // An empty model is usually a failed build (the manager not ready yet) — don't keep it for a minute.
+                    this.nluDevices = null;
+                }
+            });
+            entry = built;
         }
-        const entry = { key: nluLang, at: now, result: this.buildNluDevices(nluLang) };
-        this.nluDevices = entry;
-        // An empty model is usually a failed build (the manager not ready yet) — don't keep it for a minute.
-        void entry.result.then(r => {
-            if (!r.devices.length && this.nluDevices === entry) {
-                this.nluDevices = null;
-            }
-        });
+        const last = this.lastNluDevices;
+        if (stale && !entry.done && last?.key === nluLang) {
+            return Promise.resolve(last.value);
+        }
         return entry.result;
     }
 

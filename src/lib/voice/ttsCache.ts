@@ -147,6 +147,11 @@ export interface TtsCacheOptions {
     maxCacheChars?: number;
     /** Prune the oldest entries once the directory exceeds this (0 = no limit). */
     maxBytes?: number;
+    /**
+     * Provider, voice and model of the engine: every result says it (`spokenBy`), a cached one too. A voice the engine
+     * chose itself (OpenRouter without a voice) stays when the clip was not cached.
+     */
+    by?: { provider: string; voice?: string; model?: string };
 }
 
 /**
@@ -187,14 +192,30 @@ export class CachedTts implements TtsEngine {
             const hit = this.read(file);
             if (hit) {
                 this.opts.log.debug(`TTS cache hit: "${wanted.slice(0, 40)}"`);
-                return hit;
+                return this.tag(hit, lang);
             }
         }
         const result = await this.speak(wanted, lang);
         if (file && result.pcm.length) {
             this.write(file, result);
         }
-        return result;
+        return this.tag(result, lang);
+    }
+
+    private tag(result: TtsResult, lang: string): TtsResult {
+        const by = this.opts.by;
+        if (!by) {
+            return result;
+        }
+        return {
+            ...result,
+            spokenBy: {
+                provider: by.provider,
+                voice: result.spokenBy?.voice || by.voice || undefined,
+                model: result.spokenBy?.model || by.model || undefined,
+                language: lang,
+            },
+        };
     }
 
     /** Hand SSML to the engine only if it can speak it; otherwise speak the text without the markup. */

@@ -135,8 +135,12 @@ export interface JournalSpeech {
     ms: number;
     audioMs: number;
     provider: string;
+    /** Set when the reserve spoke */
     fallback?: string;
+    /** The voice that spoke ('default' = the one of the provider or model for the language) */
     voice?: string;
+    model?: string;
+    language?: string;
 }
 
 export interface JournalOptions {
@@ -460,7 +464,7 @@ export class Journal {
             }
             entry.ttsMs = speech.ms;
             entry.replyAudioMs = Math.round(speech.audioMs);
-            const voice = speech.voice ? ` (${speech.voice})` : '';
+            const voice = speech.voice ? ` (${speech.voice}${speech.language ? `, ${speech.language}` : ''})` : '';
             this.addStep(entry, {
                 stage: 'tts',
                 title: `Speech synthesis: ${speech.provider}${voice}, ${(speech.audioMs / 1000).toFixed(1)} s of audio`,

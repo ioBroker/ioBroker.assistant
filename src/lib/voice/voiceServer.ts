@@ -17,7 +17,7 @@ import {
     type SatelliteState,
 } from './protocol';
 import type { SttEngine } from './stt';
-import type { TtsEngine } from './tts';
+import type { SpokenInfo, TtsEngine } from './tts';
 
 interface Satellite {
     device: string;
@@ -45,7 +45,7 @@ export interface VoiceServerOptions {
         ctx: { device: string; room: string; sttMs: number; audioMs: number },
     ) => Promise<string>;
     /** The reply was synthesised: how long that took and how long it plays (for the request journal). */
-    onSpoken?: (device: string, info: { ms: number; audioMs: number }) => void;
+    onSpoken?: (device: string, info: SpokenInfo) => void;
     /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
     getHints?: () => string[] | Promise<string[]>;
     log: ioBroker.Logger;
@@ -224,9 +224,9 @@ export class VoiceServer {
 
             this.setStatus(sat, 'speaking');
             const ttsStart = Date.now();
-            const { pcm: ttsPcm, sampleRate } = await this.opts.tts.synthesize(answer, this.opts.language);
+            const { pcm: ttsPcm, sampleRate, spokenBy } = await this.opts.tts.synthesize(answer, this.opts.language);
             playMs = (ttsPcm.length / 2 / sampleRate) * 1000;
-            this.opts.onSpoken?.(sat.device, { ms: Date.now() - ttsStart, audioMs: playMs });
+            this.opts.onSpoken?.(sat.device, { ms: Date.now() - ttsStart, audioMs: playMs, by: spokenBy });
             listen = this.opts.expectsFollowUp?.(answer, sat.device) === true;
             await this.streamTts(sat, ttsPcm, sampleRate, listen);
         } catch (e) {

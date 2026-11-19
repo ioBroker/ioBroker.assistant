@@ -1598,11 +1598,10 @@
                     "xl": 12,
                     "items": [
                         {
-                            "type": "autocomplete",
+                            "type": "select",
                             "attr": "language",
-                            "title": "Language (e.g. ru)",
+                            "title": "Language",
                             "width": "14%",
-                            "freeSolo": true,
                             "options": [
                                 { "label": "en – English", "value": "en" },
                                 { "label": "de – Deutsch", "value": "de" },

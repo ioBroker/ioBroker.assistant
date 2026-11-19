@@ -47,7 +47,7 @@ import { prepareForStt } from './speechAudio';
 import { chooseReplyFormat, encodeReply, type ExternalEncoder, type ReplyFormat } from './replyFormat';
 import { levelProfile, type DiscardedCapture, type DiscardReason } from './captures';
 import type { SttEngine } from './stt';
-import type { TtsEngine } from './tts';
+import type { SpokenInfo, TtsEngine } from './tts';
 import type { SatelliteState } from './protocol';
 import { confirmationTone } from './tone';
 
@@ -346,7 +346,7 @@ export interface EsphomeSatellitesOptions {
         },
     ) => Promise<string>;
     /** The reply was synthesised: how long that took and how long it plays (for the request journal). */
-    onSpoken?: (device: string, info: { ms: number; audioMs: number }) => void;
+    onSpoken?: (device: string, info: SpokenInfo) => void;
     /**
      * Language of a wake word ('' = not set, `language` applies). A wake word starts a conversation in its language:
      * speech recognition, the yes/no word of the button and the reply voice use it, and so do the follow-ups of that
@@ -1157,13 +1157,14 @@ class EsphomeConnection {
             }
             const followUp = this.opts.expectsFollowUp?.(answer, this.deviceName) === true;
             const ttsStart = Date.now();
-            const { pcm, sampleRate } = await this.opts.tts.synthesize(answer, this.speechLanguage());
+            const { pcm, sampleRate, spokenBy } = await this.opts.tts.synthesize(answer, this.speechLanguage());
             if (run !== this.run) {
                 return;
             }
             this.opts.onSpoken?.(this.deviceName, {
                 ms: Date.now() - ttsStart,
                 audioMs: (pcm.length / 2 / sampleRate) * 1000,
+                by: spokenBy,
             });
             await this.announce(pcm, sampleRate, followUp, answer);
         } catch (e) {
@@ -1746,13 +1747,14 @@ class EsphomeConnection {
             }
 
             const ttsStart = Date.now();
-            const { pcm: ttsPcm, sampleRate } = await this.opts.tts.synthesize(answer, this.speechLanguage());
+            const { pcm: ttsPcm, sampleRate, spokenBy } = await this.opts.tts.synthesize(answer, this.speechLanguage());
             if (!current()) {
                 return;
             }
             this.opts.onSpoken?.(this.deviceName, {
                 ms: Date.now() - ttsStart,
                 audioMs: (ttsPcm.length / 2 / sampleRate) * 1000,
+                by: spokenBy,
             });
             const url = await this.publish(ttsPcm, sampleRate);
             if (!current()) {

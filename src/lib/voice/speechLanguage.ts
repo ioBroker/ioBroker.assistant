@@ -255,6 +255,36 @@ export interface LanguageVoice {
     model: string;
 }
 
+/**
+ * The language code at the start of a table cell: 'de', 'de-DE' → 'de'. The column was a free text field with
+ * suggestions, and picking one saved its label ('de – Deutsch'), so the code is read from the start.
+ */
+export function cellLanguage(value: unknown): string {
+    const match = typeof value === 'string' ? /^\s*([a-z]{2,3})(?![a-z])/i.exec(value) : null;
+    return match ? match[1].toLowerCase() : '';
+}
+
+/**
+ * The table "voice per language" with a code in each language cell, or `null` when every cell has one already.
+ * The column is a drop-down now, which shows nothing for 'de – Deutsch' or 'de-DE'.
+ */
+export function normalizeVoiceTable(rows: unknown): unknown[] | null {
+    if (!Array.isArray(rows)) {
+        return null;
+    }
+    let changed = false;
+    const fixed = rows.map(row => {
+        const language = (row as { language?: unknown } | null)?.language;
+        const code = cellLanguage(language);
+        if (!code || code === language) {
+            return row;
+        }
+        changed = true;
+        return { ...(row as object), language: code };
+    });
+    return changed ? fixed : null;
+}
+
 /** Parse the config table "voice per language" into ISO code → voice and model; rows without either are skipped. */
 export function parseVoiceTable(rows: unknown): Record<string, LanguageVoice> {
     const table: Record<string, LanguageVoice> = {};
@@ -262,7 +292,7 @@ export function parseVoiceTable(rows: unknown): Record<string, LanguageVoice> {
         return table;
     }
     for (const row of rows as { language?: unknown; voice?: unknown; model?: unknown }[]) {
-        const lang = baseLanguage(typeof row?.language === 'string' ? row.language : '');
+        const lang = cellLanguage(row?.language);
         const voice = typeof row?.voice === 'string' ? row.voice.trim() : '';
         const model = typeof row?.model === 'string' ? row.model.trim() : '';
         if (lang && (voice || model)) {

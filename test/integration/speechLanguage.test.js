@@ -7,6 +7,8 @@ const {
     speechLanguage,
     voiceFitsLanguage,
     parseVoiceTable,
+    cellLanguage,
+    normalizeVoiceTable,
     LanguageTts,
     VoicePerLanguage,
 } = require('../../build/lib/voice/speechLanguage');
@@ -94,6 +96,49 @@ test('parseVoiceTable: ISO code → voice and model, rows without either skipped
         },
     );
     assert.deepEqual(parseVoiceTable(undefined), {});
+});
+
+test('cellLanguage: the code at the start, also of a saved label', () => {
+    assert.equal(cellLanguage('de'), 'de');
+    assert.equal(cellLanguage(' DE-de '), 'de');
+    assert.equal(cellLanguage('de – Deutsch'), 'de');
+    assert.equal(cellLanguage('zh-cn'), 'zh');
+    assert.equal(cellLanguage('Deutsch'), '');
+    assert.equal(cellLanguage(''), '');
+    assert.equal(cellLanguage(undefined), '');
+});
+
+test('parseVoiceTable: a row saved with the label of the suggestion counts (vitanova: "de – Deutsch")', () => {
+    assert.deepEqual(
+        parseVoiceTable([
+            { language: 'en', voice: 'bram', model: null },
+            { language: 'de – Deutsch', voice: 'tabitha', model: null },
+        ]),
+        { en: { voice: 'bram', model: '' }, de: { voice: 'tabitha', model: '' } },
+    );
+});
+
+test('normalizeVoiceTable: codes for the drop-down, null when nothing changes', () => {
+    const rows = [
+        { language: 'en', voice: 'bram', model: null, _test: null },
+        { language: 'de – Deutsch', voice: 'tabitha', model: null, _test: null },
+        { language: 'ru-RU', voice: 'x' },
+        { language: 'Deutsch', voice: 'y' },
+    ];
+    assert.deepEqual(normalizeVoiceTable(rows), [
+        rows[0],
+        { language: 'de', voice: 'tabitha', model: null, _test: null },
+        { language: 'ru', voice: 'x' },
+        rows[3],
+    ]);
+    assert.equal(
+        normalizeVoiceTable([
+            { language: 'de', voice: 'a' },
+            { language: '', voice: 'b' },
+        ]),
+        null,
+    );
+    assert.equal(normalizeVoiceTable(undefined), null);
 });
 
 test('LanguageTts: hands the engine the language of the text, the reported one first', async () => {

@@ -264,7 +264,19 @@ function cachedTts(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
                   : // the model too: another model must not serve the audio of the old one
                     `${ctx.ttsModel ? `${ctx.ttsModel}-` : ''}${ctx.voices.openai}`;
     const dir = path.join(ctx.dataDir, 'ttscache', `${provider}-${(voice || 'default').replace(/[^\w.-]/g, '_')}`);
-    return new CachedTts(buildTtsEngine(provider, ctx), { dir, log: ctx.log, maxChars: ctx.ttsMaxChars });
+    const model =
+        provider === 'openrouter'
+            ? ctx.openrouterTtsModel || DEFAULT_OPENROUTER_TTS_MODEL
+            : provider === 'openai'
+              ? ctx.ttsModel
+              : '';
+    const key = voiceKey(provider);
+    return new CachedTts(buildTtsEngine(provider, ctx), {
+        dir,
+        log: ctx.log,
+        maxChars: ctx.ttsMaxChars,
+        by: { provider, voice: key ? ctx.voices[key] : '', model },
+    });
 }
 
 function buildTtsEngine(provider: SpeechProvider, ctx: EngineContext): TtsEngine {
