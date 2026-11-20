@@ -20,7 +20,9 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
 
 **Fertig:**
 - **Spotify, Phase 1 = sendTo-API in spotify-premium** (Nutzerwunsch 2026-11-20, `C:\pWork\ioBroker.spotify-premium`,
-  **released als 3.3.0** am 2026-11-20, auf dem master nach 3.2.0 = dessen eigenes `help` für die States). Spotify liefert keine Audio-URLs → gespielt wird auf
+  **released als 3.3.0/3.3.1** am 2026-11-20 — 3.3.0 scheiterte im CI am Prettier-Lint und kam nie auf npm —,
+  auf dem master nach 3.2.0 = dessen eigenes `help` für die States; Release dort mit `-c` ohne `manual-review`, das
+  sonst auf eine Taste wartet). Spotify liefert keine Audio-URLs → gespielt wird auf
   Spotify-Connect-Geräten, der Assistant soll nur suchen + Befehl geben; die OAuth bleibt in spotify-premium (eigene App
   im Assistant = doppelter Login + Dev-Mode-Limit 5 Nutzer/Client-ID seit Feb. 2026). Neu dort (`supportedMessages.help`
   schaltet die Messagebox ein, ohne `messagebox`): sendTo `help` (`HELP` in `src/lib/help.ts` = States + Befehle,
