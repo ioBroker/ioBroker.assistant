@@ -237,9 +237,10 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.13.0 (2026-11-20)
 * (@GermanBluefox) Music from Spotify: "play Bohemian Rhapsody by Queen", "spiel das Album … in der Küche", "spiel meine Playlist …" find the song, album, artist or playlist and play it on a Spotify Connect device (table "Spotify players" on the Services tab, needs spotify-premium 3.3.0 or newer); LLM tools `play_music` and `music_player`, message `playMusic`
 * (@GermanBluefox) Music clips on the TV: "spiel den Clip Bohemian Rhapsody von Queen", "play the music video … by …", "включи клип …" search the clip on YouTube and play it on the YouTube player; so does a song for a TV
+
 ### 1.12.1 (2026-11-19)
 * (@GermanBluefox) Voice per answer language: the language is a drop-down now. A language picked from the suggestions was saved as its label (e.g. "de – Deutsch") and the row was never used; such rows get the language code on the first start
 * (@GermanBluefox) Spoken requests: the speech recognition no longer waits for the device names it gets as hints (up to 3 s on large installations each time a minute had passed since the last request); the last list is used while a new one is built
@@ -259,9 +260,6 @@ train it twice.
 * (@GermanBluefox) ESPHome satellites: the adapter ships microWakeWord models ("ioBroker", "Hey Bro", "Alisa"); one click in the satellite settings puts one on the device and switches it on, replacing an older version of the same word
 * (@GermanBluefox) Wake words from a training run get a short name with their date, e.g. `261103_iobroker` instead of "20261103 085427 9b0f Microwakeword Iobroker"
 * (@GermanBluefox) A wake word selected right after it was uploaded is no longer dropped as unknown
-
-### 1.9.1 (2026-11-16)
-* (@GermanBluefox) The adapter ai-parakeet was renamed to voice: the speech recognition, the instance selection and the button "Install ioBroker.voice" use `voice` now. A saved instance `ai-parakeet.<n>` switches to `voice.<n>` by itself as soon as that instance exists
 
 [Older changelogs can be found there](CHANGELOG_OLD.md)
 
