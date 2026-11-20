@@ -60,6 +60,7 @@ import { isLateReply } from './lib/messages';
 import { PresenceTracker, buildPresencePrompt, parsePresenceRows, type PresenceInfo } from './lib/presence';
 import { describeTargets, findTarget, isBroadcast, parseTargetRows, type TargetGroup } from './lib/targets';
 import { matchRoutine, parseRoutineRows, type Routine } from './lib/routines';
+import { isShowRequest, parsePlaces, parseShowCommand, showLanguage, showReply, type ShowCommand } from './lib/home3d';
 import {
     directYouTubeTarget,
     findPlayer,
@@ -341,6 +342,8 @@ const EMPTY_ASK_REPORT_MS = 60_000;
 /** How long to wait for a device to confirm a write, and how often to look. */
 const ACK_TIMEOUT_MS = 2000;
 const ACK_POLL_MS = 150;
+/** How long an open 3D view of home3d gets to confirm what it shows (`home3d.N.show` with ack). */
+const HOME3D_ACK_MS = 2500;
 /** How long a TV may take to report "on" after it was switched on for YouTube. */
 const TV_POWER_TIMEOUT_MS = 30_000;
 /** How long youtube-remote may take to acknowledge a play command (it goes through Google's lounge). */
@@ -4719,6 +4722,14 @@ class Assistant extends Adapter {
                 data: { phrases: this.routines.map(r => ({ name: r.name, phrases: r.phrases })) },
             });
         }
+        // "Zeig Unterdeck": like a routine, also with the rule NLU switched off – only a name the 3D plan knows is
+        // taken, so the decision is made already, and a model would take seconds to write the same state
+        if (isShowRequest(question)) {
+            const shown = await this.showIn3d(question, source);
+            if (shown !== null) {
+                return shown;
+            }
+        }
         // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
         if (!this.config.useLocalNlu) {
             this.journal?.step({ stage: 'nlu', title: 'Rule-based NLU is switched off (useLocalNlu)' });
@@ -7728,6 +7739,57 @@ class Assistant extends Adapter {
             }
         }
         return options;
+    }
+
+    /**
+     * "Zeig Unterdeck": every open 3D view of ioBroker.home3d flies there. Only when the sentence names a floor, a
+     * room or a device that an instance of home3d lists in `home3d.N.places` (or the whole house); null otherwise,
+     * and the request goes on to the other tiers. Writes `home3d.N.show` of each such instance and waits briefly for
+     * a 3D view to confirm it (ack with the name it shows).
+     */
+    private async showIn3d(question: string, source: string): Promise<string | null> {
+        const states = await this.getForeignStatesAsync('home3d.*.places').catch(() => ({}));
+        const hits: { ns: string; cmd: ShowCommand }[] = [];
+        for (const [id, state] of Object.entries(states ?? {})) {
+            const cmd = parseShowCommand(question, parsePlaces(state?.val));
+            if (cmd) {
+                hits.push({ ns: id.replace(/\.places$/, ''), cmd });
+            }
+        }
+        if (!hits.length) {
+            this.journal?.step({
+                stage: 'home3d',
+                title: `Not a place of the 3D plan (${Object.keys(states ?? {}).length} instance(s) with places)`,
+            });
+            return null;
+        }
+        const target = hits[0].cmd.target;
+        this.log.info(`3D view request understood locally: show "${target}" (source='${source}').`);
+        this.journal?.note({ tier: 'nlu', detail: `home3d show ${hits[0].cmd.kind}` });
+        const start = Date.now();
+        for (const { ns, cmd } of hits) {
+            await this.setForeignStateAsync(`${ns}.show`, cmd.target, false);
+        }
+        // the 3D views confirm within a moment; none open: the value stays unconfirmed
+        let shown: string | null = null;
+        while (!shown && Date.now() - start < HOME3D_ACK_MS) {
+            await this.delay(ACK_POLL_MS);
+            for (const { ns } of hits) {
+                const st = await this.getForeignStateAsync(`${ns}.show`).catch(() => null);
+                if (st?.ack && st.ts >= start - 50 && typeof st.val === 'string' && st.val.trim()) {
+                    shown = st.val.trim();
+                    break;
+                }
+            }
+        }
+        this.journal?.step({
+            stage: 'home3d',
+            level: shown ? undefined : 'warn',
+            title: shown ? `3D view shows "${shown}"` : `No 3D view confirmed "${target}"`,
+            ms: Date.now() - start,
+            data: { hits, shown },
+        });
+        return showReply(showLanguage(question, this.answerLanguage()), shown, target);
     }
 
     /**

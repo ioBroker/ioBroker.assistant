@@ -237,6 +237,9 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) 3D plan: "zeig Unterdeck", "show the galley", "покажи кухню", "zeig das ganze Haus" make every open 3D view of home3d fly there (writes `home3d.N.show`); only names the plan knows (`home3d.N.places`) are taken, everything else goes on as before
+
 ### 1.13.0 (2026-11-20)
 * (@GermanBluefox) Music from Spotify: "play Bohemian Rhapsody by Queen", "spiel das Album … in der Küche", "spiel meine Playlist …" find the song, album, artist or playlist and play it on a Spotify Connect device (table "Spotify players" on the Services tab, needs spotify-premium 3.3.0 or newer); LLM tools `play_music` and `music_player`, message `playMusic`
 * (@GermanBluefox) Music clips on the TV: "spiel den Clip Bohemian Rhapsody von Queen", "play the music video … by …", "включи клип …" search the clip on YouTube and play it on the YouTube player; so does a song for a TV
