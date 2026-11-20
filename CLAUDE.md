@@ -19,6 +19,44 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Spotify, Phase 1 = sendTo-API in spotify-premium** (Nutzerwunsch 2026-11-20, `C:\pWork\ioBroker.spotify-premium`,
+  **released als 3.3.0** am 2026-11-20, auf dem master nach 3.2.0 = dessen eigenes `help` für die States). Spotify liefert keine Audio-URLs → gespielt wird auf
+  Spotify-Connect-Geräten, der Assistant soll nur suchen + Befehl geben; die OAuth bleibt in spotify-premium (eigene App
+  im Assistant = doppelter Login + Dev-Mode-Limit 5 Nutzer/Client-ID seit Feb. 2026). Neu dort (`supportedMessages.help`
+  schaltet die Messagebox ein, ohne `messagebox`): sendTo `help` (`HELP` in `src/lib/help.ts` = States + Befehle,
+  `testHelp.js` prüft die `case`s von `onMessage`), `search {query|track|artist|album|year|
+  genre, type, limit≤10}` → `{items:[{type,uri,name,artists,…}]}`, `play {uri, offset, positionMs, device}` → `{ok, device}`
+  oder `{error, reason}` (NO_ACTIVE_DEVICE/DEVICE_NOT_FOUND/DEVICE_NOT_CONTROLLABLE/PREMIUM_REQUIRED/…; 404 auf benanntem
+  Gerät → Transfer + 1 Retry), `getDevices` (frisch von Spotify), `getPlaylists {search}` (aus den States). Fix dort:
+  403 mit `reason` auf Player-Befehlen setzte die Instanz offline. Geprüft per Unit-Test + Wegwerf-Harness (Fake
+  adapter-core/Spotify), **nicht gegen echtes Spotify**. **Phase 2 hier (released mit 1.13.0, live auf vitanova, dort
+  aber noch keine Spotify-Player-Zeile — echtes Abspielen nicht probiert):**
+  `src/lib/music.ts` — `parseMusicCommand(text, spotifyPlayers, tvs)` (de/en/ru): braucht Art-Wort (Lied/Song/Titel/
+  Album/Band/Künstler/Playlist/Musik, „etwas/was von“), „*Titel* von *Interpret*“ **nur nach Spiel-Verb**
+  (`PLAY_VERBS` spiel/play/сыграй — „включи обогреватель от …“ ist ein Gerät) oder „Spotify“ (dann `kind:'auto'`);
+  Kanal/Video (→ YouTube-Parser), Radio/Podcast → null; Füllwörter nur **vor** dem Art-Wort (Titel „The Final
+  Countdown“); Player vorn oder hinten (mit Präposition), unbekanntes „im X“ → ehrliches „kenne ich nicht“, nur ein
+  Ort → null. Liefert `service`: gesagt („auf Spotify/YouTube“ — dann zählen nur dessen Player) oder der des genannten
+  Players. **Clips auf dem Fernseher** (Nutzerwunsch 2026-11-20: „nicht ein Lied, sondern Clip“): `CLIP_WORDS`
+  (Clip/Videoclip/Musikvideo/клип, „music video“ als Wortpaar — „Video“ allein bleibt beim YouTube-Parser) → `kind
+  track` + `service:'youtube'`, nur Fernseher zählen als Player; „spiel den Clip X von Y“ → Videosuche „X Y“ (der
+  YouTube-Parser kannte „Clip“, ließ aber „von Queen“ in der Suche und kannte клип nicht). Auch ein Lied/Album mit
+  genanntem Fernseher bzw. ohne Spotify-Player → `youtubeMusicQuery` (Lied = Video „Titel Interpret“, Album =
+  Playlist, Interpret = auto) → `playYouTube`.
+  `findMusic` (Feldfilter, ohne Treffer freier Text; bester = Titel per `namedLike`/`titleCore` + Interpret per
+  `artistLike` in ganzen Wörtern; Playlist erst `getPlaylists` des Nutzers; `spotify:`-URI/open.spotify.com direkt),
+  `playMusic` (sendTo `search`/`getPlaylists`/`play {uri, device}`, Fehler-`reason` → Antwort de/en/ru), `MusicError`
+  mit `ADAPTER_DOWN`/`OUTDATED` (`main.askSpotify`: `spotifyTooOld(common.version)` < `SPOTIFY_MIN_VERSION`
+  3.3.0 = zu alt — 3.2.0 hat schon `supportedMessages.help`, beantwortet `search` aber nicht —, sonst würde sendTo nur
+  in den Timeout laufen; `SPOTIFY_TIMEOUT_MS` 15 s; jeder sendTo = Trace-Schritt `music`). `findPlayer`
+  in `youtube.ts` ist jetzt generisch (`findMusicPlayer`). `main.ts`: `musicPlayers` (Config-Tabelle {name, instance
+  (`selectSendTo getSpotifyInstances`), device (`autocompleteSendTo getSpotifyDevices` freeSolo, leer = aktives),
+  room}), `answerLocally` → Musik-Parser **vor** YouTube-Parser und Geräte-NLU (also auch vor t2c),
+  `musicServiceFor`/`playMusicRequest`/`playSpotify`, Tools `play_music` (Spieler-Name eines TV → YouTube) +
+  `music_player` (States `player.play/pause/skipPlus/skipMinus/volume`, Status aus `player.*`), sendTo `playMusic`;
+  `play_youtube`-Beschreibung nennt Lieder. Journal-Stufe `music` (GUI `custom_assistant_Music`, grün). Test:
+  `music.test.js` (Fake-spotify-premium). Optional 2b music-assistant (`getMedia` + `playMedia`), 3 librespot →
+  ESPHome-Satellit.
 - **smart-text2command als Gerätebefehl-Stufe + Reiter „Ablauf“** (Nutzerwunsch 2026-11-19, nicht committet, nicht
   live). Config `nluEngine` (`rules` | `smart-text2command`, nur bei `useLocalNlu`) + `smartT2cInstance` (Knopf
   `installAdapter`, `HELPER_ADAPTERS`). `src/lib/smartT2c.ts` `SmartText2Command`: `sendTo(<inst>,'processText',

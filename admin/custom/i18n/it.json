@@ -301,5 +301,6 @@
     "custom_assistant_Turns the speech of the satellites into text. It also hears voice messages from Telegram and the dialog mode of the chat. Keys and more options are on the tab Voice.": "Trasforma in testo ciò che viene detto ai satelliti. Ascolta anche i messaggi vocali di Telegram e la modalità dialogo della chat. Le chiavi e le altre opzioni sono nella scheda Voce.",
     "custom_assistant_Speaks the answer on the satellite that asked, and the announcements. Keys and more options are on the tab Voice.": "Pronuncia la risposta sul satellite che ha chiesto, e anche gli annunci. Le chiavi e le altre opzioni sono nella scheda Voce.",
     "custom_assistant_Follow-up questions in a conversation go straight to the cloud.": "Le domande successive in una conversazione vanno direttamente al cloud.",
-    "custom_assistant_What no step understands gets a fixed sentence.": "Ciò che nessun passaggio capisce riceve una frase fissa come risposta."
+    "custom_assistant_What no step understands gets a fixed sentence.": "Ciò che nessun passaggio capisce riceve una frase fissa come risposta.",
+    "custom_assistant_Music": "Musica"
 }

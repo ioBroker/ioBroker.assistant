@@ -237,6 +237,9 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) Music from Spotify: "play Bohemian Rhapsody by Queen", "spiel das Album … in der Küche", "spiel meine Playlist …" find the song, album, artist or playlist and play it on a Spotify Connect device (table "Spotify players" on the Services tab, needs spotify-premium 3.3.0 or newer); LLM tools `play_music` and `music_player`, message `playMusic`
+* (@GermanBluefox) Music clips on the TV: "spiel den Clip Bohemian Rhapsody von Queen", "play the music video … by …", "включи клип …" search the clip on YouTube and play it on the YouTube player; so does a song for a TV
 ### 1.12.1 (2026-11-19)
 * (@GermanBluefox) Voice per answer language: the language is a drop-down now. A language picked from the suggestions was saved as its label (e.g. "de – Deutsch") and the row was never used; such rows get the language code on the first start
 * (@GermanBluefox) Spoken requests: the speech recognition no longer waits for the device names it gets as hints (up to 3 s on large installations each time a minute had passed since the last request); the last list is used while a new one is built

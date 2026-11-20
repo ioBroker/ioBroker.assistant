@@ -301,5 +301,6 @@
     "custom_assistant_Turns the speech of the satellites into text. It also hears voice messages from Telegram and the dialog mode of the chat. Keys and more options are on the tab Voice.": "将对卫星设备说的话转换为文字。它也用于 Telegram 的语音消息和聊天的对话模式。密钥和更多选项在“语音”选项卡中。",
     "custom_assistant_Speaks the answer on the satellite that asked, and the announcements. Keys and more options are on the tab Voice.": "在提问的卫星设备上朗读回答，以及广播通知。密钥和更多选项在“语音”选项卡中。",
     "custom_assistant_Follow-up questions in a conversation go straight to the cloud.": "对话中的追问会直接交给云端。",
-    "custom_assistant_What no step understands gets a fixed sentence.": "任何步骤都无法理解的请求会得到一句固定回复。"
+    "custom_assistant_What no step understands gets a fixed sentence.": "任何步骤都无法理解的请求会得到一句固定回复。",
+    "custom_assistant_Music": "音乐"
 }

@@ -51,7 +51,7 @@ export interface JournalStep {
     t: number;
     /** Duration, for steps that took time. */
     ms?: number;
-    /** Pipeline stage: request, stt, context, stop, askReply, routine, youtube, nlu, smartT2c, localLlm, cloud, tool, state, answer, tts, error. */
+    /** Pipeline stage: request, stt, context, stop, askReply, routine, music, youtube, nlu, smartT2c, localLlm, cloud, tool, state, answer, tts, error. */
     stage: string;
     title: string;
     level?: 'warn' | 'error';

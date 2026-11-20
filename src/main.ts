@@ -78,6 +78,25 @@ import {
     youtubeReply,
 } from './lib/youtube';
 import {
+    ADAPTER_DOWN,
+    MusicError,
+    OUTDATED,
+    SPOTIFY_MIN_VERSION,
+    musicReply,
+    musicRequestOf,
+    musicResultData,
+    parseMusicCommand,
+    parseMusicPlayerRows,
+    playMusic,
+    spotifyTooOld,
+    youtubeMusicQuery,
+    type MusicCommand,
+    type MusicPlayer,
+    type MusicPlayResult,
+    type MusicRequest,
+    type MusicService,
+} from './lib/music';
+import {
     bypassesDnd,
     cleanupNotificationText,
     flattenNotification,
@@ -326,6 +345,8 @@ const ACK_POLL_MS = 150;
 const TV_POWER_TIMEOUT_MS = 30_000;
 /** How long youtube-remote may take to acknowledge a play command (it goes through Google's lounge). */
 const YOUTUBE_ACK_TIMEOUT_MS = 8000;
+/** Wait at most this long for spotify-premium: a search plus, on a sleeping device, a transfer and a second try. */
+const SPOTIFY_TIMEOUT_MS = 15000;
 /** Pause before the play command is repeated once on a TV that just booted. */
 const YOUTUBE_RETRY_MS = 5000;
 
@@ -629,6 +650,8 @@ class Assistant extends Adapter {
     private announceTargets: TargetGroup[] = [];
     /** YouTube players from the configuration; the first one is the default. */
     private youtubePlayers: YouTubePlayer[] = [];
+    /** Spotify Connect devices through spotify-premium (`musicPlayers`) */
+    private musicPlayers: MusicPlayer[] = [];
     /**
      * Where the request being answered came from, for the LLM tools: a tool only gets the model's
      * arguments, but "play X" from the bedroom satellite should go to the bedroom TV.
@@ -801,6 +824,13 @@ class Assistant extends Adapter {
                 }
                 tools.push(...this.buildYouTubeTools());
                 this.log.info(`YouTube players: ${this.youtubePlayers.map(p => p.name).join(', ')}.`);
+            }
+            this.musicPlayers = parseMusicPlayerRows(cfg.musicPlayers);
+            if (this.musicPlayers.length) {
+                tools.push(...this.buildMusicTools());
+                this.log.info(
+                    `Music players: ${this.musicPlayers.map(p => `${p.name} (${p.instance}${p.device ? ` › ${p.device}` : ''})`).join(', ')}.`,
+                );
             }
             this.log.info(`ioBroker tools enabled (${tools.length}): ${tools.map(t => t.name).join(', ')}`);
             if (denied.length) {
@@ -3693,6 +3723,36 @@ class Assistant extends Adapter {
             return;
         }
 
+        // Settings: the columns "Spotify instance" and "Device" of the music table.
+        if (obj.command === 'getSpotifyInstances' || obj.command === 'getSpotifyDevices') {
+            const list =
+                obj.command === 'getSpotifyInstances'
+                    ? await this.getSpotifyInstances()
+                    : await this.getSpotifyDevices((obj.message as { instance?: unknown } | null)?.instance);
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, list, obj.callback);
+            }
+            return;
+        }
+
+        // Scripts: play music. message = { query, artist?, kind?: 'track'|'album'|'artist'|'playlist',
+        // player?, service?: 'spotify'|'youtube' } → { ok, text, service, … }
+        if (obj.command === 'playMusic') {
+            const m = (obj.message || {}) as Record<string, unknown>;
+            const req = musicRequestOf(m);
+            const res = req
+                ? await this.playMusicRequest(
+                      req,
+                      typeof m.player === 'string' ? m.player : undefined,
+                      m.service === 'spotify' || m.service === 'youtube' ? m.service : undefined,
+                  )
+                : { ok: false, text: 'no query given' };
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, res, obj.callback);
+            }
+            return;
+        }
+
         // Scripts / settings: which wake words an ESPHome satellite offers and which are listening.
         // message = { device? } — omitted means every connected one.
         if (obj.command === 'getWakeWords') {
@@ -4663,6 +4723,30 @@ class Assistant extends Adapter {
         if (!this.config.useLocalNlu) {
             this.journal?.step({ stage: 'nlu', title: 'Rule-based NLU is switched off (useLocalNlu)' });
             return null;
+        }
+        // "Spiel Bohemian Rhapsody von Queen" before YouTube and the device NLU: a song on a Spotify device, or on
+        // the TV when the sentence names one, says "auf YouTube" or there is no Spotify player.
+        const music =
+            this.musicPlayers.length || this.youtubePlayers.length
+                ? parseMusicCommand(question, this.musicPlayers, this.youtubePlayers)
+                : null;
+        const musicService = music ? this.musicServiceFor(music) : null;
+        if (music && musicService) {
+            const what = `${music.kind} "${music.query}"${music.artist ? ` by "${music.artist}"` : ''}`;
+            this.log.info(`Music request understood locally: ${what} on ${musicService} (source='${source}').`);
+            this.journal?.note({ tier: 'nlu', detail: `music ${musicService} ${music.kind}` });
+            const start = Date.now();
+            const res = await this.playMusicRequest(music, music.player, musicService);
+            this.journal?.step({
+                stage: 'music',
+                title: `Music ${what}${music.player ? ` on "${music.player}"` : ''} (${musicService})`,
+                ms: Date.now() - start,
+                data: { parsed: music, result: res },
+            });
+            return res.text;
+        }
+        if (this.musicPlayers.length) {
+            this.journal?.step({ stage: 'music', title: 'Not a music command' });
         }
         // "Spiele den Kanal X ab" first: the device NLU would find the TV in "… auf dem Fernseher" and
         // answer with its power state.
@@ -7859,7 +7943,8 @@ class Assistant extends Adapter {
                 '"spiele den Kanal …", "zeig das Video …" — never write the player states yourself. kind ' +
                 '"channel" plays the newest uploads of a channel. The reply text of the result can be said as is; ' +
                 'otherResults are the next search hits, offer them if the user says it was the wrong one ' +
-                '(pass the id as query to play one).',
+                '(pass the id as query to play one). A music clip ("spiel den Clip …"): query = title and artist, ' +
+                'kind "video"; an album: kind "playlist".',
             parameters: {
                 type: 'object',
                 properties: {
@@ -7955,6 +8040,278 @@ class Assistant extends Adapter {
                 } else if (['play', 'pause', 'next', 'previous'].includes(action)) {
                     id = `${player.base}.${action === 'previous' ? 'prev' : action}`;
                     value = true;
+                } else {
+                    return JSON.stringify({ ok: false, error: `unknown action '${action}'` });
+                }
+                await this.setForeignStateAsync(id, { val: value, ack: false });
+                this.journal?.stateAccess('set_state', { id, value });
+                return JSON.stringify({ ok: true, data: { player: player.name, [action]: value } });
+            },
+        };
+        return [play, control];
+    }
+
+    // ── Music: Spotify through spotify-premium, songs on the TV through YouTube ──
+
+    /**
+     * Where a request without a said service plays: on the named player (a Spotify player first, then a TV), else
+     * on Spotify if there is a Spotify player, else on the TV.
+     */
+    private musicServiceForPlayer(name?: string): MusicService {
+        if (name && !findPlayer(this.musicPlayers, name) && findPlayer(this.youtubePlayers, name)) {
+            return 'youtube';
+        }
+        return this.musicPlayers.length ? 'spotify' : 'youtube';
+    }
+
+    /** The service a parsed request goes to; null when that service has no player (the request goes on). */
+    private musicServiceFor(cmd: MusicCommand): MusicService | null {
+        const service = cmd.service || this.musicServiceForPlayer(cmd.player);
+        const players = service === 'spotify' ? this.musicPlayers : this.youtubePlayers;
+        return players.length ? service : null;
+    }
+
+    /**
+     * Play music: on a Spotify Connect device through spotify-premium, or — for a TV — as a YouTube search
+     * (a song is a video "title artist", an album a playlist). The answer is the data of the tool and sendTo.
+     */
+    private async playMusicRequest(
+        req: MusicRequest,
+        playerName?: string,
+        service?: MusicService,
+    ): Promise<{ ok: boolean; text: string } & Record<string, unknown>> {
+        const target = service || this.musicServiceForPlayer(playerName);
+        if (target === 'youtube') {
+            if (!this.youtubePlayers.length) {
+                return { ok: false, service: target, text: 'no YouTube player is configured' };
+            }
+            const yt = youtubeMusicQuery(req);
+            const res = await this.playYouTube(yt.query, yt.kind, playerName);
+            return { service: target, ...this.youtubeResultData(res), ok: res.ok, text: res.text };
+        }
+        if (!this.musicPlayers.length) {
+            return { ok: false, service: target, text: 'no Spotify player is configured' };
+        }
+        const res = await this.playSpotify(req, playerName);
+        return { service: target, ...musicResultData(res), ok: res.ok, text: res.text };
+    }
+
+    /** Find something on Spotify and play it on a music player. */
+    private async playSpotify(req: MusicRequest, playerName?: string): Promise<MusicPlayResult> {
+        const lang = this.answerLanguage();
+        const player = findPlayer(this.musicPlayers, playerName, this.requestOrigin.getStore()?.room || '');
+        if (!player) {
+            const names = this.musicPlayers.map(p => p.name).join(', ');
+            return { ok: false, text: musicReply(lang, 'unknownPlayer', { query: playerName, names }) };
+        }
+        if (!this.config.allowWriteStates) {
+            return { ok: false, player: player.name, text: musicReply(lang, 'noControl') };
+        }
+        const res = await playMusic(req, player, {
+            ask: (command, message) => this.askSpotify(player.instance, command, message),
+            language: lang,
+            sayPlayer: this.musicPlayers.length > 1,
+        });
+        const what = `${req.kind} "${req.query}"${req.artist ? ` by "${req.artist}"` : ''}`;
+        if (res.ok) {
+            this.log.info(
+                `Spotify: ${what} → ${res.hit?.uri} (${res.hit?.name}) on ${player.name}${res.device ? ` (${res.device})` : ''}.`,
+            );
+        } else {
+            this.log.info(`Spotify: ${what} on ${player.name} failed: ${res.reason}.`);
+        }
+        return res;
+    }
+
+    /**
+     * A message to spotify-premium. Throws a {@link MusicError}: {@link ADAPTER_DOWN} for a missing or stopped
+     * instance, {@link OUTDATED} for a version without messages (it would never answer).
+     */
+    private async askSpotify(instance: string, command: string, message: Record<string, unknown>): Promise<unknown> {
+        const obj = await this.getForeignObjectAsync(`system.adapter.${instance}`).catch(() => null);
+        if (!obj) {
+            throw new MusicError(`${instance} does not exist`, ADAPTER_DOWN);
+        }
+        if (spotifyTooOld(obj.common?.version)) {
+            throw new MusicError(
+                `${instance} is ${obj.common?.version}: messages need ${SPOTIFY_MIN_VERSION} or newer`,
+                OUTDATED,
+            );
+        }
+        const alive = (await this.getForeignStateAsync(`system.adapter.${instance}.alive`).catch(() => null))?.val;
+        if (!alive) {
+            throw new MusicError(`${instance} is not running`, ADAPTER_DOWN);
+        }
+        const start = Date.now();
+        try {
+            const answer = await this.sendToAsync(instance, command, message as ioBroker.MessagePayload, {
+                timeout: SPOTIFY_TIMEOUT_MS,
+            });
+            this.journal?.step({
+                stage: 'music',
+                title: `${instance}: ${command}`,
+                ms: Date.now() - start,
+                data: { message, answer },
+            });
+            return answer;
+        } catch (e) {
+            this.journal?.step({
+                stage: 'music',
+                level: 'warn',
+                title: `${instance}: ${command} failed`,
+                ms: Date.now() - start,
+                data: { message, error: (e as Error).message },
+            });
+            throw new MusicError(`${instance} did not answer "${command}": ${(e as Error).message}`, 'TIMEOUT');
+        }
+    }
+
+    /** Options of the column "Spotify instance": every spotify-premium instance. */
+    private async getSpotifyInstances(): Promise<{ label: string; value: string }[]> {
+        try {
+            const view = await this.getObjectViewAsync('system', 'instance', {
+                startkey: 'system.adapter.spotify-premium.',
+                endkey: 'system.adapter.spotify-premium.香',
+            });
+            return (view?.rows || [])
+                .map(r => ({
+                    value: r.id.replace(/^system\.adapter\./, ''),
+                    old: spotifyTooOld((r.value as ioBroker.InstanceObject | undefined)?.common?.version),
+                }))
+                .sort((a, b) => a.value.localeCompare(b.value))
+                .map(r => ({ label: r.old ? `${r.value} (too old, please update)` : r.value, value: r.value }));
+        } catch (e) {
+            this.log.warn(`getSpotifyInstances failed: ${(e as Error).message}`);
+            return [];
+        }
+    }
+
+    /** Suggestions of the column "Device": the Spotify Connect devices that are online now. */
+    private async getSpotifyDevices(instance: unknown): Promise<string[]> {
+        if (typeof instance !== 'string' || !/^spotify-premium\.\d+$/.test(instance)) {
+            return [];
+        }
+        try {
+            const answer = (await this.askSpotify(instance, 'getDevices', {})) as { devices?: { name?: string }[] };
+            return (answer?.devices || []).map(d => String(d?.name || '')).filter(Boolean);
+        } catch (e) {
+            this.log.debug(`getSpotifyDevices(${instance}): ${(e as Error).message}`);
+            return [];
+        }
+    }
+
+    /**
+     * LLM tools for the music players: `play_music` (search + play on Spotify, or a song on a TV through YouTube)
+     * and `music_player` (pause, skip, volume, what is playing).
+     */
+    private buildMusicTools(): Tool[] {
+        const names = this.musicPlayers.map((p, i) => (i === 0 ? `${p.name} (default)` : p.name)).join(', ');
+        const tvs = this.youtubePlayers.map(p => p.name).join(', ');
+        const onTv = tvs ? `On a TV (${tvs}) the song is searched and played on YouTube instead. ` : '';
+        const play: Tool = {
+            name: 'play_music',
+            description:
+                'Play music from Spotify: finds a song, album, artist or playlist (also the playlists of the user) ' +
+                'and plays it on a Spotify Connect device. Use this for every "play the song …", "spiel … von …", ' +
+                `"put on some …". Give the title as query and the artist separately. ${onTv}` +
+                'The reply text of the result can be said as is; otherResults are the next hits, offer them if the ' +
+                'user says it was the wrong one (pass the uri as query to play one).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: {
+                        type: 'string',
+                        description: 'Title of the song/album, name of the playlist or artist, or a spotify: uri',
+                    },
+                    artist: { type: 'string', description: 'The artist of a song or album, if said' },
+                    kind: {
+                        type: 'string',
+                        enum: ['track', 'album', 'artist', 'playlist'],
+                        description:
+                            'Leave it out if the user did not say: an artist/playlist/album of that name wins, else songs',
+                    },
+                    player: {
+                        type: 'string',
+                        description: `Player name or room: ${names}${tvs ? `, or a TV: ${tvs}` : ''}. Leave it out for the player in the room the user is in, else the default.`,
+                    },
+                },
+                required: ['query'],
+                additionalProperties: false,
+            },
+            run: async (args): Promise<string> => {
+                const req = musicRequestOf(args);
+                if (!req) {
+                    return JSON.stringify({ ok: false, error: 'no query given' });
+                }
+                const player = typeof args.player === 'string' && args.player.trim() ? args.player.trim() : undefined;
+                return JSON.stringify(await this.playMusicRequest(req, player));
+            },
+        };
+        const control: Tool = {
+            name: 'music_player',
+            description:
+                'Control Spotify or ask what it plays: action play (resume), pause, next, previous, volume (with ' +
+                '"volume" 0-100) or status (song, artist, album, playlist, device, volume). Acts on the Spotify ' +
+                'device that is active.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: { type: 'string', enum: ['play', 'pause', 'next', 'previous', 'volume', 'status'] },
+                    volume: { type: 'number', description: 'Volume 0-100, only for action volume' },
+                    player: { type: 'string', description: `Player name or room: ${names}` },
+                },
+                required: ['action'],
+                additionalProperties: false,
+            },
+            run: async (args): Promise<string> => {
+                const player = findPlayer(
+                    this.musicPlayers,
+                    typeof args.player === 'string' ? args.player : undefined,
+                    this.requestOrigin.getStore()?.room || '',
+                );
+                if (!player) {
+                    return JSON.stringify({ ok: false, error: `unknown player, known are: ${names}` });
+                }
+                const ns = player.instance;
+                if (!(await this.getForeignStateAsync(`system.adapter.${ns}.alive`).catch(() => null))?.val) {
+                    return JSON.stringify({ ok: false, error: `${ns} is not running` });
+                }
+                const action = typeof args.action === 'string' ? args.action : '';
+                if (action === 'status') {
+                    const states: Record<string, ioBroker.State> = await this.getForeignStatesAsync(
+                        `${ns}.player.*`,
+                    ).catch(() => ({}));
+                    const val = (id: string): unknown => states[`${ns}.player.${id}`]?.val ?? null;
+                    return JSON.stringify({
+                        ok: true,
+                        data: {
+                            player: player.name,
+                            playing: val('isPlaying'),
+                            song: val('trackName'),
+                            artist: val('artistName'),
+                            album: val('album'),
+                            playlist: val('playlist.name') || undefined,
+                            device: val('device.name'),
+                            volume: val('device.volume'),
+                        },
+                    });
+                }
+                if (!this.config.allowWriteStates) {
+                    return JSON.stringify({ ok: false, error: 'device control is disabled in the settings' });
+                }
+                let id: string;
+                let value: ioBroker.StateValue = true;
+                if (action === 'volume') {
+                    const v = Number(args.volume);
+                    if (!Number.isFinite(v)) {
+                        return JSON.stringify({ ok: false, error: 'volume 0-100 needed' });
+                    }
+                    id = `${ns}.player.volume`;
+                    value = Math.min(100, Math.max(0, Math.round(v)));
+                } else if (action === 'play' || action === 'pause') {
+                    id = `${ns}.player.${action}`;
+                } else if (action === 'next' || action === 'previous') {
+                    id = `${ns}.player.${action === 'next' ? 'skipPlus' : 'skipMinus'}`;
                 } else {
                     return JSON.stringify({ ok: false, error: `unknown action '${action}'` });
                 }

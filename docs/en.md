@@ -304,6 +304,44 @@ state with role `switch.power` that reports whether the TV is on. Simple phrasin
 else (pause, skip, volume, status, "the other one") goes through the LLM tools `play_youtube` and
 `youtube_player`. Needs **Allow writing states**.
 
+**Music clips on the TV:** *"play the clip Bohemian Rhapsody by Queen"*, *"play the music video Thriller by
+Michael Jackson in the living room"*, *"spiel den Clip … von …"*, *"включи клип …"* — a clip (also music video,
+Musikvideo, Videoclip, клип) is searched on YouTube as the video "title artist" and plays on a TV of the YouTube
+table. A song or album that names a TV (*"play the song Yesterday on the TV"*, *"… on YouTube"*) takes the same way
+(album = playlist); without a Spotify player (next section) every song does.
+
+### Music from Spotify
+
+With the [spotify-premium](https://github.com/iobroker-community-adapters/ioBroker.spotify-premium) adapter the
+assistant plays music on a **Spotify Connect device** (phone, computer, Echo, Sonos, TV, spotifyd, …): *"play
+Bohemian Rhapsody by Queen"*, *"play the album A Night at the Opera in the kitchen"*, *"play my playlist Party"*,
+*"play some music by Queen"*, *"spiel das Lied Yesterday von den Beatles"*, *"включи песню Группа крови группы
+Кино"*. Spotify gives no audio file: the device plays, the assistant only searches and sends the command. The login
+at Spotify stays in spotify-premium — it needs version 3.3.0 or newer (the messages `search`, `play`); an older one
+is reported as "too old". Fill the **Spotify players** table on the Services tab:
+
+| Column | Example |
+|---|---|
+| **Name** | `Kitchen` — how you call it |
+| **Spotify instance** | `spotify-premium.0` |
+| **Spotify device** | `Echo Kitchen` — name of the Connect device; the list shows the devices that are online now. Empty = the device that plays at Spotify right now |
+| **Room** | `Kitchen` — a request from a satellite in this room goes to this player |
+
+The first row is the default. The assistant searches like this:
+
+- **title by artist** — first with Spotify's field filters (`track:… artist:…`), if that finds nothing (speech
+  recognition often hears names a bit differently) as free text; the hit with matching title and artist wins,
+  else Spotify's first.
+- **playlist** — your own playlists first, then the catalog.
+- **"… on Spotify"** without a kind word — an artist, playlist, album or track of that name.
+
+If a named device sleeps (Spotify answers 404), spotify-premium transfers the playback to it and tries once more.
+A sentence needs a kind word (song, track, album, band, artist, playlist, music), the form "*title* by *artist*"
+after "play"/"spiel" or the word Spotify — "play Queen" alone goes to the LLM. If the sentence names a TV or
+"YouTube", the song plays through YouTube (see above). Pause, skip, volume and "what is playing?" go through the LLM
+tool `music_player`, playing through `play_music`; scripts use
+`sendTo('assistant.0', 'playMusic', {query, artist, kind, player})`. Needs **Allow writing states**.
+
 ### Routines (a phrase that does several things)
 
 A routine is a macro you wrote down: a phrase, a list of actions, one reply. Fill the **Routines** table

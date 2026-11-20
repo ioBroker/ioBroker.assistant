@@ -798,6 +798,38 @@
                         }
                     ]
                 },
+                "musicPlayers": {
+                    "newLine": true,
+                    "type": "table",
+                    "label": "Spotify players",
+                    "help": "Spotify Connect devices the assistant may play music on, e.g. \"play Bohemian Rhapsody by Queen\" or \"play the album A Night at the Opera in the kitchen\". Needs the adapter spotify-premium in a version that answers messages - it holds the login at Spotify. Device: the name of a Spotify Connect device (phone, computer, Echo, Sonos, TV, ...); the list shows the devices that are online now, you can also type a name. Empty = the device that plays at Spotify right now. The first row is the default; a request from a satellite in the room of a row goes to that row. A song for a TV of the YouTube table is searched and played on YouTube. Needs \"Allow writing states\".",
+                    "xs": 12,
+                    "sm": 12,
+                    "md": 12,
+                    "lg": 12,
+                    "xl": 12,
+                    "items": [
+                        { "type": "text", "attr": "name", "title": "Name", "width": "20%" },
+                        {
+                            "type": "selectSendTo",
+                            "attr": "instance",
+                            "title": "Spotify instance",
+                            "command": "getSpotifyInstances",
+                            "width": "25%"
+                        },
+                        {
+                            "type": "autocompleteSendTo",
+                            "attr": "device",
+                            "title": "Spotify device (empty = active)",
+                            "command": "getSpotifyDevices",
+                            "jsonData": "{\"instance\":\"${data.instance}\"}",
+                            "alsoDependsOn": ["instance"],
+                            "freeSolo": true,
+                            "width": "35%"
+                        },
+                        { "type": "text", "attr": "room", "title": "Room", "width": "20%" }
+                    ]
+                },
                 "_timersHeader": {
                     "newLine": true,
                     "type": "header",

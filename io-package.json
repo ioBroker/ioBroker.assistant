@@ -259,6 +259,7 @@
     "calendarInstance": "",
     "presence": [],
     "youtubePlayers": [],
+    "musicPlayers": [],
     "announceTargets": [],
     "timerAnnounce": true,
     "alarmAnnounce": true,

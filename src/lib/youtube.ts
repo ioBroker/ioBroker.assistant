@@ -87,7 +87,7 @@ export function fold(text: unknown): string {
 }
 
 /** Same word up to an inflected ending ("Wohnzimmer"/"Wohnzimmers", "телевизор"/"телевизоре"). */
-function sameWord(a: string, b: string): boolean {
+export function sameWord(a: string, b: string): boolean {
     if (a === b) {
         return true;
     }
@@ -185,8 +185,13 @@ function nameMatches(name: string, wanted: string): boolean {
 /**
  * Which player is meant: the named one (name, then room), else the one in the room the request came from,
  * else the first row. A name that matches nothing is `null` — playing on the wrong TV is worse than asking.
+ * Also used for the music players.
  */
-export function findPlayer(players: YouTubePlayer[], wanted?: string, room?: string): YouTubePlayer | null {
+export function findPlayer<T extends { name: string; room: string }>(
+    players: T[],
+    wanted?: string,
+    room?: string,
+): T | null {
     if (!players.length) {
         return null;
     }

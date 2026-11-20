@@ -315,6 +315,45 @@ ausschalten; nimm einen State mit Rolle `switch.power`, der meldet, ob der Ferns
 alles andere (Pause, weiter, Lautstärke, Status, „nimm den anderen") läuft über die LLM-Tools `play_youtube`
 und `youtube_player`. Benötigt **Schreiben von States erlauben**.
 
+**Musik-Clips auf dem Fernseher:** *„spiel den Clip Bohemian Rhapsody von Queen"*, *„spiel im Wohnzimmer das
+Musikvideo Thriller von Michael Jackson"*, *„включи клип Группа крови группы Кино"* — ein Clip (auch Musikvideo,
+Videoclip, music video, клип) wird als Video „Titel Interpret" auf YouTube gesucht und läuft auf einem Fernseher
+der YouTube-Tabelle. Ein Lied oder Album, das einen Fernseher nennt (*„spiel das Lied Yesterday auf dem
+Fernseher"*, *„… auf YouTube"*), geht denselben Weg (Album = Playlist); ohne Spotify-Player (nächster Abschnitt)
+alle Lieder.
+
+### Musik von Spotify
+
+Mit dem Adapter [spotify-premium](https://github.com/iobroker-community-adapters/ioBroker.spotify-premium) spielt
+der Assistent Musik auf einem **Spotify-Connect-Gerät** (Handy, Computer, Echo, Sonos, Fernseher, spotifyd …):
+*„spiel Bohemian Rhapsody von Queen"*, *„spiele das Album A Night at the Opera in der Küche"*, *„spiel meine
+Playlist Party"*, *„spiel Musik von Queen"*, *„play Yesterday by the Beatles"*, *„включи песню Группа крови группы
+Кино"*. Spotify liefert keine Audio-Datei: gespielt wird auf dem Gerät, der Assistent sucht nur und gibt den Befehl.
+Die Anmeldung bei Spotify bleibt in spotify-premium — er braucht Version 3.3.0 oder neuer (die Nachrichten `search`,
+`play`); eine ältere meldet der Assistent als „zu alt". Dazu die Tabelle **Spotify-Player** im Tab Dienste:
+
+| Spalte | Beispiel |
+|---|---|
+| **Name** | `Küche` — so, wie du ihn nennst |
+| **Spotify-Instanz** | `spotify-premium.0` |
+| **Spotify-Gerät** | `Echo Küche` — Name des Connect-Geräts; die Liste zeigt die Geräte, die gerade online sind. Leer = das Gerät, das bei Spotify gerade spielt |
+| **Raum** | `Küche` — eine Anfrage von einem Satelliten in diesem Raum geht an diesen Player |
+
+Die erste Zeile ist der Standard. Der Assistent sucht so:
+
+- **Titel von Interpret** — erst mit Spotifys Feldfiltern (`track:… artist:…`), findet das nichts (die
+  Spracherkennung hört Namen oft ein wenig anders), als freier Text; gewinnt der Treffer mit passendem Titel und
+  Interpret, sonst Spotifys erster.
+- **Playlist** — zuerst deine eigenen Playlists, dann der Katalog.
+- **„… auf Spotify"** ohne Art-Wort — ein Interpret, eine Playlist, ein Album oder ein Titel dieses Namens.
+
+Schläft ein benanntes Gerät (Spotify meldet 404), übergibt spotify-premium die Wiedergabe dorthin und versucht es
+noch einmal. Ein Satz braucht ein Art-Wort (Lied, Song, Titel, Album, Band, Künstler, Playlist, Musik), die Form
+„*Titel* von *Interpret*" nach „spiel"/„play" oder das Wort Spotify — „spiel Queen" allein geht ans LLM. Nennt der
+Satz einen Fernseher oder „YouTube", läuft das Lied über YouTube (siehe oben). Pause, weiter, Lautstärke und „was
+läuft?" gehen über das LLM-Tool `music_player`, das Abspielen über `play_music`; Skripte nutzen
+`sendTo('assistant.0', 'playMusic', {query, artist, kind, player})`. Benötigt **Schreiben von States erlauben**.
+
 ### Routinen (eine Phrase, die mehreres tut)
 
 Eine Routine ist ein Makro, das du aufgeschrieben hast: eine Phrase, eine Liste von Aktionen, eine
