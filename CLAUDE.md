@@ -1308,6 +1308,10 @@ unsere Provider (openai/anthropic, evtl. später gemini/deepseek/custom) reduzie
 
 - **Vorbild-Adapter (Key-Storage):** `C:\pWork\ioBroker.javascript`.
 - **Python-Ursprung (Feature-Ideen, Satelliten-Protokoll):** `C:\iot\Hannah` (dessen `CLAUDE.md`).
+- **Gemeinsame sendTo-Befehle für Adapter-Familien** (Vorschlag 2026-11-21): `HELP.md` — Katalog
+  (message/speech/media/tv/screen/camera/history/…) mit vorhandenen Befehlen und Kandidaten, Markierung per
+  `standard: "<familie>.<befehl>"` in der `help`-Antwort. help-Vertrag selbst: `C:\pWork\_help\BRIEF.md`,
+  Stand pro Adapter: `C:\pWork\_help\STATUS.md`.
 - **Telegram-Integration (native `assistantInstance`→`ask`-Bridge):** `C:\pWork\ioBroker.telegram`
   (`src/main.ts:2476` sendTo, `:2509` `communicate.request` = `[user] text`).
 
