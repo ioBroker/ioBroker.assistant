@@ -56,6 +56,10 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   Geräte-NLU und smart-t2c `playGuessedMusic` mit `strict` (`findMusic` auto: nur Treffer mit passendem Namen, Interpret
   auch per `artistLike` — „Piano Guys“ = „The Piano Guys“); nichts Passendes → weiter ans LLM („spiel mit dem Hund“);
   Satellit ohne Player → erst Probesuche, dann `notHere`. „Musik von den Piano Guys“ → Artikel nach „von“ fällt weg.
+  Musik- und YouTube-Parser laufen jetzt **auch bei `useLocalNlu` aus** (wie die Schnellbefehle: nur Player aus den
+  Tabellen; pi-agent hat keine Tools dafür), die geratene Musik dann direkt vor `return null`. vitanova (useLocalNlu
+  aus, pi-agent): Zeile Salon → `spotify-premium.0` › „Vita Nova Salon“, Satellit `Salon` (2026-11-23, noch nicht
+  abgespielt — die Suche „Piano Guys“ liefert „The Piano Guys“ als ersten Interpreten).
   Die Adapter selbst markieren `standard` noch nicht (released) — dafür
   `C:\pWork\_help\STANDARD.md` + `standard-results/` (Branches `standard-commands`, lokal, ohne Push).
 - **Spotify, Phase 1 = sendTo-API in spotify-premium** (Nutzerwunsch 2026-11-20, `C:\pWork\ioBroker.spotify-premium`,

@@ -239,6 +239,7 @@ train it twice.
 -->
 ### **WORK IN PROGRESS**
 * (@GermanBluefox) Commands of other adapters by the shared catalog (`HELP.md`): the assistant asks the `help` of every instance and understands "ruf Anna an" (`phone.call`), "schick mir ein Bild der Haustür" (`camera.snapshot` → `message.send`), "zeige die Einfahrt auf dem Fernseher" (`screen.show`: camera, view, text) and plays music on the players of other adapters (`media.getPlayers`/`search`/`play`); message `getStandards`
+* (@GermanBluefox) Music and YouTube on the players of their tables are understood also with the rule-based commands switched off (pi-agent has no tools for them)
 * (@GermanBluefox) Music without a named player plays on the device that was spoken to (new column "Satellite" in the table, now "Music players", which also takes players of other adapters); "spiel die Piano Guys" works without a kind word and plays only something named like it
 * (@GermanBluefox) 3D plan: "zeig Unterdeck", "show the galley", "покажи кухню", "zeig das ganze Haus" make every open 3D view of home3d fly there (writes `home3d.N.show`); only names the plan knows (`home3d.N.places`) are taken, everything else goes on as before
 

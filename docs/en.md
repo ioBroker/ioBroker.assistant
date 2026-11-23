@@ -90,7 +90,8 @@ repeated), has its own write permissions with confirmations, and can take the sy
 Telegram user) gets a conversation of its own in pi-agent; style, follow-up marker, memory and device list go
 along as its instructions, time, weather and presence in front of each question. The tools of this adapter
 (timers, memory, announcements, YouTube) are not available to pi-agent — timers and alarms are still handled by
-the rule-based commands. Separate conversations need pi-agent with `conversation` support in `ask` (newer than
+the rule-based commands; music and YouTube on the players of their tables are understood without a model, even with
+"Answer simple commands locally" switched off. Separate conversations need pi-agent with `conversation` support in `ask` (newer than
 0.3.0); older versions answer everything in one conversation. If pi-agent is not running or fails, the local
 model answers, if enabled. A request from a satellite also carries `satellite` (its id under
 `assistant.0.satellites.*`) and `tts` (the full id of its `tts` state): pi-agent can keep them with a reminder or a

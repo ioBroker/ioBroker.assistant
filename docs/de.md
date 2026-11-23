@@ -93,7 +93,8 @@ systemweiten KI-Einstellungen von Admin nutzen (Systemeinstellungen, Reiter „K
 dort eingestellt, nicht hier. Jede Anfragequelle (Satellit, Chat, Telegram-Nutzer) bekommt in pi-agent eine eigene
 Unterhaltung; Stil, Rückfrage-Marker, Gedächtnis und Geräteliste gehen als deren Anweisungen mit, Uhrzeit, Wetter
 und Anwesenheit vor jeder Frage. Die Tools dieses Adapters (Timer, Gedächtnis, Durchsagen, YouTube) stehen
-pi-agent nicht zur Verfügung — Timer und Wecker erledigen weiterhin die regelbasierten Befehle. Getrennte
+pi-agent nicht zur Verfügung — Timer und Wecker erledigen weiterhin die regelbasierten Befehle; Musik und YouTube auf
+den Playern ihrer Tabellen versteht der Assistent ohne Modell, auch wenn „Einfache Befehle lokal beantworten“ aus ist. Getrennte
 Unterhaltungen brauchen ein pi-agent mit `conversation` in `ask` (neuer als 0.3.0); ältere Versionen beantworten
 alles in einer Unterhaltung. Läuft pi-agent nicht oder schlägt fehl, antwortet das lokale Modell, falls aktiviert.
 Eine Anfrage von einem Satelliten trägt zusätzlich `satellite` (seine Id unter `assistant.0.satellites.*`) und `tts`

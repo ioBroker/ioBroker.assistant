@@ -4857,13 +4857,10 @@ class Assistant extends Adapter {
         if (quick !== null) {
             return quick;
         }
-        // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
-        if (!this.config.useLocalNlu) {
-            this.journal?.step({ stage: 'nlu', title: 'Rule-based NLU is switched off (useLocalNlu)' });
-            return null;
-        }
         // "Spiel Bohemian Rhapsody von Queen" before YouTube and the device NLU: a song on a Spotify device, or on
-        // the TV when the sentence names one, says "auf YouTube" or there is no Spotify player.
+        // the TV when the sentence names one, says "auf YouTube" or there is no Spotify player. Music and YouTube
+        // run also with the rule NLU switched off: they only act on the players of their tables, and pi-agent has no
+        // tools for them.
         const music =
             this.musicPlayers.length || this.youtubePlayers.length
                 ? parseMusicCommand(question, this.musicPlayers, this.youtubePlayers)
@@ -4906,6 +4903,11 @@ class Assistant extends Adapter {
         }
         if (this.youtubePlayers.length) {
             this.journal?.step({ stage: 'youtube', title: 'Not a YouTube command' });
+        }
+        // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
+        if (!this.config.useLocalNlu) {
+            this.journal?.step({ stage: 'nlu', title: 'Rule-based NLU is switched off (useLocalNlu)' });
+            return guessed ? this.playGuessedMusic(guessed, source) : null;
         }
         try {
             const handled = await this.tryLocalNlu(question, source);
