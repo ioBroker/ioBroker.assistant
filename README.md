@@ -237,7 +237,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.14.0 (2026-11-23)
 * (@GermanBluefox) Commands of other adapters by the shared catalog (`HELP.md`): the assistant asks the `help` of every instance and understands "ruf Anna an" (`phone.call`), "schick mir ein Bild der Haustür" (`camera.snapshot` → `message.send`), "zeige die Einfahrt auf dem Fernseher" (`screen.show`: camera, view, text) and plays music on the players of other adapters (`media.getPlayers`/`search`/`play`); message `getStandards`
 * (@GermanBluefox) The cloud tier (LLM or pi-agent) gets "answer in <language>" after a question whose language is clear (its letters, the wake word or its words): pi-agent answered a Russian question in German after German turns
 * (@GermanBluefox) Music and YouTube on the players of their tables are understood also with the rule-based commands switched off (pi-agent has no tools for them)
@@ -262,11 +262,6 @@ train it twice.
 * (@sadam6752-tech) ESPHome satellites on an ESP32: two wake words can be active at once (the firmware reports a limit of one, but runs every wake word it is sent)
 * (@sadam6752-tech) ioBroker.voice gets the language of the speech (its model Canary 1B v2 uses it, Parakeet ignores it) and only the hints in the alphabet of the language
 * (@sadam6752-tech) Whisper (OpenAI and compatible servers) gets only the device and room names in Latin letters as hints for a language written in them: Russian names pulled German speech towards Cyrillic letters
-
-### 1.10.0 (2026-11-17)
-* (@GermanBluefox) ESPHome satellites: the adapter ships microWakeWord models ("ioBroker", "Hey Bro", "Alisa"); one click in the satellite settings puts one on the device and switches it on, replacing an older version of the same word
-* (@GermanBluefox) Wake words from a training run get a short name with their date, e.g. `261103_iobroker` instead of "20261103 085427 9b0f Microwakeword Iobroker"
-* (@GermanBluefox) A wake word selected right after it was uploaded is no longer dropped as unknown
 
 [Older changelogs can be found there](CHANGELOG_OLD.md)
 

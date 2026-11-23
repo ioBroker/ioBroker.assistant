@@ -1,4 +1,9 @@
 # Older changes
+## 1.10.0 (2026-11-17)
+* (@GermanBluefox) ESPHome satellites: the adapter ships microWakeWord models ("ioBroker", "Hey Bro", "Alisa"); one click in the satellite settings puts one on the device and switches it on, replacing an older version of the same word
+* (@GermanBluefox) Wake words from a training run get a short name with their date, e.g. `261103_iobroker` instead of "20261103 085427 9b0f Microwakeword Iobroker"
+* (@GermanBluefox) A wake word selected right after it was uploaded is no longer dropped as unknown
+
 ## 1.9.1 (2026-11-16)
 * (@GermanBluefox) The adapter ai-parakeet was renamed to voice: the speech recognition, the instance selection and the button "Install ioBroker.voice" use `voice` now. A saved instance `ai-parakeet.<n>` switches to `voice.<n>` by itself as soon as that instance exists
 
