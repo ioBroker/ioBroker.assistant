@@ -25,6 +25,13 @@ export interface MusicPlayer {
     /** Name or id of the Spotify Connect device; '' = the device that is active at Spotify */
     device: string;
     room: string;
+    /**
+     * A player of another adapter found by `help` (`media.getPlayers`): searched and played with the commands of the
+     * shared catalog (`media.search`, `media.getMedia`, `media.play`) instead of the ones of spotify-premium
+     */
+    standard?: boolean;
+    /** Id of the satellite (under `satellites.*`) that is this player or plays through it; '' = none */
+    satellite?: string;
 }
 
 /** One row of the settings table. */
@@ -33,6 +40,7 @@ export interface MusicPlayerRow {
     instance?: string;
     device?: string;
     room?: string;
+    satellite?: string;
 }
 
 /** What to play. */
@@ -43,6 +51,11 @@ export interface MusicRequest {
     query: string;
     /** The artist of a track or an album */
     artist?: string;
+    /**
+     * Only play what is named like the query (an artist, playlist, album or track): a request that was only guessed
+     * ("spiel die Piano Guys" without a kind word) must not play just anything
+     */
+    strict?: boolean;
 }
 
 /** Where music plays: Spotify (spotify-premium) or YouTube on a TV (youtube-remote). */
@@ -60,6 +73,11 @@ export interface MusicCommand extends MusicRequest {
     player?: string;
     /** Said ("auf Spotify", "auf YouTube") or the service of the named player; unset = the caller decides */
     service?: MusicService;
+    /**
+     * No kind word, only "spiel <something>": maybe an artist or a song, maybe not music at all ("spiel mit dem Hund").
+     * The caller tries it after the other local steps and plays only a hit named like it.
+     */
+    guess?: boolean;
 }
 
 /** Something found on Spotify. */
@@ -146,13 +164,14 @@ export function parseMusicPlayerRows(rows: MusicPlayerRow[] | undefined): MusicP
         }
         const device = String(row?.device ?? '').trim();
         const room = String(row?.room ?? '').trim();
+        const satellite = String(row?.satellite ?? '').trim();
         const name = String(row?.name ?? '').trim() || room || device || instance;
         const key = fold(name);
         if (seen.has(key)) {
             continue;
         }
         seen.add(key);
-        out.push({ name, instance, device, room });
+        out.push({ name, instance, device, room, ...(satellite ? { satellite } : {}) });
     }
     return out;
 }
@@ -382,12 +401,15 @@ export function parseMusicCommand(text: string, players: NamedPlayer[], tvs: Nam
 
     let kind: MusicKind | 'auto' | null = null;
     let byArtist = false;
+    /** The artist came after "von"/"от": "was von den Beatles" asks for "Beatles" */
+    let ofArtist = false;
     let place: Place | null = null;
     // Fillers, "auf Spotify", the kind word and the place may come in any order before the name. After the kind
     // word an article belongs to the title ("das Lied The Final Countdown").
     for (;;) {
         if (!kind && i + 1 < low.length && SOMETHING_WORDS.has(low[i]) && SOMETHING_OF.has(low[i + 1])) {
             kind = 'artist';
+            ofArtist = true;
             i += 2;
         } else if (!kind && i < low.length && FILLERS.has(low[i])) {
             i++;
@@ -416,6 +438,7 @@ export function parseMusicCommand(text: string, players: NamedPlayer[], tvs: Nam
             i++;
             if (i < low.length && SOMETHING_OF.has(low[i])) {
                 i++;
+                ofArtist = true;
             }
         } else if (!place && i < low.length) {
             // An unknown place only before the kind word: "das Lied Im Wagen vor mir" is a title.
@@ -508,16 +531,28 @@ export function parseMusicCommand(text: string, players: NamedPlayer[], tvs: Nam
         }
     }
     // "von den Beatles" → "Beatles"
-    const artistWords = artist.split(' ');
-    while (artistWords.length > 1 && ARTIST_ARTICLES.has(fold(artistWords[0]))) {
-        artistWords.shift();
+    const withoutArticle = (name: string): string => {
+        const list = name.split(' ');
+        while (list.length > 1 && ARTIST_ARTICLES.has(fold(list[0]))) {
+            list.shift();
+        }
+        return list.join(' ');
+    };
+    artist = withoutArticle(artist);
+    if (ofArtist) {
+        query = withoutArticle(query);
     }
-    artist = artistWords.join(' ');
+    let guess = false;
     if (!kind) {
         if (artist) {
             kind = 'track';
         } else if (sawSpotify) {
             kind = 'auto';
+        } else if (playVerb && !said && place?.service !== 'youtube') {
+            // "spiel die Piano Guys (in der Küche)": maybe music; "включи …" without a kind word is a device, and
+            // "… auf YouTube" / "… auf dem Fernseher" stays with the YouTube parser
+            kind = 'auto';
+            guess = true;
         } else {
             return null;
         }
@@ -532,6 +567,7 @@ export function parseMusicCommand(text: string, players: NamedPlayer[], tvs: Nam
         ...(artist ? { artist } : {}),
         ...(place ? { player: place.player } : {}),
         ...(service ? { service } : {}),
+        ...(guess ? { guess } : {}),
     };
 }
 
@@ -724,12 +760,18 @@ export async function findMusic(req: MusicRequest, search: SearchFn, playlists?:
         default: {
             const text = [query, artist].filter(Boolean).join(' ');
             const items = await search({ query: text, type: 'artist,playlist,album,track', limit: LIMIT });
+            // "Piano Guys" is the artist "The Piano Guys"
+            const named = (i: SpotifySearchItem): boolean =>
+                namedLike(text, i.name) || (i.type === 'artist' && artistLike(text, [i.name]));
             let best: SpotifySearchItem | undefined;
             for (const type of ['artist', 'playlist', 'album', 'track']) {
-                best = items.find(i => i.type === type && namedLike(text, i.name));
+                best = items.find(i => i.type === type && named(i));
                 if (best) {
                     break;
                 }
+            }
+            if (req.strict) {
+                return best ? ordered(items.filter(named), best) : [];
             }
             return ordered(items, best || items.find(i => i.type === 'track') || items[0]);
         }
@@ -737,6 +779,38 @@ export async function findMusic(req: MusicRequest, search: SearchFn, playlists?:
 }
 
 // ── Playing ─────────────────────────────────────────────────────────────────
+
+/** Where a request was asked: the satellite and its names, and its room. */
+export interface MusicHere {
+    /** Id of the satellite under `satellites.*`; '' = not asked on a satellite (chat, Telegram, script) */
+    satellite: string;
+    /** Other names of the satellite (the device name) */
+    names?: string[];
+    room?: string;
+}
+
+/**
+ * The player of a request: the named one; without a name the satellite that was spoken to — the player linked to it
+ * (column "Satellite"), a player named like it, else the player in its room — and null when there is none, so the
+ * music does not start in another room. Without a satellite (chat, Telegram) the first player.
+ *
+ * @param players the music players
+ * @param wanted the player or room as said
+ * @param here where the request was asked
+ */
+export function playerFor(players: MusicPlayer[], wanted: string | undefined, here: MusicHere): MusicPlayer | null {
+    if (wanted?.trim() || !here.satellite) {
+        return findPlayer(players, wanted, here.room || '');
+    }
+    const same = (a: string | undefined, b: string | undefined): boolean => !!a && !!b && fold(a) === fold(b);
+    const names = [here.satellite, ...(here.names || [])].filter(Boolean);
+    return (
+        players.find(p => same(p.satellite, here.satellite)) ||
+        players.find(p => names.some(n => same(n, p.name) || same(n, p.device))) ||
+        (here.room ? players.find(p => same(p.room, here.room) || same(p.name, here.room)) : undefined) ||
+        null
+    );
+}
 
 /** Outcome of {@link playMusic}: the reply to speak plus what was found. */
 export interface MusicPlayResult {
@@ -777,6 +851,27 @@ function unwrap(answer: unknown): Record<string, any> {
 }
 
 /**
+ * {@link findMusic} through the messages of a player's adapter (`search`, `getPlaylists`); throws a
+ * {@link MusicError} when the adapter cannot answer.
+ *
+ * @param req what to find
+ * @param ask the way to the adapter
+ */
+export async function searchMusic(req: MusicRequest, ask: MusicDeps['ask']): Promise<MusicHit[]> {
+    return findMusic(
+        req,
+        async request => {
+            const items = unwrap(await ask('search', request)).items;
+            return Array.isArray(items) ? items : [];
+        },
+        async search => {
+            const list = unwrap(await ask('getPlaylists', { search })).playlists;
+            return Array.isArray(list) ? list : [];
+        },
+    );
+}
+
+/**
  * Find something and play it on a player.
  *
  * @param req what to play
@@ -797,17 +892,7 @@ export async function playMusic(req: MusicRequest, player: MusicPlayer, deps: Mu
     };
     let hits: MusicHit[];
     try {
-        hits = await findMusic(
-            req,
-            async request => {
-                const items = unwrap(await deps.ask('search', request)).items;
-                return Array.isArray(items) ? items : [];
-            },
-            async search => {
-                const list = unwrap(await deps.ask('getPlaylists', { search })).playlists;
-                return Array.isArray(list) ? list : [];
-            },
-        );
+        hits = await searchMusic(req, deps.ask);
     } catch (e) {
         return fail(e);
     }
@@ -898,6 +983,7 @@ export type MusicReplyKey =
     | 'notControllable'
     | 'premium'
     | 'unknownPlayer'
+    | 'notHere'
     | 'noControl';
 
 /** What a reply names. */
@@ -1043,6 +1129,8 @@ export function musicReply(lang: string, key: MusicReplyKey, v: MusicReplyValues
                 return 'Dafür braucht Spotify ein Premium-Konto.';
             case 'unknownPlayer':
                 return `Einen Musik-Player „${v.query}“ kenne ich nicht. Ich kenne: ${v.names}.`;
+            case 'notHere':
+                return `Auf diesem Gerät kann ich keine Musik abspielen. Sag, wo: ${v.names}.`;
             case 'noControl':
                 return 'Die Gerätesteuerung ist in den Einstellungen ausgeschaltet.';
         }
@@ -1071,6 +1159,8 @@ export function musicReply(lang: string, key: MusicReplyKey, v: MusicReplyValues
                 return 'Для этого нужен аккаунт Spotify Premium.';
             case 'unknownPlayer':
                 return `Музыкальный плеер «${v.query}» мне не известен. Я знаю: ${v.names}.`;
+            case 'notHere':
+                return `На этом устройстве я не могу включить музыку. Скажи, где: ${v.names}.`;
             case 'noControl':
                 return 'Управление устройствами отключено в настройках.';
         }
@@ -1098,6 +1188,8 @@ export function musicReply(lang: string, key: MusicReplyKey, v: MusicReplyValues
             return 'This needs a Spotify Premium account.';
         case 'unknownPlayer':
             return `I don't know a music player "${v.query}". I know: ${v.names}.`;
+        case 'notHere':
+            return `I can't play music on this device. Say where: ${v.names}.`;
         case 'noControl':
             return 'Device control is switched off in the settings.';
     }

@@ -17,6 +17,8 @@ const {
     namedLike,
     artistLike,
     findMusicPlayer,
+    playerFor,
+    searchMusic,
     MusicError,
     ADAPTER_DOWN,
     OUTDATED,
@@ -106,7 +108,8 @@ test('parseMusicCommand: the word Spotify — without a kind word the search dec
         query: 'Party',
         service: 'spotify',
     });
-    assert.equal(parse('spiel Queen'), null);
+    // without a kind word only guessed: the caller plays only something named like it
+    assert.deepEqual(parse('spiel Queen'), { kind: 'auto', query: 'Queen', guess: true });
 });
 
 test('parseMusicCommand: players and rooms, before and after the name', () => {
@@ -229,6 +232,75 @@ test('parseMusicCommand: a clip is a music video on YouTube, only TVs count as i
         query: 'Bohemian Rhapsody Queen',
         kind: 'video',
     });
+});
+
+test('parseMusicCommand: "spiel die Piano Guys" without a kind word is a guess; the article after "von" goes', () => {
+    assert.deepEqual(parse('Spiele die Piano Guys'), { kind: 'auto', query: 'Piano Guys', guess: true });
+    assert.deepEqual(parse('play the Piano Guys'), { kind: 'auto', query: 'Piano Guys', guess: true });
+    assert.deepEqual(parse('Сыграй Piano Guys'), { kind: 'auto', query: 'Piano Guys', guess: true });
+    assert.deepEqual(parse('Spiele Piano Guys in der Küche'), {
+        kind: 'auto',
+        query: 'Piano Guys',
+        player: 'Küche',
+        service: 'spotify',
+        guess: true,
+    });
+    // the caller finds nothing named like it and lets the LLM answer
+    assert.deepEqual(parse('Spiel mit dem Hund'), { kind: 'auto', query: 'mit dem Hund', guess: true });
+    // "включи" without a kind word is a device; YouTube and the TV stay with the YouTube parser
+    assert.equal(parse('Включи Piano Guys'), null);
+    assert.equal(parse('spiel Sailing OceanAir auf YouTube'), null);
+    assert.equal(parse('spiel Queen auf dem Fernseher'), null);
+    assert.equal(parse('Spiel im Garten'), null);
+    assert.deepEqual(parse('Spiel was von den Piano Guys'), { kind: 'artist', query: 'Piano Guys' });
+    assert.deepEqual(parse('Spiele Musik von den Piano Guys'), { kind: 'artist', query: 'Piano Guys' });
+    // an article of the name itself stays: "die Band Die Ärzte"
+    assert.deepEqual(parse('Spiele die Band Die Ärzte'), { kind: 'artist', query: 'Die Ärzte' });
+});
+
+test('playerFor: the device that was spoken to plays — its row, its name, its room, else none; chat = first', () => {
+    const players = [
+        { name: 'Küche', instance: 'spotify-premium.0', device: 'Echo', room: 'Küche' },
+        {
+            name: 'Flur-Box',
+            instance: 'music-assistant.0',
+            device: 'ma_1',
+            room: '',
+            satellite: 'Flur',
+            standard: true,
+        },
+        { name: 'Bad Speaker', instance: 'music-assistant.0', device: 'ma_2', room: 'Bad', standard: true },
+    ];
+    const name = (wanted, here) => playerFor(players, wanted, here)?.name ?? null;
+    assert.equal(name(undefined, { satellite: 'Flur', room: 'Flur' }), 'Flur-Box');
+    assert.equal(name(undefined, { satellite: 'Küche', room: 'Küche' }), 'Küche');
+    assert.equal(name(undefined, { satellite: 'x', names: ['bad speaker'] }), 'Bad Speaker');
+    assert.equal(name(undefined, { satellite: 'Bad', room: 'Bad' }), 'Bad Speaker');
+    // a satellite without a player: no music in another room
+    assert.equal(name(undefined, { satellite: 'Garage', room: 'Garage' }), null);
+    // chat, Telegram: the first row
+    assert.equal(name(undefined, { satellite: '' }), 'Küche');
+    // a named player wins, also on a satellite; an unknown one is none
+    assert.equal(name('Bad', { satellite: 'Garage', room: 'Garage' }), 'Bad Speaker');
+    assert.equal(name('Dachboden', { satellite: 'Garage', room: 'Garage' }), null);
+});
+
+test('findMusic strict: only something named like it, "Piano Guys" is the artist "The Piano Guys"', async () => {
+    const items = {
+        'piano guys': [
+            { type: 'track', uri: 'spotify:track:t', name: 'Let It Go', artists: ['The Piano Guys'] },
+            { type: 'artist', uri: 'spotify:artist:a', name: 'The Piano Guys' },
+        ],
+        'mit dem hund': [{ type: 'track', uri: 'spotify:track:h', name: 'Hundeleben', artists: ['Wilhelm'] }],
+    };
+    const ask = async (command, message) =>
+        command === 'search' ? { items: items[message.query.toLowerCase()] || [] } : { playlists: [] };
+    const found = await searchMusic({ kind: 'auto', query: 'Piano Guys', strict: true }, ask);
+    assert.equal(found[0].uri, 'spotify:artist:a');
+    assert.deepEqual(await searchMusic({ kind: 'auto', query: 'mit dem Hund', strict: true }, ask), []);
+    // not strict: the first track as before
+    const loose = await searchMusic({ kind: 'auto', query: 'mit dem Hund' }, ask);
+    assert.equal(loose[0].uri, 'spotify:track:h');
 });
 
 test('parseMusicCommand: not a play command', () => {
@@ -409,17 +481,29 @@ test('playMusic: search, play on the configured device, reply with what plays', 
 
 test('playMusic: not found, device offline, nothing active, adapter down, too old, not authorized', async () => {
     const opts = (ask, language = 'de') => ({ ask, language, sayPlayer: false });
-    let res = await playMusic({ kind: 'track', query: 'Xyzzy' }, PLAYERS[0], opts(fakeSpotify({ search: { items: [] } }).ask));
+    let res = await playMusic(
+        { kind: 'track', query: 'Xyzzy' },
+        PLAYERS[0],
+        opts(fakeSpotify({ search: { items: [] } }).ask),
+    );
     assert.equal(res.reason, 'NOT_FOUND');
     assert.equal(res.text, 'Ich habe auf Spotify keinen Titel „Xyzzy“ gefunden.');
 
     const failing = answer => opts(fakeSpotify({ search: { items: [QUEEN] }, play: answer }).ask);
-    res = await playMusic({ kind: 'track', query: 'x' }, PLAYERS[0], failing({ error: 'Device not found', reason: 'DEVICE_NOT_FOUND' }));
+    res = await playMusic(
+        { kind: 'track', query: 'x' },
+        PLAYERS[0],
+        failing({ error: 'Device not found', reason: 'DEVICE_NOT_FOUND' }),
+    );
     assert.equal(res.ok, false);
     assert.equal(res.hit.uri, 'spotify:track:t1');
     assert.equal(res.text, 'Das Gerät „Echo Küche“ ist bei Spotify gerade nicht online.');
 
-    res = await playMusic({ kind: 'track', query: 'x' }, PLAYERS[1], failing({ error: 'x', reason: 'NO_ACTIVE_DEVICE' }));
+    res = await playMusic(
+        { kind: 'track', query: 'x' },
+        PLAYERS[1],
+        failing({ error: 'x', reason: 'NO_ACTIVE_DEVICE' }),
+    );
     assert.match(res.text, /kein Spotify-Gerät aktiv/);
 
     res = await playMusic(
@@ -447,7 +531,11 @@ test('playMusic: not found, device offline, nothing active, adapter down, too ol
     assert.match(res.text, /nicht mehr bei Spotify angemeldet/);
 
     // an error without reason
-    res = await playMusic({ kind: 'track', query: 'x' }, PLAYERS[0], opts(fakeSpotify({ search: new Error('boom') }).ask));
+    res = await playMusic(
+        { kind: 'track', query: 'x' },
+        PLAYERS[0],
+        opts(fakeSpotify({ search: new Error('boom') }).ask),
+    );
     assert.equal(res.reason, 'FAILED');
 });
 
@@ -464,17 +552,27 @@ test('musicReply: every reply in every language, played by uri is not read out',
         'notControllable',
         'premium',
         'unknownPlayer',
+        'notHere',
         'noControl',
     ];
     const hit = { kind: 'album', uri: 'spotify:album:a', name: 'Jazz', artists: ['Queen'] };
     for (const lang of ['de', 'en', 'ru']) {
         for (const key of keys) {
-            const text = musicReply(lang, key, { hit, query: 'x', names: 'Küche', instance: 'spotify-premium.0', device: 'Echo' });
+            const text = musicReply(lang, key, {
+                hit,
+                query: 'x',
+                names: 'Küche',
+                instance: 'spotify-premium.0',
+                device: 'Echo',
+            });
             assert.ok(text && !text.includes('undefined'), `${lang}/${key}: ${text}`);
         }
     }
     assert.equal(musicReply('de', 'playing', { hit }), 'Ich spiele das Album „Jazz“ von Queen.');
-    assert.equal(musicReply('ru', 'playing', { hit: { ...hit, kind: 'playlist', name: 'Утро' } }), 'Включаю плейлист «Утро».');
+    assert.equal(
+        musicReply('ru', 'playing', { hit: { ...hit, kind: 'playlist', name: 'Утро' } }),
+        'Включаю плейлист «Утро».',
+    );
     assert.equal(
         musicReply('en', 'playing', { hit: { kind: 'track', uri: 'spotify:track:x', name: 'spotify:track:x' } }),
         'Playing the selection.',

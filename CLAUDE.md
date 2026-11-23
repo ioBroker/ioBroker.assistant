@@ -19,6 +19,45 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Schnellbefehle über den gemeinsamen Katalog** (Nutzerwunsch 2026-11-21: „die Schnellbefehle doch direkt vom
+  Assistant … Zeige…, Rufe…“; nicht committet, nicht live). `src/lib/standards.ts` `StandardRegistry`: fragt `help`
+  jeder laufenden Instanz mit `common.supportedMessages.help` (nie sich selbst, 4 parallel, 5 s Timeout), merkt
+  `commands[].standard` (`family.command`, auch als Liste) → `find(standard)`/`commandOf`/`has`; TTL 10 min, `main`
+  fragt 15 s nach dem Start und dann alle 9 min neu (`refreshStandards`, auch Listen-Cache leeren + Musik-Player).
+  `standardError` (Regel 4), `listOf` (`{things:[…]}`, nacktes Array, `[{value,label}]`), `pictureOf` (nur
+  `{data, contentType}`/Data-URL — kein Buffer, kein Host-Pfad), `redactPictures` (Trace). `src/lib/quick.ts`:
+  `parseCallCommand` („Ruf X an“, „X anrufen“, „verbinde mich mit“, call/connect me with, позвони/набери/соедини меня с;
+  „ruf mich an“/„wer hat angerufen“ → null), `parseShowOnCommand` (zeig/show/покажи … letzte Präposition auf/im/am/in/
+  on/на/в = Bildschirm), `showTarget` (camera — auch „Einfahrt-Kamera“/„Gartenkamera“ —, view, text wörtlich, unknown),
+  `parsePictureCommand` (schick/send/пришли + mir|Name + Bild/Foto/фото … + Kamera, „per Telegram“ fällt weg),
+  `nameFits` (Endungen: „Анне“/„Анна“, „кухню“/„Кухня“), `pickNamed` (exakt Name → Raum → passend), `quickReply` de/en/ru.
+  `main.ts`: `quickCommand` in `answerLocally` direkt nach home3d (unabhängig von `useLocalNlu`, wie home3d: nur Namen,
+  die die Adapter liefern) — `quickCall` (`phone.call {to, room?}` reihum, NOT_FOUND mit `candidates` → passender Name
+  ein zweites Mal), `quickPicture` (`camera.getCameras` → `camera.snapshot` → `message.send {text, file: Data-URL,
+  recipient?}`; „mir“ = Chat der Anfrage: `requestOrigin.caller` = `obj.from` des `ask`, `recipient` = `chatId`/`user`,
+  sonst Standard-Empfänger; Name → `message.getRecipients`), `quickShow` (`screen.getScreens`, Instanz ohne Liste = ein
+  Bildschirm; Kamera live bei `kinds` mit camera, sonst Snapshot als `image`, ohne `kinds` erst live, bei
+  NOT_SUPPORTED Snapshot; Ansicht aus `views`; ohne Bildschirm: einziger, sonst der im Raum, sonst Rückfrage; „zeig
+  mir die Haustür“ ohne Bildschirm im Telegram-Chat → Bild in den Chat; braucht `allowWriteStates`). Musik:
+  `musicPlayers` ist jetzt ein Getter = Tabelle (`configuredMusicPlayers`) + `discoveredMusicPlayers` (Instanzen mit
+  `media.getPlayers`+`media.search`+`media.play`, nicht in der Tabelle; `MusicPlayer.standard`) → `askMusicStandard`
+  übersetzt `search` (+`title`), `getPlaylists` → `media.getMedia {list:'playlists'}`, `play`. LLM-Tools pro Familie
+  fehlen noch (die Musik-Tools gibt es weiter nur mit Tabelle). sendTo `getStandards {refresh?}`. Trace-Stufe
+  `standard` („Adapter-Befehl“, GUI `journal.ts`). Tests: `standards.test.js`; main per Wegwerf-Harness (Fake cameras/
+  aura/telegram/asterisk/music-assistant). **Musik auf dem Gerät, mit dem man spricht** (Nutzerwunsch 2026-11-23):
+  `music.playerFor(players, wanted, here)` — ohne genannten Player die Zeile mit Spalte `satellite` (= id unter
+  `satellites.*`), sonst ein Player mit dem Namen des Satelliten/Geräts, sonst der im Raum, sonst **null** →
+  `notHere` („Auf diesem Gerät kann ich keine Musik abspielen. Sag, wo: …“, statt Musik in einem anderen Raum);
+  Chat/Telegram = erste Zeile. Tabelle heißt jetzt „Musik-Player“, Instanzliste nimmt auch Instanzen mit
+  `media.play`+`media.search`+`media.getPlayers` (Zeile → `standard`), Geräteliste dann per `media.getPlayers`
+  (`{label, value: id}`), Spalte Satellit per `getSatelliteChoices`; gefundene Player werden nur ausgelassen, wenn sie
+  als Zeile in der Tabelle stehen (nicht mehr die ganze Instanz). **„Spiel die Piano Guys“ ohne Art-Wort**:
+  `MusicCommand.guess` (nur Spiel-Verb, nicht „включи“, nicht bei YouTube/Fernseher) → erst nach YouTube-Parser,
+  Geräte-NLU und smart-t2c `playGuessedMusic` mit `strict` (`findMusic` auto: nur Treffer mit passendem Namen, Interpret
+  auch per `artistLike` — „Piano Guys“ = „The Piano Guys“); nichts Passendes → weiter ans LLM („spiel mit dem Hund“);
+  Satellit ohne Player → erst Probesuche, dann `notHere`. „Musik von den Piano Guys“ → Artikel nach „von“ fällt weg.
+  Die Adapter selbst markieren `standard` noch nicht (released) — dafür
+  `C:\pWork\_help\STANDARD.md` + `standard-results/` (Branches `standard-commands`, lokal, ohne Push).
 - **Spotify, Phase 1 = sendTo-API in spotify-premium** (Nutzerwunsch 2026-11-20, `C:\pWork\ioBroker.spotify-premium`,
   **released als 3.3.0/3.3.1** am 2026-11-20 — 3.3.0 scheiterte im CI am Prettier-Lint und kam nie auf npm —,
   auf dem master nach 3.2.0 = dessen eigenes `help` für die States; Release dort mit `-c` ohne `manual-review`, das

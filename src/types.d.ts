@@ -128,7 +128,7 @@ export interface AdapterConfig {
      * Spotify players: a spotify-premium instance and optionally its Spotify Connect device (name or id; empty =
      * the device that is active at Spotify); the first row is the default, `room` takes the requests of that room.
      */
-    musicPlayers: { name?: string; instance: string; device?: string; room?: string }[];
+    musicPlayers: { name?: string; instance: string; device?: string; room?: string; satellite?: string }[];
     /**
      * Reword system notifications with the LLM before speaking them (default on). Their raw texts are
      * written for a log viewer, so this is where the feature earns its keep; `direct` severity always

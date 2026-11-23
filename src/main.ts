@@ -62,8 +62,30 @@ import { describeTargets, findTarget, isBroadcast, parseTargetRows, type TargetG
 import { matchRoutine, parseRoutineRows, type Routine } from './lib/routines';
 import { isShowRequest, parsePlaces, parseShowCommand, showLanguage, showReply, type ShowCommand } from './lib/home3d';
 import {
+    StandardRegistry,
+    listOf,
+    pictureOf,
+    redactPictures,
+    standardError,
+    REGISTRY_TTL_MS,
+    type StandardCommand,
+} from './lib/standards';
+import {
+    nameFits,
+    parseCallCommand,
+    parsePictureCommand,
+    parseShowOnCommand,
+    pickNamed,
+    quickReply,
+    showTarget,
+    type CallCommand,
+    type PictureCommand,
+    type ShowOnCommand,
+} from './lib/quick';
+import {
     directYouTubeTarget,
     findPlayer,
+    fold,
     isNamedChannel,
     isPowerOn,
     parsePlayerRows,
@@ -89,6 +111,8 @@ import {
     parseMusicCommand,
     parseMusicPlayerRows,
     playMusic,
+    playerFor,
+    searchMusic,
     spotifyTooOld,
     youtubeMusicQuery,
     type MusicCommand,
@@ -350,6 +374,18 @@ const TV_POWER_TIMEOUT_MS = 30_000;
 const YOUTUBE_ACK_TIMEOUT_MS = 8000;
 /** Wait at most this long for spotify-premium: a search plus, on a sleeping device, a transfer and a second try. */
 const SPOTIFY_TIMEOUT_MS = 15000;
+/** The time another adapter gets for a command of the shared catalog (HELP.md rule 9: ~15 s, then `pending`). */
+const STANDARD_TIMEOUT_MS = 20000;
+/** How long the lists of other adapters (`camera.getCameras`, `screen.getScreens` …) are reused. */
+const STANDARD_LIST_MS = 60000;
+/** A thing of another adapter's list (a camera, a screen, a recipient), with the instance that listed it. */
+interface StandardItem {
+    id: string;
+    name: string;
+    room?: string;
+    raw: Record<string, unknown>;
+    instance: string;
+}
 /** Pause before the play command is repeated once on a TV that just booted. */
 const YOUTUBE_RETRY_MS = 5000;
 
@@ -653,8 +689,25 @@ class Assistant extends Adapter {
     private announceTargets: TargetGroup[] = [];
     /** YouTube players from the configuration; the first one is the default. */
     private youtubePlayers: YouTubePlayer[] = [];
-    /** Spotify Connect devices through spotify-premium (`musicPlayers`) */
-    private musicPlayers: MusicPlayer[] = [];
+    /** Spotify Connect devices through spotify-premium (the settings table `musicPlayers`) */
+    private configuredMusicPlayers: MusicPlayer[] = [];
+    /**
+     * Players of other music adapters with `media.getPlayers`, `media.search` and `media.play` of the shared catalog
+     * (HELP.md), found by `help`; instances of the settings table are not repeated.
+     */
+    private discoveredMusicPlayers: MusicPlayer[] = [];
+    /** The players music can go to: the settings table first, then the ones found by `help`. */
+    private get musicPlayers(): MusicPlayer[] {
+        return this.discoveredMusicPlayers.length
+            ? [...this.configuredMusicPlayers, ...this.discoveredMusicPlayers]
+            : this.configuredMusicPlayers;
+    }
+    /** Commands of other adapters that follow the shared catalog (HELP.md), from their `help`. Null until onReady. */
+    private standards: StandardRegistry | null = null;
+    /** Lists of other adapters (`camera.getCameras`, `screen.getScreens` …) for a short while, by standard. */
+    private readonly standardLists = new Map<string, { ts: number; items: StandardItem[] }>();
+    private standardsTimer: ReturnType<typeof setTimeout> | null = null;
+    private standardsInterval: ReturnType<typeof setInterval> | null = null;
     /**
      * Where the request being answered came from, for the LLM tools: a tool only gets the model's
      * arguments, but "play X" from the bedroom satellite should go to the bedroom TV.
@@ -673,6 +726,10 @@ class Assistant extends Adapter {
          * '' = the voice language. pi-agent asks its yes/no questions in it, so the answer is understood.
          */
         listenLanguage: string;
+        /** The instance that sent the `ask` (`telegram.0`): "schick mir …" answers into its chat */
+        caller: string;
+        /** Who asked there (Telegram chat id or user), the recipient of "mir" */
+        recipient: string;
     }>();
     /** Who is at home (roadmap B1); mirrored into `presence.*`. Null until onReady. */
     private presence: PresenceTracker | null = null;
@@ -828,11 +885,14 @@ class Assistant extends Adapter {
                 tools.push(...this.buildYouTubeTools());
                 this.log.info(`YouTube players: ${this.youtubePlayers.map(p => p.name).join(', ')}.`);
             }
-            this.musicPlayers = parseMusicPlayerRows(cfg.musicPlayers);
-            if (this.musicPlayers.length) {
+            // a row of another adapter than spotify-premium plays through the commands of the shared catalog
+            this.configuredMusicPlayers = parseMusicPlayerRows(cfg.musicPlayers).map(p =>
+                p.instance.startsWith('spotify-premium.') ? p : { ...p, standard: true },
+            );
+            if (this.configuredMusicPlayers.length) {
                 tools.push(...this.buildMusicTools());
                 this.log.info(
-                    `Music players: ${this.musicPlayers.map(p => `${p.name} (${p.instance}${p.device ? ` › ${p.device}` : ''})`).join(', ')}.`,
+                    `Music players: ${this.configuredMusicPlayers.map(p => `${p.name} (${p.instance}${p.device ? ` › ${p.device}` : ''})`).join(', ')}.`,
                 );
             }
             this.log.info(`ioBroker tools enabled (${tools.length}): ${tools.map(t => t.name).join(', ')}`);
@@ -882,6 +942,23 @@ class Assistant extends Adapter {
 
         await this.setStateAsync('info.connection', { val: true, ack: true });
         this.ready = true;
+        // The shared commands of other adapters: asked in the background, so the first request does not wait for
+        // the `help` of every instance; again shortly before the registry would ask by itself
+        this.standards = new StandardRegistry({
+            namespace: this.namespace,
+            getObjectViewAsync: (design, search, params) => this.getObjectViewAsync(design, search, params),
+            getForeignStateAsync: id => this.getForeignStateAsync(id),
+            sendToAsync: (instance, command, message, options) => this.sendToAsync(instance, command, message, options),
+            log: this.log,
+        });
+        this.standardsTimer = setTimeout(() => {
+            this.standardsTimer = null;
+            this.refreshStandards().catch(e => this.log.debug(`Shared commands: ${(e as Error).message}`));
+        }, 15000);
+        this.standardsInterval = setInterval(
+            () => this.refreshStandards().catch(e => this.log.debug(`Shared commands: ${(e as Error).message}`)),
+            REGISTRY_TTL_MS - 60000,
+        );
         this.subscribeStates('text.request');
         // Meta object backing this instance's file storage (so the admin can upload sound assets and the
         // adapter can read them back for timer/alarm jingles).
@@ -3726,14 +3803,41 @@ class Assistant extends Adapter {
             return;
         }
 
-        // Settings: the columns "Spotify instance" and "Device" of the music table.
-        if (obj.command === 'getSpotifyInstances' || obj.command === 'getSpotifyDevices') {
+        // Settings: the columns "Instance", "Device" and "Satellite" of the music table.
+        if (
+            obj.command === 'getSpotifyInstances' ||
+            obj.command === 'getSpotifyDevices' ||
+            obj.command === 'getSatelliteChoices'
+        ) {
             const list =
                 obj.command === 'getSpotifyInstances'
                     ? await this.getSpotifyInstances()
-                    : await this.getSpotifyDevices((obj.message as { instance?: unknown } | null)?.instance);
+                    : obj.command === 'getSatelliteChoices'
+                      ? await this.getSatelliteChoices()
+                      : await this.getSpotifyDevices((obj.message as { instance?: unknown } | null)?.instance);
             if (obj.callback) {
                 this.sendTo(obj.from, obj.command, list, obj.callback);
+            }
+            return;
+        }
+
+        // Scripts / debugging: the commands of other adapters that follow the shared catalog (HELP.md).
+        // message = { refresh?: true } → { commands: [{instance, command, standard, write}], musicPlayers }
+        if (obj.command === 'getStandards') {
+            const m = (obj.message || {}) as { refresh?: unknown };
+            if (m.refresh === true) {
+                await this.refreshStandards().catch(() => {});
+            }
+            const res = {
+                commands: this.standards?.list() || [],
+                musicPlayers: this.discoveredMusicPlayers.map(p => ({
+                    name: p.name,
+                    instance: p.instance,
+                    device: p.device,
+                })),
+            };
+            if (obj.callback) {
+                this.sendTo(obj.from, obj.command, res, obj.callback);
             }
             return;
         }
@@ -4239,7 +4343,12 @@ class Assistant extends Adapter {
         this.setQuerySource(source);
         try {
             const spoken = typeof message !== 'string' && message?.spoken === true;
-            const answer = await this.answer(question, source, heard ?? {}, attachments, spoken);
+            const asker = typeof message === 'string' ? undefined : (message as { chatId?: unknown; user?: unknown });
+            const recipient = asker?.chatId ?? asker?.user;
+            const answer = await this.answer(question, source, heard ?? {}, attachments, spoken, {
+                caller,
+                recipient: typeof recipient === 'string' || typeof recipient === 'number' ? String(recipient) : '',
+            });
             this.log.info(`A: ${answer}`);
             this.setStateAsync('text.response', { val: answer, ack: true }).catch(() => {});
             if (obj.callback) {
@@ -4361,6 +4470,8 @@ class Assistant extends Adapter {
         attachments: Attachments = NO_ATTACHMENTS,
         /** The answer is read aloud although the request came by `ask` (dialog mode of the admin chat). */
         spoken = false,
+        /** The instance that sent the `ask` and who asked there (for "schick mir …") */
+        sender: { caller?: string; recipient?: string } = {},
     ): Promise<string> {
         if (!question.trim() && !attachments.video) {
             // Nothing to answer — and a model asked with nothing but the time context still costs a request.
@@ -4377,7 +4488,17 @@ class Assistant extends Adapter {
         // "скажи, сколько сейчас времени" on a German satellite: the time comes in Russian
         const language = questionLanguage(question, configured);
         return this.requestOrigin.run(
-            { source, room: origin.room || '', voice, satellite, attachments, language, listenLanguage },
+            {
+                source,
+                room: origin.room || '',
+                voice,
+                satellite,
+                attachments,
+                language,
+                listenLanguage,
+                caller: sender.caller || '',
+                recipient: sender.recipient || '',
+            },
             () =>
                 this.journal
                     ? this.journal.run(shown, source, origin, () => {
@@ -4730,6 +4851,12 @@ class Assistant extends Adapter {
                 return shown;
             }
         }
+        // "Ruf Anna an", "Schick mir ein Bild der Haustür", "Zeige die Einfahrt auf dem Fernseher": the commands of
+        // the shared catalog that other adapters offer (HELP.md); only names those adapters list are taken
+        const quick = await this.quickCommand(question);
+        if (quick !== null) {
+            return quick;
+        }
         // Tier 0: rule-based NLU (device commands) — fastest, offline, free.
         if (!this.config.useLocalNlu) {
             this.journal?.step({ stage: 'nlu', title: 'Rule-based NLU is switched off (useLocalNlu)' });
@@ -4742,7 +4869,9 @@ class Assistant extends Adapter {
                 ? parseMusicCommand(question, this.musicPlayers, this.youtubePlayers)
                 : null;
         const musicService = music ? this.musicServiceFor(music) : null;
-        if (music && musicService) {
+        // "spiel die Piano Guys" was only guessed: the YouTube parser, the device NLU and smart-text2command first
+        const guessed = music?.guess && musicService === 'spotify' ? music : null;
+        if (music && musicService && !music.guess) {
             const what = `${music.kind} "${music.query}"${music.artist ? ` by "${music.artist}"` : ''}`;
             this.log.info(`Music request understood locally: ${what} on ${musicService} (source='${source}').`);
             this.journal?.note({ tier: 'nlu', detail: `music ${musicService} ${music.kind}` });
@@ -4756,7 +4885,7 @@ class Assistant extends Adapter {
             });
             return res.text;
         }
-        if (this.musicPlayers.length) {
+        if (this.musicPlayers.length && !guessed) {
             this.journal?.step({ stage: 'music', title: 'Not a music command' });
         }
         // "Spiele den Kanal X ab" first: the device NLU would find the TV in "… auf dem Fernseher" and
@@ -4797,9 +4926,47 @@ class Assistant extends Adapter {
         if (this.smartT2c) {
             const start = Date.now();
             const outcome = await this.smartT2c.ask(question, source, baseLanguage(this.answerLanguage()));
-            return this.useSmartT2c(outcome, source, Date.now() - start, false);
+            const t2c = await this.useSmartT2c(outcome, source, Date.now() - start, false);
+            if (t2c !== null || !guessed) {
+                return t2c;
+            }
         }
-        return null;
+        return guessed ? this.playGuessedMusic(guessed, source) : null;
+    }
+
+    /**
+     * "Spiel die Piano Guys": no kind word, so only an artist, playlist, album or track named like it is played;
+     * anything else ("spiel mit dem Hund") goes on to the next step.
+     */
+    private async playGuessedMusic(music: MusicCommand, source: string): Promise<string | null> {
+        const start = Date.now();
+        const req: MusicRequest = { ...music, strict: true };
+        const res = await this.playMusicRequest(req, music.player, 'spotify');
+        // taken only when something is named like it; a satellite without a player first has to show that it is music
+        let taken = res.ok || typeof res.uri === 'string';
+        if (!taken && res.reason === 'NO_PLAYER_HERE') {
+            const probe = this.musicPlayers[0];
+            try {
+                taken =
+                    (await searchMusic(req, (command, message) => this.askMusicOf(probe, command, message))).length > 0;
+            } catch {
+                taken = false;
+            }
+        }
+        this.journal?.step({
+            stage: 'music',
+            title: taken
+                ? `Music "${music.query}" (no kind word, found by name)`
+                : `Not a music command: nothing is named "${music.query}"`,
+            ms: Date.now() - start,
+            data: { parsed: music, result: res },
+        });
+        if (!taken) {
+            return null;
+        }
+        this.log.info(`Music request guessed locally: "${music.query}" (source='${source}').`);
+        this.journal?.note({ tier: 'nlu', detail: 'music spotify auto' });
+        return res.text;
     }
 
     /**
@@ -8158,31 +8325,542 @@ class Assistant extends Adapter {
         return { service: target, ...musicResultData(res), ok: res.ok, text: res.text };
     }
 
+    /** A message to the adapter of a music player: spotify-premium's own, or the commands of the shared catalog. */
+    private askMusicOf(player: MusicPlayer, command: string, message: Record<string, unknown>): Promise<unknown> {
+        return player.standard
+            ? this.askMusicStandard(player.instance, command, message)
+            : this.askSpotify(player.instance, command, message);
+    }
+
     /** Find something on Spotify and play it on a music player. */
     private async playSpotify(req: MusicRequest, playerName?: string): Promise<MusicPlayResult> {
         const lang = this.answerLanguage();
-        const player = findPlayer(this.musicPlayers, playerName, this.requestOrigin.getStore()?.room || '');
+        const origin = this.requestOrigin.getStore();
+        // without a named player the device that was spoken to plays
+        const player = playerFor(this.musicPlayers, playerName, {
+            satellite: origin?.satellite || '',
+            names: origin?.source ? [origin.source] : [],
+            room: origin?.room || '',
+        });
         if (!player) {
             const names = this.musicPlayers.map(p => p.name).join(', ');
-            return { ok: false, text: musicReply(lang, 'unknownPlayer', { query: playerName, names }) };
+            return playerName?.trim()
+                ? { ok: false, text: musicReply(lang, 'unknownPlayer', { query: playerName, names }) }
+                : { ok: false, reason: 'NO_PLAYER_HERE', text: musicReply(lang, 'notHere', { names }) };
         }
         if (!this.config.allowWriteStates) {
             return { ok: false, player: player.name, text: musicReply(lang, 'noControl') };
         }
         const res = await playMusic(req, player, {
-            ask: (command, message) => this.askSpotify(player.instance, command, message),
+            ask: (command, message) => this.askMusicOf(player, command, message),
             language: lang,
             sayPlayer: this.musicPlayers.length > 1,
         });
         const what = `${req.kind} "${req.query}"${req.artist ? ` by "${req.artist}"` : ''}`;
         if (res.ok) {
             this.log.info(
-                `Spotify: ${what} → ${res.hit?.uri} (${res.hit?.name}) on ${player.name}${res.device ? ` (${res.device})` : ''}.`,
+                `Music: ${what} → ${res.hit?.uri} (${res.hit?.name}) on ${player.name} (${player.instance}${res.device ? `, ${res.device}` : ''}).`,
             );
         } else {
-            this.log.info(`Spotify: ${what} on ${player.name} failed: ${res.reason}.`);
+            this.log.info(`Music: ${what} on ${player.name} (${player.instance}) failed: ${res.reason}.`);
         }
         return res;
+    }
+
+    // ── Shared commands of other adapters (HELP.md) ─────────────────────────────
+
+    /** Ask `help` of every instance again, forget the lists, and find the music players of other adapters. */
+    private async refreshStandards(): Promise<void> {
+        if (!this.standards) {
+            return;
+        }
+        await this.standards.refresh();
+        this.standardLists.clear();
+        await this.refreshDiscoveredMusic();
+    }
+
+    /**
+     * Players of instances with `media.getPlayers`, `media.search` and `media.play` that are not in the settings
+     * table: "Spiel Queen im Wohnzimmer" works for them through the same search and play as for Spotify.
+     */
+    private async refreshDiscoveredMusic(): Promise<void> {
+        const registry = this.standards;
+        if (!registry) {
+            return;
+        }
+        // not the TVs of youtube-remote: their search finds videos, which the YouTube path plays
+        const tvs = new Set(this.youtubePlayers.map(p => p.instance || p.base.split('.').slice(0, 2).join('.')));
+        /** A player that is a row of the settings table already */
+        const inTable = (instance: string, id: string, name: string): boolean =>
+            this.configuredMusicPlayers.some(
+                c => c.instance === instance && !!c.device && (c.device === id || fold(c.device) === fold(name)),
+            );
+        const found: MusicPlayer[] = [];
+        for (const play of await registry.find('media.play')) {
+            const getPlayers = registry.commandOf(play.instance, 'media.getPlayers');
+            if (
+                tvs.has(play.instance) ||
+                play.adapter === 'youtube-remote' ||
+                !getPlayers ||
+                !registry.has(play.instance, 'media.search')
+            ) {
+                continue;
+            }
+            const answer = await this.askStandard(getPlayers, {});
+            if (standardError(answer)) {
+                continue;
+            }
+            for (const p of listOf(answer, 'players')) {
+                if (!inTable(play.instance, p.id, p.name)) {
+                    found.push({
+                        name: p.name,
+                        instance: play.instance,
+                        device: p.id,
+                        room: p.room || '',
+                        standard: true,
+                    });
+                }
+            }
+        }
+        const key = (list: MusicPlayer[]): string => list.map(p => `${p.name}@${p.instance}`).join(',');
+        if (key(found) !== key(this.discoveredMusicPlayers)) {
+            this.log.info(
+                found.length
+                    ? `Music players of other adapters: ${found.map(p => `${p.name} (${p.instance})`).join(', ')}.`
+                    : 'No music players of other adapters any more.',
+            );
+        }
+        this.discoveredMusicPlayers = found;
+    }
+
+    /**
+     * A command of the shared catalog to another instance. A stopped instance or a missing answer comes back as
+     * `{error, reason}` like an error of the adapter, so the callers handle one shape. Pictures stay out of the trace.
+     */
+    private async askStandard(
+        cmd: StandardCommand,
+        message: Record<string, unknown>,
+        timeoutMs = STANDARD_TIMEOUT_MS,
+    ): Promise<unknown> {
+        const start = Date.now();
+        const title = `${cmd.instance}: ${cmd.command}${cmd.standard.endsWith(`.${cmd.command}`) ? '' : ` (${cmd.standard})`}`;
+        try {
+            const answer = await this.askInstance(cmd.instance, cmd.command, message, timeoutMs);
+            this.journal?.step({
+                stage: 'standard',
+                title,
+                ms: Date.now() - start,
+                ...(standardError(answer) ? { level: 'warn' as const } : {}),
+                data: { message: redactPictures(message), answer: redactPictures(answer) },
+            });
+            return answer;
+        } catch (e) {
+            this.journal?.step({
+                stage: 'standard',
+                level: 'warn',
+                title: `${title} failed`,
+                ms: Date.now() - start,
+                data: { message: redactPictures(message), error: (e as Error).message },
+            });
+            return { error: (e as Error).message, reason: 'NOT_CONNECTED' };
+        }
+    }
+
+    /** What all instances with a list command name (cameras, screens, recipients), reused for a minute. */
+    private async standardItems(standard: string, key: string): Promise<StandardItem[]> {
+        const cached = this.standardLists.get(standard);
+        if (cached && Date.now() - cached.ts < STANDARD_LIST_MS) {
+            return cached.items;
+        }
+        const cmds = (await this.standards?.find(standard)) || [];
+        const lists = await Promise.all(
+            cmds.map(async cmd => {
+                const answer = await this.askStandard(cmd, {});
+                return standardError(answer) ? [] : listOf(answer, key).map(i => ({ ...i, instance: cmd.instance }));
+            }),
+        );
+        const items = lists.flat();
+        this.standardLists.set(standard, { ts: Date.now(), items });
+        return items;
+    }
+
+    /**
+     * Quick commands for the families of the shared catalog, without a model: "Ruf Anna an", "Schick mir ein Bild
+     * der Haustür", "Zeige die Einfahrt auf dem Fernseher". Null when no instance offers the family or the names fit
+     * nothing — the request goes on to the other tiers.
+     */
+    private async quickCommand(question: string): Promise<string | null> {
+        if (!this.standards) {
+            return null;
+        }
+        const call = parseCallCommand(question);
+        if (call) {
+            const res = await this.quickCall(call);
+            if (res !== null) {
+                return res;
+            }
+        }
+        const picture = parsePictureCommand(question);
+        if (picture) {
+            const res = await this.quickPicture(picture);
+            if (res !== null) {
+                return res;
+            }
+        }
+        const show = parseShowOnCommand(question);
+        if (show) {
+            const res = await this.quickShow(show);
+            if (res !== null) {
+                return res;
+            }
+        }
+        return null;
+    }
+
+    /** "Ruf Anna an": `phone.call` of the first instance that knows the name (asterisk-docker, tr-064 …). */
+    private async quickCall(call: CallCommand): Promise<string | null> {
+        const phones = (await this.standards?.find('phone.call')) || [];
+        if (!phones.length) {
+            return null;
+        }
+        const lang = call.language;
+        this.journal?.note({ tier: 'nlu', detail: 'phone.call' });
+        const room = this.requestOrigin.getStore()?.room || '';
+        const unknown: string[] = [];
+        for (const phone of phones) {
+            let to = call.to;
+            let err = standardError(await this.askStandard(phone, { to, ...(room ? { room } : {}) }));
+            if (err?.reason === 'NOT_FOUND' && err.candidates.length) {
+                // "Позвони Анне": the adapter knows "Анна"
+                const fits = err.candidates.filter(c => nameFits(to, c));
+                if (fits.length > 1) {
+                    return quickReply(lang, 'whichCallee', { names: fits });
+                }
+                if (fits.length === 1) {
+                    to = fits[0];
+                    err = standardError(await this.askStandard(phone, { to, ...(room ? { room } : {}) }));
+                }
+            }
+            if (!err) {
+                this.log.info(`Phone call to "${to}" through ${phone.instance}.`);
+                return quickReply(lang, 'calling', { name: to });
+            }
+            if (err.reason === 'AMBIGUOUS') {
+                return quickReply(lang, 'whichCallee', { names: err.candidates });
+            }
+            if (err.reason !== 'NOT_FOUND') {
+                return quickReply(lang, 'callFailed', { name: to, error: err.error });
+            }
+            unknown.push(...err.candidates);
+        }
+        return quickReply(lang, 'unknownCallee', { name: call.to, names: [...new Set(unknown)].slice(0, 8) });
+    }
+
+    /** The current picture of a camera as a data URL (`camera.snapshot` of the instance that listed it). */
+    private async cameraPicture(camera: StandardItem): Promise<{ data: string } | { error: string }> {
+        const snap = this.standards?.commandOf(camera.instance, 'camera.snapshot');
+        if (!snap) {
+            return { error: `${camera.instance} cannot take a snapshot` };
+        }
+        const answer = await this.askStandard(snap, { camera: camera.id });
+        const err = standardError(answer);
+        if (err) {
+            return { error: err.error };
+        }
+        const data = pictureOf(answer);
+        return data ? { data } : { error: 'the answer carries no picture' };
+    }
+
+    /** The camera a request names; a reply when it names one that does not exist or several. */
+    private async findCamera(
+        said: string,
+        cameraWord: boolean,
+        lang: string,
+    ): Promise<{ camera: StandardItem } | { reply: string } | null> {
+        const cameras = await this.standardItems('camera.getCameras', 'cameras');
+        const hits = said ? pickNamed(cameras, said) : cameras.length === 1 ? cameras : [];
+        if (hits.length > 1) {
+            return { reply: quickReply(lang, 'whichCamera', { names: hits.map(c => c.name) }) };
+        }
+        if (hits.length === 1) {
+            return { camera: hits[0] };
+        }
+        return cameraWord && cameras.length
+            ? { reply: quickReply(lang, 'unknownCamera', { name: said, names: cameras.map(c => c.name) }) }
+            : null;
+    }
+
+    /**
+     * Where a picture goes: "mir" = the chat the request came from (Telegram …), else the default recipient of the
+     * first messenger; a name = a recipient of `message.getRecipients`.
+     */
+    private async messageTarget(
+        recipient: string,
+        sends: StandardCommand[],
+        lang: string,
+    ): Promise<{ cmd: StandardCommand; recipient: string; name: string } | { reply: string }> {
+        const origin = this.requestOrigin.getStore();
+        if (recipient === 'me') {
+            const own = origin?.caller ? sends.find(c => c.instance === origin.caller) : undefined;
+            return own
+                ? { cmd: own, recipient: origin?.recipient || '', name: '' }
+                : { cmd: sends[0], recipient: '', name: '' };
+        }
+        const known = await this.standardItems('message.getRecipients', 'recipients');
+        const hit = pickNamed(known, recipient).find(r => sends.some(c => c.instance === r.instance));
+        const cmd = hit && sends.find(c => c.instance === hit.instance);
+        if (hit && cmd) {
+            return { cmd, recipient: hit.id, name: hit.name };
+        }
+        if (known.length) {
+            return {
+                reply: quickReply(lang, 'unknownRecipient', {
+                    name: recipient,
+                    names: known.map(r => r.name).slice(0, 8),
+                }),
+            };
+        }
+        return { cmd: sends[0], recipient, name: recipient };
+    }
+
+    /** Send a camera picture with `message.send`; the reply to the user. */
+    private async sendPicture(
+        camera: StandardItem,
+        target: { cmd: StandardCommand; recipient: string; name: string },
+        lang: string,
+    ): Promise<string> {
+        const picture = await this.cameraPicture(camera);
+        if ('error' in picture) {
+            return quickReply(lang, 'pictureFailed', { what: camera.name, error: picture.error });
+        }
+        const err = standardError(
+            await this.askStandard(
+                target.cmd,
+                { text: camera.name, file: picture.data, ...(target.recipient ? { recipient: target.recipient } : {}) },
+                30000,
+            ),
+        );
+        if (err) {
+            return quickReply(lang, 'pictureFailed', { what: camera.name, error: err.error });
+        }
+        this.log.info(
+            `Picture of "${camera.name}" (${camera.instance}) sent through ${target.cmd.instance}${target.recipient ? ` to "${target.recipient}"` : ''}.`,
+        );
+        return quickReply(lang, 'pictureSent', { name: target.name, what: camera.name });
+    }
+
+    /** "Schick mir ein Bild der Haustür": `camera.snapshot` of the camera, `message.send` with the picture. */
+    private async quickPicture(cmd: PictureCommand): Promise<string | null> {
+        const registry = this.standards;
+        if (!registry) {
+            return null;
+        }
+        const sends = await registry.find('message.send');
+        if (!sends.length || !(await registry.find('camera.snapshot')).length) {
+            return null;
+        }
+        const lang = cmd.language;
+        const found = await this.findCamera(cmd.camera, cmd.cameraWord, lang);
+        if (!found) {
+            return null;
+        }
+        this.journal?.note({ tier: 'nlu', detail: 'camera.snapshot → message.send' });
+        if ('reply' in found) {
+            return found.reply;
+        }
+        const target = await this.messageTarget(cmd.recipient, sends, lang);
+        return 'reply' in target ? target.reply : this.sendPicture(found.camera, target, lang);
+    }
+
+    /** The screens of all `screen.show` instances; an instance without `screen.getScreens` is one screen. */
+    private async screenList(shows: StandardCommand[]): Promise<StandardItem[]> {
+        const listed = await this.standardItems('screen.getScreens', 'screens');
+        const unlisted = shows
+            .filter(s => !listed.some(l => l.instance === s.instance))
+            .map(s => ({ id: '', name: s.adapter, raw: {}, instance: s.instance }));
+        return [...listed.filter(l => shows.some(s => s.instance === l.instance)), ...unlisted];
+    }
+
+    /**
+     * "Zeige die Einfahrt auf dem Fernseher": `screen.show` with a camera (live, or its picture when the screen only
+     * takes pictures), a view of that screen or a text. "Zeig mir die Haustür" without a screen in a messenger chat
+     * sends the picture into the chat.
+     */
+    private async quickShow(cmd: ShowOnCommand): Promise<string | null> {
+        const registry = this.standards;
+        if (!registry) {
+            return null;
+        }
+        const lang = cmd.language;
+        const shows = await registry.find('screen.show');
+        const origin = this.requestOrigin.getStore();
+        const sends = origin?.caller ? await registry.find('message.send') : [];
+        const chat = !cmd.screen ? sends.find(c => c.instance === origin?.caller) : undefined;
+        if (!shows.length && !chat) {
+            return null;
+        }
+        const target = showTarget(cmd.what);
+        if (target.kind === 'text' && !target.name) {
+            return null;
+        }
+        let camera: StandardItem | null = null;
+        if (target.kind === 'camera' || target.kind === 'unknown') {
+            const found = await this.findCamera(target.name, target.kind === 'camera', lang);
+            if (found && 'reply' in found) {
+                this.journal?.note({ tier: 'nlu', detail: 'screen.show camera' });
+                return found.reply;
+            }
+            camera = found?.camera || null;
+        }
+        if (chat && camera) {
+            this.journal?.note({ tier: 'nlu', detail: 'camera.snapshot → message.send' });
+            return this.sendPicture(camera, { cmd: chat, recipient: origin?.recipient || '', name: '' }, lang);
+        }
+        if (!shows.length) {
+            return null;
+        }
+        const screens = await this.screenList(shows);
+        // what a screen can show, null = it did not say
+        const kindsOf = (s: StandardItem): string[] | null =>
+            Array.isArray(s.raw.kinds) ? s.raw.kinds.filter((k): k is string => typeof k === 'string') : null;
+        let candidates = screens;
+        if (cmd.screen) {
+            candidates = pickNamed(screens, cmd.screen);
+            if (!candidates.length) {
+                // "Zeige mir die Temperatur im Wohnzimmer" is no screen request; with a camera or a text it is
+                return camera || target.kind !== 'unknown'
+                    ? quickReply(lang, 'unknownScreen', { name: cmd.screen, names: screens.map(s => s.name) })
+                    : null;
+            }
+        }
+        // a view of one of the screens: "die Ansicht Wetter", or a name only a view has
+        let view = '';
+        if (!camera && target.kind !== 'text') {
+            const withView = candidates.filter(s => {
+                const views = Array.isArray(s.raw.views)
+                    ? s.raw.views.filter((v): v is string => typeof v === 'string')
+                    : [];
+                const hit = pickNamed(
+                    views.map(v => ({ id: v, name: v })),
+                    target.name,
+                )[0];
+                if (hit && !view) {
+                    view = hit.name;
+                }
+                return !!hit;
+            });
+            if (!view) {
+                return null;
+            }
+            candidates = withView;
+        }
+        // without a named screen only those that can show it count (awtrix-light and LaMetric show text only)
+        const needs = camera ? ['camera', 'image'] : view ? ['view'] : ['text'];
+        if (!cmd.screen) {
+            const able = candidates.filter(s => {
+                const kinds = kindsOf(s);
+                return !kinds || needs.some(k => kinds.includes(k));
+            });
+            if (able.length) {
+                candidates = able;
+            }
+        }
+        let screen = candidates.length === 1 ? candidates[0] : null;
+        if (!screen && origin?.room) {
+            const here = candidates.filter(s => !!s.room && nameFits(origin.room, s.room));
+            screen = here.length === 1 ? here[0] : null;
+        }
+        this.journal?.note({ tier: 'nlu', detail: `screen.show ${camera ? 'camera' : view ? 'view' : 'text'}` });
+        if (!screen) {
+            return quickReply(lang, 'whichScreen', { names: candidates.map(s => s.name) });
+        }
+        if (!this.config.allowWriteStates) {
+            return quickReply(lang, 'noControl');
+        }
+        const show = registry.commandOf(screen.instance, 'screen.show');
+        if (!show) {
+            return null;
+        }
+        const kinds = kindsOf(screen);
+        const can = (kind: string): boolean => !kinds || kinds.includes(kind);
+        const what = camera?.name || view || target.name;
+        const where = screen.id ? { screen: screen.id } : {};
+        const asImage = async (): Promise<Record<string, unknown> | string> => {
+            const picture = await this.cameraPicture(camera!);
+            return 'error' in picture
+                ? quickReply(lang, 'showFailed', { name: screen.name, what, error: picture.error })
+                : { kind: 'image', image: picture.data, title: camera!.name };
+        };
+        let message: Record<string, unknown> | string;
+        if (camera) {
+            message = can('camera')
+                ? { kind: 'camera', camera: camera.id, instance: camera.instance, title: camera.name }
+                : can('image')
+                  ? await asImage()
+                  : quickReply(lang, 'cannotShow', { name: screen.name });
+        } else if (view) {
+            message = can('view') ? { kind: 'view', view } : quickReply(lang, 'cannotShow', { name: screen.name });
+        } else {
+            message = can('text')
+                ? { kind: 'text', text: target.name }
+                : quickReply(lang, 'cannotShow', { name: screen.name });
+        }
+        if (typeof message === 'string') {
+            return message;
+        }
+        let kind = String(message.kind);
+        let err = standardError(await this.askStandard(show, { ...where, ...message }));
+        // a screen that did not say what it can: the live picture failed, its snapshot may work
+        if (err?.reason === 'NOT_SUPPORTED' && camera && !kinds) {
+            const image = await asImage();
+            if (typeof image === 'string') {
+                return image;
+            }
+            kind = 'image';
+            err = standardError(await this.askStandard(show, { ...where, ...image }));
+        }
+        if (err) {
+            return err.reason === 'NOT_SUPPORTED'
+                ? quickReply(lang, 'cannotShow', { name: screen.name })
+                : quickReply(lang, 'showFailed', { name: screen.name, what, error: err.error });
+        }
+        this.log.info(`Shown on "${screen.name}" (${screen.instance}): ${kind} "${what}".`);
+        return quickReply(lang, 'showing', { name: screen.name, what });
+    }
+
+    /**
+     * The messages of {@link playMusic} (`search`, `getPlaylists`, `play` of spotify-premium) for a player of another
+     * adapter: `media.search` (the title also as `title`), `media.getMedia {list: 'playlists'}` and `media.play`.
+     */
+    private async askMusicStandard(
+        instance: string,
+        command: string,
+        message: Record<string, unknown>,
+    ): Promise<unknown> {
+        const standard = command === 'search' ? 'media.search' : command === 'play' ? 'media.play' : 'media.getMedia';
+        const cmd = this.standards?.commandOf(instance, standard);
+        if (!cmd) {
+            if (command === 'getPlaylists') {
+                return { playlists: [] };
+            }
+            throw new MusicError(`${instance} offers no ${standard}`, ADAPTER_DOWN);
+        }
+        const msg =
+            command === 'getPlaylists'
+                ? { list: 'playlists', ...(message.search ? { search: message.search } : {}) }
+                : command === 'search' && typeof message.track === 'string'
+                  ? { ...message, title: message.track }
+                  : message;
+        const answer = await this.askStandard(cmd, msg);
+        const err = standardError(answer);
+        if (err?.reason === 'NOT_CONNECTED') {
+            throw new MusicError(err.error, ADAPTER_DOWN);
+        }
+        if (command === 'getPlaylists' && !err) {
+            const items = (answer as { items?: unknown }).items;
+            return { playlists: Array.isArray(items) ? items : [] };
+        }
+        return answer;
     }
 
     /**
@@ -8235,23 +8913,67 @@ class Assistant extends Adapter {
                 startkey: 'system.adapter.spotify-premium.',
                 endkey: 'system.adapter.spotify-premium.香',
             });
-            return (view?.rows || [])
+            const spotify = (view?.rows || [])
                 .map(r => ({
                     value: r.id.replace(/^system\.adapter\./, ''),
                     old: spotifyTooOld((r.value as ioBroker.InstanceObject | undefined)?.common?.version),
                 }))
                 .sort((a, b) => a.value.localeCompare(b.value))
                 .map(r => ({ label: r.old ? `${r.value} (too old, please update)` : r.value, value: r.value }));
+            // players of other adapters that search and play by the shared catalog (music-assistant, sonos, …)
+            const others = this.standards
+                ? (await this.standards.find('media.play'))
+                      .filter(
+                          c =>
+                              c.adapter !== 'spotify-premium' &&
+                              c.adapter !== 'youtube-remote' &&
+                              this.standards!.has(c.instance, 'media.search') &&
+                              this.standards!.has(c.instance, 'media.getPlayers'),
+                      )
+                      .map(c => ({ label: c.instance, value: c.instance }))
+                : [];
+            return [...spotify, ...others];
         } catch (e) {
             this.log.warn(`getSpotifyInstances failed: ${(e as Error).message}`);
             return [];
         }
     }
 
-    /** Suggestions of the column "Device": the Spotify Connect devices that are online now. */
-    private async getSpotifyDevices(instance: unknown): Promise<string[]> {
-        if (typeof instance !== 'string' || !/^spotify-premium\.\d+$/.test(instance)) {
+    /** Choices of the column "Satellite": the satellites under `satellites.*`, '' = none. */
+    private async getSatelliteChoices(): Promise<{ label: string; value: string }[]> {
+        const prefix = `${this.namespace}.satellites.`;
+        try {
+            const channels = await this.getForeignObjectsAsync(`${prefix}*`, 'channel');
+            const list = Object.values(channels)
+                .filter(o => !o._id.slice(prefix.length).includes('.'))
+                .map(o => {
+                    const value = o._id.slice(prefix.length);
+                    const name = typeof o.common?.name === 'string' ? o.common.name : value;
+                    return { label: name === value ? value : `${name} (${value})`, value };
+                })
+                .sort((a, b) => a.label.localeCompare(b.label));
+            return [{ label: '—', value: '' }, ...list];
+        } catch (e) {
+            this.log.warn(`getSatelliteChoices failed: ${(e as Error).message}`);
             return [];
+        }
+    }
+
+    /** Suggestions of the column "Device": the Spotify Connect devices that are online now. */
+    private async getSpotifyDevices(instance: unknown): Promise<(string | { label: string; value: string })[]> {
+        if (typeof instance !== 'string' || !/^[\w-]+\.\d+$/.test(instance)) {
+            return [];
+        }
+        if (!instance.startsWith('spotify-premium.')) {
+            // a player of another adapter: its id is what media.play takes
+            const getPlayers = this.standards?.commandOf(instance, 'media.getPlayers');
+            if (!getPlayers) {
+                return [];
+            }
+            const answer = await this.askStandard(getPlayers, {});
+            return standardError(answer)
+                ? []
+                : listOf(answer, 'players').map(p => ({ label: p.name, value: p.id || p.name }));
         }
         try {
             const answer = (await this.askSpotify(instance, 'getDevices', {})) as { devices?: { name?: string }[] };
@@ -9587,6 +10309,12 @@ class Assistant extends Adapter {
     }
 
     private async onUnload(callback: () => void): Promise<void> {
+        if (this.standardsTimer) {
+            clearTimeout(this.standardsTimer);
+        }
+        if (this.standardsInterval) {
+            clearInterval(this.standardsInterval);
+        }
         try {
             this.stopRinging();
         } catch {

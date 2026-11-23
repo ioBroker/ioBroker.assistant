@@ -302,5 +302,6 @@
     "custom_assistant_Speaks the answer on the satellite that asked, and the announcements. Keys and more options are on the tab Voice.": "Dice la respuesta en el satélite que preguntó, y también los avisos. Las claves y más opciones están en la pestaña Voz.",
     "custom_assistant_Follow-up questions in a conversation go straight to the cloud.": "Las preguntas de seguimiento en una conversación van directamente a la nube.",
     "custom_assistant_What no step understands gets a fixed sentence.": "Lo que ningún paso entiende recibe una frase fija como respuesta.",
-    "custom_assistant_Music": "Música"
+    "custom_assistant_Music": "Música",
+    "custom_assistant_Adapter command": "Comando de adaptador"
 }

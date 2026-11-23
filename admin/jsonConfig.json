@@ -801,33 +801,40 @@
                 "musicPlayers": {
                     "newLine": true,
                     "type": "table",
-                    "label": "Spotify players",
-                    "help": "Spotify Connect devices the assistant may play music on, e.g. \"play Bohemian Rhapsody by Queen\" or \"play the album A Night at the Opera in the kitchen\". Needs the adapter spotify-premium in a version that answers messages - it holds the login at Spotify. Device: the name of a Spotify Connect device (phone, computer, Echo, Sonos, TV, ...); the list shows the devices that are online now, you can also type a name. Empty = the device that plays at Spotify right now. The first row is the default; a request from a satellite in the room of a row goes to that row. A song for a TV of the YouTube table is searched and played on YouTube. Needs \"Allow writing states\".",
+                    "label": "Music players",
+                    "help": "Music players the assistant may play on, e.g. \"play Bohemian Rhapsody by Queen\", \"play the album A Night at the Opera in the kitchen\" or \"play the Piano Guys\". Instance: spotify-premium (Spotify Connect devices; needs a version that answers messages, it holds the login at Spotify) or another adapter with the shared commands media.getPlayers, media.search and media.play; the players of such adapters also work without a row. Device: the Spotify Connect device or the player of the adapter; empty = the device that plays at Spotify right now. Without a named player the device that was spoken to plays: the row of its satellite, a player named like it, else the player in its room; if there is none, the assistant asks where. From the chat or Telegram the first row plays. A song for a TV of the YouTube table is searched and played on YouTube. Needs \"Allow writing states\".",
                     "xs": 12,
                     "sm": 12,
                     "md": 12,
                     "lg": 12,
                     "xl": 12,
                     "items": [
-                        { "type": "text", "attr": "name", "title": "Name", "width": "20%" },
+                        { "type": "text", "attr": "name", "title": "Name", "width": "18%" },
                         {
                             "type": "selectSendTo",
                             "attr": "instance",
-                            "title": "Spotify instance",
+                            "title": "Instance",
                             "command": "getSpotifyInstances",
-                            "width": "25%"
+                            "width": "20%"
                         },
                         {
                             "type": "autocompleteSendTo",
                             "attr": "device",
-                            "title": "Spotify device (empty = active)",
+                            "title": "Device (empty = active)",
                             "command": "getSpotifyDevices",
                             "jsonData": "{\"instance\":\"${data.instance}\"}",
                             "alsoDependsOn": ["instance"],
                             "freeSolo": true,
-                            "width": "35%"
+                            "width": "27%"
                         },
-                        { "type": "text", "attr": "room", "title": "Room", "width": "20%" }
+                        { "type": "text", "attr": "room", "title": "Room", "width": "15%" },
+                        {
+                            "type": "selectSendTo",
+                            "attr": "satellite",
+                            "title": "Satellite",
+                            "command": "getSatelliteChoices",
+                            "width": "20%"
+                        }
                     ]
                 },
                 "_timersHeader": {

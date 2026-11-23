@@ -330,29 +330,56 @@ der Assistent Musik auf einem **Spotify-Connect-Gerät** (Handy, Computer, Echo,
 Playlist Party"*, *„spiel Musik von Queen"*, *„play Yesterday by the Beatles"*, *„включи песню Группа крови группы
 Кино"*. Spotify liefert keine Audio-Datei: gespielt wird auf dem Gerät, der Assistent sucht nur und gibt den Befehl.
 Die Anmeldung bei Spotify bleibt in spotify-premium — er braucht Version 3.3.0 oder neuer (die Nachrichten `search`,
-`play`); eine ältere meldet der Assistent als „zu alt". Dazu die Tabelle **Spotify-Player** im Tab Dienste:
+`play`); eine ältere meldet der Assistent als „zu alt". Dazu die Tabelle **Musik-Player** im Tab Dienste:
 
 | Spalte | Beispiel |
 |---|---|
 | **Name** | `Küche` — so, wie du ihn nennst |
-| **Spotify-Instanz** | `spotify-premium.0` |
-| **Spotify-Gerät** | `Echo Küche` — Name des Connect-Geräts; die Liste zeigt die Geräte, die gerade online sind. Leer = das Gerät, das bei Spotify gerade spielt |
+| **Instanz** | `spotify-premium.0`, oder ein Adapter mit den gemeinsamen Befehlen `media.getPlayers`, `media.search` und `media.play` (siehe „Befehle anderer Adapter“) |
+| **Gerät** | `Echo Küche` — Name des Connect-Geräts oder der Player des anderen Adapters; die Liste zeigt die Geräte, die gerade online sind. Leer = das Gerät, das bei Spotify gerade spielt |
 | **Raum** | `Küche` — eine Anfrage von einem Satelliten in diesem Raum geht an diesen Player |
+| **Satellit** | der Satellit, der dieser Player ist (ein Lautsprecher mit Mikrofon) oder über ihn spielt |
 
-Die erste Zeile ist der Standard. Der Assistent sucht so:
+**Ohne genannten Player spielt das Gerät, mit dem man spricht**: die Zeile seines Satelliten, sonst ein Player mit
+dem Namen des Satelliten, sonst der Player in seinem Raum. Gibt es keinen, sagt der Assistent das und nennt die
+Player, statt die Musik in einem anderen Raum zu starten. Aus dem Chat oder Telegram spielt die erste Zeile. Der
+Assistent sucht so:
 
 - **Titel von Interpret** — erst mit Spotifys Feldfiltern (`track:… artist:…`), findet das nichts (die
   Spracherkennung hört Namen oft ein wenig anders), als freier Text; gewinnt der Treffer mit passendem Titel und
   Interpret, sonst Spotifys erster.
 - **Playlist** — zuerst deine eigenen Playlists, dann der Katalog.
 - **„… auf Spotify"** ohne Art-Wort — ein Interpret, eine Playlist, ein Album oder ein Titel dieses Namens.
+- **„spiel die Piano Guys"** ohne Art-Wort — dieselbe Suche, gespielt wird aber nur ein Interpret, eine Playlist,
+  ein Album oder ein Titel dieses Namens; sonst geht der Satz weiter ans LLM („spiel mit dem Hund").
 
 Schläft ein benanntes Gerät (Spotify meldet 404), übergibt spotify-premium die Wiedergabe dorthin und versucht es
-noch einmal. Ein Satz braucht ein Art-Wort (Lied, Song, Titel, Album, Band, Künstler, Playlist, Musik), die Form
-„*Titel* von *Interpret*" nach „spiel"/„play" oder das Wort Spotify — „spiel Queen" allein geht ans LLM. Nennt der
+noch einmal. Ein Satz braucht „spiel"/„play" oder ein Art-Wort (Lied, Song, Titel, Album, Band, Künstler, Playlist, Musik);
+„включи Queen" ohne Art-Wort geht an die Gerätebefehle und das LLM. Nennt der
 Satz einen Fernseher oder „YouTube", läuft das Lied über YouTube (siehe oben). Pause, weiter, Lautstärke und „was
 läuft?" gehen über das LLM-Tool `music_player`, das Abspielen über `play_music`; Skripte nutzen
 `sendTo('assistant.0', 'playMusic', {query, artist, kind, player})`. Benötigt **Schreiben von States erlauben**.
+
+### Befehle anderer Adapter („Ruf … an“, „Zeige … auf …“, „Schick mir ein Bild …“)
+
+Adapter, die die Nachricht `help` beantworten und ihre Befehle nach dem gemeinsamen Katalog markieren (`HELP.md` in
+diesem Repository), funktionieren ohne Einstellung hier. Einige Sekunden nach dem Start und danach alle 9 Minuten fragt
+der Assistant jede laufende Instanz mit `common.supportedMessages.help` nach ihren Befehlen; die Nachricht
+`getStandards` zeigt, was er gefunden hat (`{refresh: true}` fragt sofort neu). Ohne Modell verstanden:
+
+| Gesagt | Familie | Beispiel-Adapter |
+| --- | --- | --- |
+| „Ruf Anna an“, „call the kitchen“, „позвони Анне“ | `phone.call` | asterisk-docker |
+| „Schick mir ein Bild der Haustür“, „schicke Anna ein Foto von der Einfahrt“ | `camera.snapshot` → `message.send` | cameras, frigate → telegram |
+| „Zeige die Einfahrt auf dem Fernseher“, „zeige die Ansicht Wetter“, „zeige den Text Essen ist fertig auf …“ | `screen.show` | aura, satellite-display |
+| „Spiel Queen im Wohnzimmer“ auf einem Player eines anderen Adapters | `media.getPlayers`, `media.search`, `media.play` | music-assistant |
+
+Genommen werden nur Namen, die die Adapter liefern (Kameras aus `camera.getCameras`, Bildschirme aus
+`screen.getScreens`, Empfänger aus `message.getRecipients`, Player aus `media.getPlayers`); passt kein Name, geht der Satz
+an den nächsten Schritt. „Mir“ ist der Chat, aus dem die Anfrage kam (Telegram), sonst der Standard-Empfänger des
+Messengers. Ohne genannten Bildschirm nimmt er den im Raum des Satelliten; „zeig mir die Haustür“ in einem
+Telegram-Chat schickt das Bild in den Chat. Zeigen und Musik brauchen „Steuern erlauben“. Im Ablauf einer Anfrage steht
+jede Nachricht an einen anderen Adapter als Schritt „Adapter-Befehl“.
 
 ### Routinen (eine Phrase, die mehreres tut)
 

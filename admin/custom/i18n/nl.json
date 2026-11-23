@@ -302,5 +302,6 @@
     "custom_assistant_Speaks the answer on the satellite that asked, and the announcements. Keys and more options are on the tab Voice.": "Spreekt het antwoord uit op de satelliet die vroeg, en ook de omroepen. Sleutels en meer opties staan op het tabblad Stem.",
     "custom_assistant_Follow-up questions in a conversation go straight to the cloud.": "Vervolgvragen in een lopend gesprek gaan direct naar de cloud.",
     "custom_assistant_What no step understands gets a fixed sentence.": "Wat geen enkele stap begrijpt, krijgt een vaste zin als antwoord.",
-    "custom_assistant_Music": "Muziek"
+    "custom_assistant_Music": "Muziek",
+    "custom_assistant_Adapter command": "Adapteropdracht"
 }

@@ -318,29 +318,56 @@ Bohemian Rhapsody by Queen"*, *"play the album A Night at the Opera in the kitch
 *"play some music by Queen"*, *"spiel das Lied Yesterday von den Beatles"*, *"включи песню Группа крови группы
 Кино"*. Spotify gives no audio file: the device plays, the assistant only searches and sends the command. The login
 at Spotify stays in spotify-premium — it needs version 3.3.0 or newer (the messages `search`, `play`); an older one
-is reported as "too old". Fill the **Spotify players** table on the Services tab:
+is reported as "too old". Fill the **Music players** table on the Services tab:
 
 | Column | Example |
 |---|---|
 | **Name** | `Kitchen` — how you call it |
-| **Spotify instance** | `spotify-premium.0` |
-| **Spotify device** | `Echo Kitchen` — name of the Connect device; the list shows the devices that are online now. Empty = the device that plays at Spotify right now |
+| **Instance** | `spotify-premium.0`, or an adapter with the shared commands `media.getPlayers`, `media.search` and `media.play` (see "Commands of other adapters") |
+| **Device** | `Echo Kitchen` — name of the Connect device, or the player of the other adapter; the list shows the devices that are online now. Empty = the device that plays at Spotify right now |
 | **Room** | `Kitchen` — a request from a satellite in this room goes to this player |
+| **Satellite** | the satellite that is this player (a speaker with a microphone) or plays through it |
 
-The first row is the default. The assistant searches like this:
+**Without a named player the device you speak to plays**: the row of its satellite, else a player named like the
+satellite, else the player in its room. If there is none, the assistant says so and names the players instead of
+starting the music in another room. From the chat or Telegram the first row plays. The assistant searches like
+this:
 
 - **title by artist** — first with Spotify's field filters (`track:… artist:…`), if that finds nothing (speech
   recognition often hears names a bit differently) as free text; the hit with matching title and artist wins,
   else Spotify's first.
 - **playlist** — your own playlists first, then the catalog.
 - **"… on Spotify"** without a kind word — an artist, playlist, album or track of that name.
+- **"play the Piano Guys"** without a kind word — the same search, but it plays only an artist, playlist, album or
+  track named like it; otherwise the sentence goes on to the LLM ("play with the dog").
 
 If a named device sleeps (Spotify answers 404), spotify-premium transfers the playback to it and tries once more.
-A sentence needs a kind word (song, track, album, band, artist, playlist, music), the form "*title* by *artist*"
-after "play"/"spiel" or the word Spotify — "play Queen" alone goes to the LLM. If the sentence names a TV or
+A sentence needs "play"/"spiel" or a kind word (song, track, album, band, artist, playlist, music); "включи
+Queen" without a kind word goes to the device commands and the LLM. If the sentence names a TV or
 "YouTube", the song plays through YouTube (see above). Pause, skip, volume and "what is playing?" go through the LLM
 tool `music_player`, playing through `play_music`; scripts use
 `sendTo('assistant.0', 'playMusic', {query, artist, kind, player})`. Needs **Allow writing states**.
+
+### Commands of other adapters ("Ruf … an", "Zeige … auf …", "Schick mir ein Bild …")
+
+Adapters that answer the message `help` and mark their commands with the shared catalog (`HELP.md` in this
+repository) work without any setting here. A few seconds after the start, and again every 9 minutes, the assistant asks
+every running instance with `common.supportedMessages.help` for its commands; the message `getStandards` shows what it
+found (`{refresh: true}` asks again at once). Understood without a model:
+
+| Said | Family | Example adapters |
+| --- | --- | --- |
+| "Ruf Anna an", "call the kitchen", "позвони Анне" | `phone.call` | asterisk-docker |
+| "Schick mir ein Bild der Haustür", "send Anna a photo of the drive" | `camera.snapshot` → `message.send` | cameras, frigate → telegram |
+| "Zeige die Einfahrt auf dem Fernseher", "zeige die Ansicht Wetter", "zeige den Text Essen ist fertig auf …" | `screen.show` | aura, satellite-display |
+| "Spiel Queen im Wohnzimmer" on a player of another adapter | `media.getPlayers`, `media.search`, `media.play` | music-assistant |
+
+Only names the adapters list are taken (cameras of `camera.getCameras`, screens of `screen.getScreens`, recipients of
+`message.getRecipients`, players of `media.getPlayers`); a sentence whose names fit nothing goes on to the next step.
+"Mir" is the chat the request came from (Telegram), otherwise the default recipient of the messenger. Without a named
+screen the one in the room of the satellite is used; "zeig mir die Haustür" in a Telegram chat sends the picture into the
+chat. Showing something and playing music need "Allow control". The trace of a request shows every message to another
+adapter as the step "Adapter command".
 
 ### Routines (a phrase that does several things)
 
