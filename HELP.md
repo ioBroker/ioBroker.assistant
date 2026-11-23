@@ -36,7 +36,10 @@ chosen by what they do; their code was not checked, unless the adapter is also l
 
 1. **Names** exactly as here (camelCase). An adapter that already has such a command under another name keeps it and
    adds the standard name as an alias. The alias takes the parameters and gives the answer of this catalog; the old
-   name keeps its own answer for old scripts.
+   name keeps its own answer for old scripts. If the short name is already taken by a command with another answer
+   (`send` of telegram answers a number), the adapter adds the **full name** as the alias:
+   `{command: 'message.send', standard: 'message.send'}`. A full name never collides with an old command, and a
+   client sends whatever `command` the help answer names.
 2. **Mark it in `help`.** In the `commands` list of the help answer, a command that follows this catalog gets
    `standard: "<family>.<command>"`, e.g. `{command: 'snapshot', write: false, standard: 'camera.snapshot'}`.
    A client finds every instance that can do something by asking `help` of all instances with
@@ -1148,3 +1151,7 @@ These do not need a standard: only one adapter can do them.
    of reading every help text.
 4. Pictures go from one adapter to the next without an agent in between: `camera.snapshot` →
    `screen.show {kind: 'image'}` or `message.send {file}`.
+
+Done so far (`src/lib/standards.ts`, `src/lib/quick.ts`): steps 1 and 4, and step 2 for `phone.call`, `screen.show`
+(camera, view, text), `camera.snapshot` → `message.send` and music on the players of `media.getPlayers` with
+`media.search` and `media.play`. The message `getStandards` lists what the assistant found. Step 3 is open.
