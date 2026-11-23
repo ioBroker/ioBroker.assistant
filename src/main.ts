@@ -201,6 +201,8 @@ import {
     normalizeVoiceTable,
     parseVoiceTable,
     questionLanguage,
+    replyLanguageLine,
+    scriptLanguage,
 } from './lib/voice/speechLanguage';
 import { AdapterInstaller, type InstallerAdapter } from './lib/installer';
 import {
@@ -4671,6 +4673,23 @@ class Assistant extends Adapter {
      * spoken, so the model is asked to stay within it. Empty for text requests (chat, Telegram, scripts) and
      * when the limit is off.
      */
+    /**
+     * "Answer in Russian." after the question for the cloud tiers, when the question tells its language: a conversation
+     * that ran in German so far kept answering in German despite the hint in the instructions.
+     *
+     * @param question the question as asked
+     */
+    private replyLanguageHint(question: string): string {
+        const origin = this.requestOrigin.getStore();
+        if (!origin?.language) {
+            return '';
+        }
+        const configured = String(this.config.voiceLanguage || this.language || 'en');
+        // only when the question tells its language: by its letters, by the wake word, or by its words
+        const told = !!origin.listenLanguage || !!scriptLanguage(question) || origin.language !== configured;
+        return told ? replyLanguageLine(origin.language) : '';
+    }
+
     private spokenLengthHint(): string {
         if (!this.config.voiceEnabled || !this.requestOrigin.getStore()?.voice) {
             return '';
@@ -5175,7 +5194,14 @@ class Assistant extends Adapter {
         const time = this.buildTimeContext();
         const lengthHint = this.spokenLengthHint();
         // The pictures themselves go along; only a video needs a word, the model gets nothing of it
-        const questionForLlm = [time, weather, question, attachmentNote(0, !!video), lengthHint]
+        const questionForLlm = [
+            time,
+            weather,
+            question,
+            attachmentNote(0, !!video),
+            this.replyLanguageHint(question),
+            lengthHint,
+        ]
             .filter(Boolean)
             .join('\n\n');
         this.journal?.note({
@@ -5252,6 +5278,7 @@ class Assistant extends Adapter {
             this.buildPresenceContext(),
             question,
             attachmentNote(images.length, !!video),
+            this.replyLanguageHint(question),
         ]
             .filter(Boolean)
             .join('\n\n');

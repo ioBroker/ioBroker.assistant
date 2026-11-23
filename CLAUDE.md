@@ -56,6 +56,14 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   Geräte-NLU und smart-t2c `playGuessedMusic` mit `strict` (`findMusic` auto: nur Treffer mit passendem Namen, Interpret
   auch per `artistLike` — „Piano Guys“ = „The Piano Guys“); nichts Passendes → weiter ans LLM („spiel mit dem Hund“);
   Satellit ohne Player → erst Probesuche, dann `notHere`. „Musik von den Piano Guys“ → Artikel nach „von“ fällt weg.
+  **Antwortsprache der Cloud-Stufe** (Feldbericht vitanova 2026-11-23: russische Frage per „Alisa“, pi-agent antwortete
+  deutsch — „Answer … in de, it listens in ru“, deutscher Systemprompt + deutsche Vorgeschichte): `replyLanguageHint()`
+  hängt `replyLanguageLine(lang)` („Ответь по-русски.“) **hinter die Frage** im User-Turn von pi-agent und Cloud-LLM —
+  nur wenn die Sprache belegt ist (Wake-Word-Sprache, fremde Schrift oder Funktionswörter ≠ Config). Dabei gefunden:
+  pi-agent `get_history` fragte nur Standard-History + recorder.0, nie `influxdb.0` aus `common.custom` → Fix in
+  pi-agent Branch `fix/history-of-the-state` (9df0cef, auf upstream/main 0.12.6, lokal). Lange Antworten stocken am
+  ThirdReality (FW 1.02.04): 27,8 s WAV (44,1 kHz) spielte 43 s, 52,7 s spielte 68 s; kurze +1,5–4,7 s — Ursache am
+  Gerät unbekannt (CPU durch Wake-/Stoppwort während TTS? 1.02.05 verfügbar).
   Musik- und YouTube-Parser laufen jetzt **auch bei `useLocalNlu` aus** (wie die Schnellbefehle: nur Player aus den
   Tabellen; pi-agent hat keine Tools dafür), die geratene Musik dann direkt vor `return null`. vitanova (useLocalNlu
   aus, pi-agent): Zeile Salon → `spotify-premium.0` › „Vita Nova Salon“, Satellit `Salon` (2026-11-23, noch nicht

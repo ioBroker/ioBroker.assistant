@@ -11,6 +11,7 @@ const {
     normalizeVoiceTable,
     LanguageTts,
     VoicePerLanguage,
+    replyLanguageLine,
 } = require('../../build/lib/voice/speechLanguage');
 const { AwsTts } = require('../../build/lib/voice/aws');
 const { createTtsEngine } = require('../../build/lib/voice/engines');
@@ -302,4 +303,13 @@ test('AnswerLanguages: by the text without control markers, the oldest goes firs
     }
     assert.equal(memo.languageOf('It is 9:15.'), '');
     assert.equal(memo.languageOf('answer 49'), 'ru');
+});
+
+test('replyLanguageLine: an explicit line in the language of the question', () => {
+    assert.equal(replyLanguageLine('ru'), 'Ответь по-русски.');
+    assert.equal(replyLanguageLine('de-DE'), 'Antworte auf Deutsch.');
+    assert.equal(replyLanguageLine('en'), 'Answer in English.');
+    assert.equal(replyLanguageLine('uk'), 'Відповідай українською.');
+    assert.equal(replyLanguageLine('fr'), 'Answer in French.');
+    assert.equal(replyLanguageLine(''), '');
 });

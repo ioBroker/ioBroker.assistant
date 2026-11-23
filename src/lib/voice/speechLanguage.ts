@@ -105,6 +105,38 @@ export function scriptLanguage(text: string): string {
 }
 
 /**
+ * One line for the user turn of a cloud model: "answer in this language". The general hint in the system prompt
+ * ("answer in the language of the question") is not enough for a conversation that ran in another language so far —
+ * pi-agent answered a Russian question in German after German turns and a German system prompt.
+ *
+ * @param lang ISO-639-1 code of the question
+ */
+export function replyLanguageLine(lang: string): string {
+    const base = baseLanguage(lang);
+    switch (base) {
+        case '':
+            return '';
+        case 'ru':
+            return 'Ответь по-русски.';
+        case 'uk':
+            return 'Відповідай українською.';
+        case 'de':
+            return 'Antworte auf Deutsch.';
+        case 'en':
+            return 'Answer in English.';
+        default: {
+            let name = base;
+            try {
+                name = new Intl.DisplayNames(['en'], { type: 'language' }).of(base) || base;
+            } catch {
+                // an unknown code: the code itself
+            }
+            return `Answer in ${name}.`;
+        }
+    }
+}
+
+/**
  * The language to speak a text in.
  *
  * @param text what is spoken
