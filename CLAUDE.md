@@ -63,7 +63,9 @@ Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`
   pi-agent `get_history` fragte nur Standard-History + recorder.0, nie `influxdb.0` aus `common.custom` → Fix in
   pi-agent Branch `fix/history-of-the-state` (9df0cef, auf upstream/main 0.12.6, lokal). Lange Antworten stocken am
   ThirdReality (FW 1.02.04): 27,8 s WAV (44,1 kHz) spielte 43 s, 52,7 s spielte 68 s; kurze +1,5–4,7 s — Ursache am
-  Gerät unbekannt (CPU durch Wake-/Stoppwort während TTS? 1.02.05 verfügbar).
+  Gerät unbekannt (CPU durch Wake-/Stoppwort während TTS?). Nach Update auf **1.02.05** (2026-11-23, ~28 min, alle
+  Einstellungen + Wake-Words blieben, neue Entity `allow_background_internet`): Durchsage 26,6 s WAV 44,1 kHz spielte
+  27,0 s, laut Nutzer ohne Pausen (vorher Durchsage 52,7 s → 68 s). Eine lange Sprach-Antwort (Pipeline-Pfad) ist danach noch nicht gemessen.
   Musik- und YouTube-Parser laufen jetzt **auch bei `useLocalNlu` aus** (wie die Schnellbefehle: nur Player aus den
   Tabellen; pi-agent hat keine Tools dafür), die geratene Musik dann direkt vor `return null`. vitanova (useLocalNlu
   aus, pi-agent): Zeile Salon → `spotify-premium.0` › „Vita Nova Salon“, Satellit `Salon` (2026-11-23, noch nicht
