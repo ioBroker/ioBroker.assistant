@@ -288,3 +288,19 @@ test('openai: other errors are not retried', async () => {
     await assert.rejects(agent.ask('hi'), /Incorrect API key/);
     assert.equal(calls, 1);
 });
+
+test('a free question goes without tools; the agent keeps them for the next question', async () => {
+    const { agent, steps } = toolAgent('chat-model');
+    const requests = [];
+    agent.openai.chat.completions.create = async req => {
+        requests.push(req);
+        return { choices: [{ message: { role: 'assistant', content: 'Up to 20 years.' } }] };
+    };
+    assert.equal(await agent.ask('How old can cats get?', 'talk', [], [], false), 'Up to 20 years.');
+    assert.equal(requests[0].tools, undefined, 'no tools in the request');
+    assert.deepEqual(steps[0].data.tools, []);
+    assert.match(steps[0].title, /: 0 tools/);
+
+    await agent.ask('value?');
+    assert.equal(requests[1].tools[0].function.name, 'get_value', 'the house questions keep their tools');
+});

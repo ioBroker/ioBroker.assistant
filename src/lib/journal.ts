@@ -128,6 +128,11 @@ export interface JournalOrigin {
     vad?: VadReport;
     /** Answered with the yes/no button of a satellite's screen instead of speech (ESPHome) — trace only. */
     button?: 'yes' | 'no';
+    /**
+     * Purpose of the wake word of the conversation (ESPHome): `chat` = free questions only, no commands of the house.
+     * Absent = looked up from `wakeWord` in the table of the settings.
+     */
+    purpose?: 'home' | 'chat';
 }
 
 /** What a transport reports after it synthesised the reply. */

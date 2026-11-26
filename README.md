@@ -237,6 +237,9 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* (@GermanBluefox) A wake word for free questions: the table of the wake words has a purpose, and with "Free questions only" a wake word ("Hey Bro, how old can cats get?") skips the commands of the house and asks the cloud tier without device list and tools, in a conversation of its own; its follow-ups and dialog mode keep it. Instructions of its own: `freeTalkPrompt`
+
 ### 1.14.0 (2026-11-23)
 * (@GermanBluefox) Commands of other adapters by the shared catalog (`HELP.md`): the assistant asks the `help` of every instance and understands "ruf Anna an" (`phone.call`), "schick mir ein Bild der Haustür" (`camera.snapshot` → `message.send`), "zeige die Einfahrt auf dem Fernseher" (`screen.show`: camera, view, text) and plays music on the players of other adapters (`media.getPlayers`/`search`/`play`); message `getStandards`
 * (@GermanBluefox) The cloud tier (LLM or pi-agent) gets "answer in <language>" after a question whose language is clear (its letters, the wake word or its words): pi-agent answered a Russian question in German after German turns

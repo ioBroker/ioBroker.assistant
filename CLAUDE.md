@@ -19,6 +19,21 @@ Langfristig sollen auch TTS/STT-Engines, Satelliten-Audio und Wake-Word hier hin
 Voll ausgebautes create-adapter-TS-Projekt, **Build ist grün** (`npm run build`).
 
 **Fertig:**
+- **Wake-Word für freie Fragen** (Nutzerwunsch 2026-11-25: „Alisa steuert das Haus, HeyBro kann man über alles fragen:
+  wie alt können Katzen werden“; nicht committet, live auf vitanova seit 2026-11-25: „Hey Bro“ → de + `chat`,
+  „Alisa“ → ru, noch nicht gesprochen). Tabelle `wakeWordLanguages` hat Spalte `purpose`
+  ('' = Haus und Fragen, `chat` = nur freie Fragen), Sprache darf leer sein (= Stimme) — `parseWakeWordProfiles`/
+  `wakeWordPurpose` in `wakeWordLanguage.ts` (`parseWakeWordLanguages` nimmt auch die Profile). `esphome.ts`:
+  `conversationPurpose` wird wie `conversationLanguage` gesetzt/behalten (`endConversation()` an den 4 Reset-Stellen),
+  Option `wakeWordPurpose`, geht als `purpose` an `answer` (auch beim Ja/Nein-Knopf). `main.answer()`: `origin.purpose`
+  oder Lookup per `origin.wakeWord` (nativ) → `requestOrigin.freeTalk`. Dann: `produceAnswer` überspringt t2c-Rückfrage
+  und `answerLocally` (Routinen, home3d, Schnellbefehle, Musik, NLU, t2c), Cloud-LLM ohne Geräteliste/doneHint und
+  **ohne Tools** (`LlmAgent.ask(…, withTools=false)`), pi-agent mit eigenem Gespräch `<source>-chat`
+  (`conversationKey`, auch der `ConversationStore`), Instruktionen ohne Geräteliste, ohne Präsenz — seine Tools kann
+  pi-agent nicht pro Anfrage abschalten. Prompt `freeTalkPrompt` (leer = eingebaut de/en/ru in der Sprache des
+  Wake-Words). Stopwort, `askUser`-Antwort, Dialogmodus-Befehl und lokales LLM bleiben. Tests: `wakeWordLanguage.test.js`,
+  `esphome.test.js` (Zweck bleibt in der Rückfrage, nächstes Gespräch ohne Wake-Word = Haus), `llm.test.js` (keine
+  Tools). main-Routing ohne Test.
 - **Schnellbefehle über den gemeinsamen Katalog** (Nutzerwunsch 2026-11-21: „die Schnellbefehle doch direkt vom
   Assistant … Zeige…, Rufe…“; nicht committet, nicht live). `src/lib/standards.ts` `StandardRegistry`: fragt `help`
   jeder laufenden Instanz mit `common.supportedMessages.help` (nie sich selbst, 4 parallel, 5 s Timeout), merkt

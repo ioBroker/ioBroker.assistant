@@ -735,7 +735,7 @@ sendTo('assistant.0', 'deleteWakeWord', { id: 'hey_hannah_1a2b3c4d' });
 
 Speech recognition that detects the language itself often guesses wrong on a short command: in a household that
 speaks German and Russian, "Wie ist das Wetter morgen?" came back as "Листа светерморган." from Parakeet. Give each
-language its own wake word instead and fill the table **Language per wake word** (tab Satellites, below the ESPHome
+language its own wake word instead and fill the table **Language and purpose per wake word** (tab Satellites, below the ESPHome
 satellites), e.g. `Alisa` → Русский, `Hey Bro` → Deutsch:
 
 - what is said after the wake word is recognised in its language, and the reply is spoken in it;
@@ -755,6 +755,24 @@ For a trained model the word is enough: `ioBroker` covers `261103_iobroker` and 
 speaches or faster-whisper behind **Speech recognition server (optional)**), Azure, AWS, OpenRouter and Vosk. With ioBroker.voice choose the model **Canary 1B v2**: it is told the
 language and keeps accented speech in it, at about twice the time of Parakeet (still well below a second). Parakeet
 detects the language itself and ignores it.
+
+#### A wake word for free questions
+
+The same table gives a wake word a **purpose**. With **Free questions only** it becomes a conversation partner for
+any topic, and the house stays with the other wake word: "Alisa, switch on the light" runs the house, "Hey Bro, how old
+can cats get?" is answered from what the model knows.
+
+- No routines, no rules, no smart-text2command, no device list and no tools: "cats" is not taken for a device and
+  nothing in the house is switched. Asked to switch something, it points to the other wake word.
+- The answer comes from the cloud tier (or the local model, as usual): the cloud model gets no tools, pi-agent a
+  conversation of its own that is told to leave the house alone — pi-agent cannot switch its tools off per request.
+- A conversation of its own: "and dogs?" after the cats belongs to it, not to the conversation of the house.
+- Follow-up questions and dialog mode keep the purpose of their wake word, like the language. A microphone without a
+  wake word after the conversation and questions from ioBroker are the house again.
+- **Instructions for free questions** (below the table) replace the built-in ones: any topic from the model's own
+  knowledge, short and spoken, no smart home.
+
+The language column may stay at **Voice language** for such a row.
 
 #### Device settings
 

@@ -50,6 +50,7 @@ import type { SttEngine } from './stt';
 import type { SpokenInfo, TtsEngine } from './tts';
 import type { SatelliteState } from './protocol';
 import { confirmationTone } from './tone';
+import type { WakeWordPurpose } from './wakeWordLanguage';
 
 /** `VoiceAssistantEvent` (api.proto) — the subset we emit. */
 const EVENT = {
@@ -339,6 +340,8 @@ export interface EsphomeSatellitesOptions {
             wakeWord?: string;
             /** Language the speech was recognised in: the one of the wake word ({@link wakeWordLanguage}), else `language`. */
             language?: string;
+            /** Purpose of the wake word of the conversation ({@link wakeWordPurpose}); `home` without one. */
+            purpose?: WakeWordPurpose;
             sttMs?: number;
             audioMs?: number;
             vad?: VadReport;
@@ -353,6 +356,11 @@ export interface EsphomeSatellitesOptions {
      * conversation (their microphone opens without a wake word).
      */
     wakeWordLanguage?: (phrase: string, config: WakeWordConfig | null) => string;
+    /**
+     * Purpose of a wake word (`home` = not set). Like the language it holds for the whole conversation: a wake word
+     * for free questions (`chat`) keeps its follow-ups and dialog mode free questions too.
+     */
+    wakeWordPurpose?: (phrase: string, config: WakeWordConfig | null) => WakeWordPurpose;
     /** Optional STT vocabulary hints (device/room names) to bias recognition; re-read per utterance. */
     getHints?: () => string[] | Promise<string[]>;
     /** Where spoken replies are published for the device to fetch. */
@@ -638,6 +646,11 @@ class EsphomeConnection {
      * question or dialog mode started from ioBroker: those are spoken in the voice language.
      */
     private conversationLanguage = '';
+    /**
+     * Purpose of the conversation going on ({@link EsphomeSatellitesOptions.wakeWordPurpose}): set and kept like
+     * {@link conversationLanguage}. `chat` = a wake word for free questions only.
+     */
+    private conversationPurpose: WakeWordPurpose = 'home';
     /** `manufacturer` of the device info: "Espressif" = the ESPHome firmware on an ESP32 ({@link activeWakeWordLimit}) */
     private manufacturer = '';
     /** The raised wake word limit was logged (once per device) */
@@ -1145,6 +1158,7 @@ class EsphomeConnection {
                     device: this.deviceName,
                     room: this.room,
                     language: this.speechLanguage(),
+                    purpose: this.conversationPurpose,
                     button: yes ? 'yes' : 'no',
                 })
             ).trim();
@@ -1215,6 +1229,12 @@ class EsphomeConnection {
 
     // ── voice pipeline ──────────────────────────────────────────────────────────────────────────────
 
+    /** The conversation is over: the next one gets the language and the purpose of its own wake word. */
+    private endConversation(): void {
+        this.conversationLanguage = '';
+        this.conversationPurpose = 'home';
+    }
+
     /** Language of the current conversation: the one of its wake word, else the voice language. */
     private speechLanguage(): string {
         return this.conversationLanguage || this.opts.language;
@@ -1262,9 +1282,10 @@ class EsphomeConnection {
         if (!followUp || newWakeWord) {
             // a new conversation: the language of its wake word; the follow-ups keep it
             this.conversationLanguage = this.opts.wakeWordLanguage?.(phrase, this.wakeWordConfig) || '';
+            this.conversationPurpose = this.opts.wakeWordPurpose?.(phrase, this.wakeWordConfig) || 'home';
         } else if (!answersQuestion && !dialog) {
             // a conversation that starts without a wake word: the voice language, not the one of an old conversation
-            this.conversationLanguage = '';
+            this.endConversation();
         }
 
         this.opts.log.debug(
@@ -1358,7 +1379,7 @@ class EsphomeConnection {
         this.dialogOn = on;
         if (!on) {
             // the dialog was the conversation: the next one starts in the language of its own wake word
-            this.conversationLanguage = '';
+            this.endConversation();
         }
         this.dialogHeardAt = Date.now();
         this.dialogReplyAt = 0;
@@ -1386,7 +1407,7 @@ class EsphomeConnection {
             this.dialogTimer.unref();
             if (open && this.online && !this.capture && !this.runOpen) {
                 // switched on from ioBroker, not by a request: no wake word, the voice language
-                this.conversationLanguage = '';
+                this.endConversation();
                 this.noteDialogReply((open.pcm.length / 2 / open.sampleRate) * 1000);
                 void this.announce(open.pcm, open.sampleRate, true, '', false).catch(e =>
                     this.opts.log.warn(
@@ -1717,6 +1738,7 @@ class EsphomeConnection {
                     room: this.room,
                     wakeWord: capture.wakeWord,
                     language: this.speechLanguage(),
+                    purpose: this.conversationPurpose,
                     sttMs,
                     audioMs: Math.round(seconds * 1000),
                     // Numbers only, no audio: shows where a request was cut off without keeping recordings.
@@ -1929,7 +1951,7 @@ class EsphomeConnection {
         if (startConversation && fromOutside) {
             // A question of a script or trigger is asked in the voice language: the answer is heard in it, not in
             // the language of a wake word said hours ago.
-            this.conversationLanguage = '';
+            this.endConversation();
         }
         const request = new pb.VoiceAssistantAnnounceRequest();
         request.setMediaId(await this.publish(pcm, sampleRate));

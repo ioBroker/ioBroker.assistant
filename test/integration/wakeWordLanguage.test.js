@@ -9,6 +9,8 @@ const {
     parseWakeWordLanguages,
     wakeWordLanguage,
     describeWakeWordLanguages,
+    parseWakeWordProfiles,
+    wakeWordPurpose,
 } = require('../../build/lib/voice/wakeWordLanguage');
 const { activeWakeWordLimit } = require('../../build/lib/voice/esphome');
 
@@ -91,4 +93,57 @@ test('wakeWordLanguage: a trained model matches its word, whatever its date, has
     assert.equal(wakeWordLanguage(byVersion, '261117_iobroker'), 'de', 'a row with an id covers newer versions');
     assert.equal(wakeWordLanguage(byWord, 'Okay Nabu'), '');
     assert.equal(describeWakeWordLanguages(byVersion), 'iobroker → de');
+});
+
+test('parseWakeWordProfiles: a row for free questions needs no language, the languages leave it out', () => {
+    const rows = [
+        { wakeWord: 'Alisa', language: 'ru', purpose: '' },
+        { wakeWord: 'Hey Bro', language: '', purpose: 'chat' },
+        { wakeWord: 'Jarvis', language: 'en', purpose: 'chat' },
+        { wakeWord: 'Nothing', language: '', purpose: '' },
+        { wakeWord: 'Odd', language: 'de', purpose: 'whatever' },
+    ];
+    const profiles = parseWakeWordProfiles(rows);
+    assert.deepEqual(
+        [...profiles],
+        [
+            ['alisa', { language: 'ru', purpose: 'home' }],
+            ['heybro', { language: '', purpose: 'chat' }],
+            ['jarvis', { language: 'en', purpose: 'chat' }],
+            ['odd', { language: 'de', purpose: 'home' }],
+        ],
+        'a row that says nothing is left out, an unknown purpose is the house',
+    );
+    assert.deepEqual(
+        [...parseWakeWordLanguages(rows)],
+        [
+            ['alisa', 'ru'],
+            ['jarvis', 'en'],
+            ['odd', 'de'],
+        ],
+    );
+    assert.deepEqual(
+        [...parseWakeWordLanguages(profiles)],
+        [
+            ['alisa', 'ru'],
+            ['jarvis', 'en'],
+            ['odd', 'de'],
+        ],
+    );
+    assert.equal(
+        describeWakeWordLanguages(profiles),
+        'alisa → ru, heybro → free questions only, jarvis → en, free questions only, odd → de',
+    );
+});
+
+test('wakeWordPurpose: by phrase or id, the house without a row', () => {
+    const profiles = parseWakeWordProfiles([{ wakeWord: 'hey_bro', purpose: 'chat' }]);
+    assert.equal(wakeWordPurpose(profiles, 'Hey Bro'), 'chat');
+    assert.equal(wakeWordPurpose(profiles, '261103_hey_bro_2ae6f3f7'), 'chat', 'a trained model, by its base name');
+    assert.equal(wakeWordPurpose(profiles, 'Alisa'), 'home');
+    assert.equal(wakeWordPurpose(profiles, ''), 'home');
+    assert.equal(wakeWordPurpose(new Map(), 'Hey Bro'), 'home');
+    // the device reports the phrase, the table names the id
+    const byId = parseWakeWordProfiles([{ wakeWord: 'bro_v2', purpose: 'chat' }]);
+    assert.equal(wakeWordPurpose(byId, 'Hey Brother', [{ id: 'bro_v2', phrase: 'Hey Brother' }]), 'chat');
 });

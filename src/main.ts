@@ -147,7 +147,14 @@ import {
     type TimerEvent,
     type WakeWordConfig,
 } from './lib/voice/esphome';
-import { describeWakeWordLanguages, parseWakeWordLanguages, wakeWordLanguage } from './lib/voice/wakeWordLanguage';
+import {
+    describeWakeWordLanguages,
+    parseWakeWordLanguages,
+    parseWakeWordProfiles,
+    wakeWordLanguage,
+    wakeWordPurpose,
+    type WakeWordProfile,
+} from './lib/voice/wakeWordLanguage';
 import {
     MEDIA_COMMANDS,
     type EsphomeEntity,
@@ -732,7 +739,14 @@ class Assistant extends Adapter {
         caller: string;
         /** Who asked there (Telegram chat id or user), the recipient of "mir" */
         recipient: string;
+        /**
+         * Said with a wake word for free questions only (`wakeWordLanguages`, purpose `chat`): no commands of the house,
+         * no device list, no tools — the model answers from what it knows, in a conversation of its own.
+         */
+        freeTalk: boolean;
     }>();
+    /** The table `wakeWordLanguages`: language and purpose per wake word; read once, the settings restart the adapter. */
+    private wakeProfiles: Map<string, WakeWordProfile> | null = null;
     /** Who is at home (roadmap B1); mirrored into `presence.*`. Null until onReady. */
     private presence: PresenceTracker | null = null;
     /** Satellites currently set to Do-Not-Disturb, by state id (mirrors `satellites.<id>.dnd`). */
@@ -1119,11 +1133,11 @@ class Assistant extends Adapter {
             this.serveWakeWord(word);
         }
 
-        const wakeLanguages = parseWakeWordLanguages(cfg.wakeWordLanguages);
-        if (wakeLanguages.size) {
-            this.log.info(
-                `ESPHome satellites: speech recognition by wake word — ${describeWakeWordLanguages(wakeLanguages)}`,
-            );
+        const wakeProfiles = this.wakeWordProfiles();
+        const wakeLanguages = parseWakeWordLanguages(wakeProfiles);
+        const freeTalkWords = [...wakeProfiles.values()].some(profile => profile.purpose === 'chat');
+        if (wakeProfiles.size) {
+            this.log.info(`ESPHome satellites: wake words — ${describeWakeWordLanguages(wakeProfiles)}`);
         }
         this.esphome = new EsphomeSatellites({
             devices,
@@ -1136,6 +1150,7 @@ class Assistant extends Adapter {
                     room: origin.room,
                     wakeWord: origin.wakeWord,
                     language: origin.language,
+                    purpose: origin.purpose,
                     sttMs: origin.sttMs,
                     audioMs: origin.audioMs,
                     vad: origin.vad,
@@ -1145,6 +1160,9 @@ class Assistant extends Adapter {
             getHints: () => this.buildSttHints(),
             wakeWordLanguage: wakeLanguages.size
                 ? (phrase, config) => wakeWordLanguage(wakeLanguages, phrase, config?.available)
+                : undefined,
+            wakeWordPurpose: freeTalkWords
+                ? (phrase, config) => wakeWordPurpose(wakeProfiles, phrase, config?.available)
                 : undefined,
             media: this.media,
             mediaHost: (cfg.esphomeMediaHost || '').trim(),
@@ -4489,6 +4507,10 @@ class Assistant extends Adapter {
         const configured = listenLanguage || String(this.config.voiceLanguage || this.language || 'en');
         // "скажи, сколько сейчас времени" on a German satellite: the time comes in Russian
         const language = questionLanguage(question, configured);
+        // ESPHome says the purpose of the conversation (its follow-ups have no wake word); others only the wake word
+        const purpose =
+            origin.purpose ?? (origin.wakeWord ? wakeWordPurpose(this.wakeWordProfiles(), origin.wakeWord) : 'home');
+        const freeTalk = purpose === 'chat';
         return this.requestOrigin.run(
             {
                 source,
@@ -4500,6 +4522,7 @@ class Assistant extends Adapter {
                 listenLanguage,
                 caller: sender.caller || '',
                 recipient: sender.recipient || '',
+                freeTalk,
             },
             () =>
                 this.journal
@@ -4510,6 +4533,12 @@ class Assistant extends Adapter {
                               this.journal?.step({
                                   stage: 'request',
                                   title: `Question in '${language}', not '${configured}': fixed answers in '${language}'`,
+                              });
+                          }
+                          if (freeTalk) {
+                              this.journal?.step({
+                                  stage: 'request',
+                                  title: `Wake word for free questions${origin.wakeWord ? ` ("${origin.wakeWord}")` : ''}: no commands of the house, a conversation of its own`,
                               });
                           }
                           return this.answerTracked(question, source);
@@ -4575,11 +4604,13 @@ class Assistant extends Adapter {
 
     private async answerTracked(question: string, source: string): Promise<string> {
         const useCtx = this.config.useConversationContext !== false;
-        const history = useCtx ? this.context.get(source) : [];
+        // A free conversation has its own thread: "and how old do they get?" belongs to it, not to the lights
+        const thread = this.conversationKey(source);
+        const history = useCtx ? this.context.get(thread) : [];
         if (history.length) {
             this.journal?.step({
                 stage: 'context',
-                title: `Conversation context: ${history.length} earlier turn(s) of '${source}'`,
+                title: `Conversation context: ${history.length} earlier turn(s) of '${thread}'`,
                 data: history,
             });
         }
@@ -4630,7 +4661,7 @@ class Assistant extends Adapter {
         if (useCtx && (result || toned)) {
             // The pictures are not sent again in later turns; a marker says there were some
             const { images, video } = this.attachments();
-            this.context.add(source, historyText(question, images.length, !!video), result || this.doneText());
+            this.context.add(thread, historyText(question, images.length, !!video), result || this.doneText());
         }
         return result;
     }
@@ -4679,6 +4710,39 @@ class Assistant extends Adapter {
      *
      * @param question the question as asked
      */
+    /** The table `wakeWordLanguages` (language and purpose per wake word), parsed once. */
+    private wakeWordProfiles(): Map<string, WakeWordProfile> {
+        this.wakeProfiles ??= parseWakeWordProfiles(this.config.wakeWordLanguages);
+        return this.wakeProfiles;
+    }
+
+    /** Key of the conversation of `source`: a free conversation (wake word for free questions) has its own. */
+    private conversationKey(source: string): string {
+        return this.requestOrigin.getStore()?.freeTalk ? `${source || 'default'}-chat` : source;
+    }
+
+    /**
+     * System prompt of a free conversation (wake word with the purpose `chat`): `freeTalkPrompt` of the settings, else
+     * a built-in one — any topic from the model's own knowledge, spoken style, and no house: no tools, no device list.
+     */
+    private freeTalkPrompt(): string {
+        const own = (this.config.freeTalkPrompt || '').trim();
+        if (own) {
+            return own;
+        }
+        // in the language of its wake word (Hey Bro → German on a Russian satellite), else the voice language
+        const lang = baseLanguage(
+            this.requestOrigin.getStore()?.listenLanguage || String(this.config.voiceLanguage || this.language || 'en'),
+        );
+        if (lang === 'ru') {
+            return 'Ты дружелюбный собеседник. Тебя можно спросить о чём угодно: природа, животные, история, наука, кулинария, техника, быт. Отвечай из своих знаний. Ответы читаются вслух: только сплошной текст, без Markdown, без списков и эмодзи, коротко и понятно. В этом разговоре ты не управляешь умным домом и не смотришь устройства; кто хочет что-то включить или узнать, что происходит дома, пусть скажет слово активации для дома. Если ты не уверен в факте, так и скажи.';
+        }
+        if (lang === 'de') {
+            return 'Du bist ein freundlicher Gesprächspartner. Man kann dich über alles fragen: Natur, Tiere, Geschichte, Wissenschaft, Kochen, Technik, Alltag. Antworte aus deinem Wissen. Deine Antworten werden vorgelesen: reiner Fließtext, kein Markdown, keine Aufzählungen, keine Emojis, kurz und verständlich. In diesem Gespräch steuerst du kein Smart Home und schaust keine Geräte nach; wer etwas schalten oder wissen will, was im Haus los ist, soll das Wake-Word für das Haus sagen. Bist du dir bei einer Tatsache nicht sicher, sag das.';
+        }
+        return 'You are a friendly conversation partner. People can ask you about anything: nature, animals, history, science, cooking, technology, everyday life. Answer from your own knowledge. Your answers are read aloud: plain running text, no Markdown, no lists, no emojis, short and clear. In this conversation you do not control the smart home and do not look at devices; whoever wants to switch something or know what is going on in the house should say the wake word for the house. When you are not sure about a fact, say so.';
+    }
+
     private replyLanguageHint(question: string): string {
         const origin = this.requestOrigin.getStore();
         if (!origin?.language) {
@@ -5111,6 +5175,15 @@ class Assistant extends Adapter {
                 data: { reason: cloudOnly },
             });
             this.smartT2c?.forget(source);
+        } else if (this.requestOrigin.getStore()?.freeTalk) {
+            // "Hey Bro, wie alt können Katzen werden?": nothing of the house — routines, the rules and smart-t2c
+            // would take "Katzen" for a device or "werden" for a command
+            this.log.info(`Free question (source='${source}'): routines and commands of the house skipped.`);
+            this.journal?.step({
+                stage: 'nlu',
+                title: 'Routines and commands of the house skipped: wake word for free questions',
+                data: { reason: 'freeTalk' },
+            });
         } else {
             // smart-text2command asked this source back ("Which room?"): the utterance is the answer — before the
             // routines and the rules, which would read "the kitchen" or "50 percent" as a request of its own
@@ -5177,15 +5250,18 @@ class Assistant extends Adapter {
             });
             return this.localOnlyFallback();
         }
-        const ctx = await this.buildDeviceContext();
+        // A free conversation gets no device list and no tools: it has nothing to do with the house
+        const freeTalk = !!this.requestOrigin.getStore()?.freeTalk;
+        const ctx = freeTalk ? '' : await this.buildDeviceContext();
         const mem = this.buildMemoryContext();
         // Only ask the model to emit the follow-up marker when satellites can actually re-open the mic.
         const followUp = this.config.voiceEnabled ? this.followUpHint() : '';
-        const done = this.doneHint();
-        const parts = [this.config.systemPrompt || '', this.languageHint(), followUp, done, mem, ctx].filter(Boolean);
+        const done = freeTalk ? '' : this.doneHint();
+        const style = freeTalk ? this.freeTalkPrompt() : this.config.systemPrompt || '';
+        const parts = [style, this.languageHint(), followUp, done, mem, ctx].filter(Boolean);
         const sys = parts.length ? parts.join('\n\n') : undefined;
         this.log.info(
-            `Cloud LLM [${this.agent.model || 'auto'}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}${weather ? ', weather' : ''}${this.presence?.configured ? ', presence' : ''}) — running tool loop…`,
+            `Cloud LLM [${this.agent.model || 'auto'}] (source='${source}', context=${history.length} turn(s)${mem ? ', memory' : ''}${weather ? ', weather' : ''}${this.presence?.configured ? ', presence' : ''}) — ${freeTalk ? 'free question, no tools…' : 'running tool loop…'}`,
         );
         // Prepend the current date/time (and the weather line, if a source is configured) to the user turn —
         // cache-safe, see buildTimeContext. The stored history keeps the untouched question. A spoken request
@@ -5213,9 +5289,10 @@ class Assistant extends Adapter {
         const deviceLines = ctx ? ctx.split('\n').length - 1 : 0;
         this.journal?.step({
             stage: 'context',
-            title: `Prompt: ${deviceLines} devices${mem ? ', memory' : ''}${weather ? ', weather' : ''}${followUp ? ', follow-up marker' : ''}${lengthHint ? ', length limit' : ''}`,
+            title: `Prompt: ${freeTalk ? 'free questions, no tools' : `${deviceLines} devices`}${mem ? ', memory' : ''}${weather ? ', weather' : ''}${followUp ? ', follow-up marker' : ''}${lengthHint ? ', length limit' : ''}`,
             data: {
-                systemPrompt: this.config.systemPrompt || '',
+                systemPrompt: style,
+                freeTalk: freeTalk || undefined,
                 followUpHint: followUp || undefined,
                 doneHint: done || undefined,
                 lengthHint: lengthHint || undefined,
@@ -5228,7 +5305,7 @@ class Assistant extends Adapter {
             },
         });
         try {
-            return await this.agent.ask(questionForLlm, sys, history, images);
+            return await this.agent.ask(questionForLlm, sys, history, images, !freeTalk);
         } catch (e) {
             // Offline, quota, outage: the local model is the fallback — unless it was already asked above.
             if (useLocal && !localFirst) {
@@ -5261,12 +5338,26 @@ class Assistant extends Adapter {
         localFallback: boolean,
     ): Promise<string> {
         const followUp = this.config.voiceEnabled ? this.followUpHint() : '';
+        // A free conversation: its own pi-agent conversation, told to leave the house alone, without the device list.
+        // pi-agent keeps its tools (they cannot be switched off per request), the instructions say not to use them.
+        const freeTalk = !!this.requestOrigin.getStore()?.freeTalk;
         // The device list maps names to state ids, so pi-agent can act without searching first. It is the
         // first to go when the instructions get too long — pi-agent can still search.
-        const { text: instructions, dropped } = composeInstructions(
-            [this.config.systemPrompt || '', this.languageHint(), followUp, this.doneHint(), this.spokenLengthHint()],
-            [this.buildMemoryContext(), await this.buildDeviceContext()],
-        );
+        const { text: instructions, dropped } = freeTalk
+            ? composeInstructions(
+                  [this.freeTalkPrompt(), this.languageHint(), followUp, this.spokenLengthHint()],
+                  [this.buildMemoryContext()],
+              )
+            : composeInstructions(
+                  [
+                      this.config.systemPrompt || '',
+                      this.languageHint(),
+                      followUp,
+                      this.doneHint(),
+                      this.spokenLengthHint(),
+                  ],
+                  [this.buildMemoryContext(), await this.buildDeviceContext()],
+              );
         if (dropped) {
             this.log.debug(`pi-agent: ${dropped} context block(s) left out, the instructions would be too long.`);
         }
@@ -5275,14 +5366,16 @@ class Assistant extends Adapter {
         const text = [
             this.buildTimeContext(),
             weather,
-            this.buildPresenceContext(),
+            freeTalk ? '' : this.buildPresenceContext(),
             question,
             attachmentNote(images.length, !!video),
             this.replyLanguageHint(question),
         ]
             .filter(Boolean)
             .join('\n\n');
-        this.log.info(`Cloud tier ${harness.instance} (source='${source}') — asking pi-agent…`);
+        this.log.info(
+            `Cloud tier ${harness.instance} (source='${source}') — asking pi-agent${freeTalk ? ' a free question' : ''}…`,
+        );
         this.journal?.note({ tier: 'cloud', detail: harness.instance });
         try {
             // pi-agent asks its questions to confirm a write ("… Say yes or no.") in this language, not in the system
@@ -5296,7 +5389,7 @@ class Assistant extends Adapter {
             const tts = satellite ? `${this.namespace}.satellites.${satellite}.tts` : '';
             const answer = await harness.ask({
                 text,
-                conversation: source,
+                conversation: this.conversationKey(source),
                 instructions,
                 language,
                 images,

@@ -1412,9 +1412,10 @@ test('a screen shows the voice language: set once on connect', async t => {
 
 /**
  * A satellite that recognises what follows its wake word in the language of `table` (wake word → language, as the
- * setting `wakeWordLanguages`); the first reply asks a question, so the next microphone is a follow-up.
+ * setting `wakeWordLanguages`) and the purpose of `purposes` (wake word → `chat`); the first reply asks a question, so
+ * the next microphone is a follow-up.
  */
-async function languageSatellite(t, table) {
+async function languageSatellite(t, table, purposes = {}) {
     const device = fakeDevice({ speechMs: 600, screen: true });
     const port = await device.listen();
     const media = new MediaServer({ port: 0, log: silentLog });
@@ -1443,6 +1444,7 @@ async function languageSatellite(t, table) {
             return asked.length === 1 ? QUESTION : 'Свет включён.';
         },
         wakeWordLanguage: phrase => table[phrase.toLowerCase()] || '',
+        wakeWordPurpose: phrase => purposes[phrase.toLowerCase()] || 'home',
         media,
         silenceMs: 300,
         log: silentLog,
@@ -1512,6 +1514,33 @@ test('a wake word without a language: the voice language, as before', async t =>
     assert.deepEqual(heard, ['de']);
     assert.equal(asked[0].ctx.language, 'de');
     assert.deepEqual(spoken, ['de']);
+});
+
+test('a wake word for free questions: its conversation keeps the purpose, the next one has its own', async t => {
+    const { device, asked } = await languageSatellite(t, { 'hey bro': 'de' }, { 'hey bro': 'chat' });
+    assert.equal(asked[0].ctx.purpose, 'home', 'okay nabu has no row: the house');
+
+    // "Hey Bro" while the question is open: a wake word just said — a free conversation
+    device.startPipeline('hey bro', true);
+    await waitFor(() => asked.length === 2, 'the request after Hey Bro');
+    assert.equal(asked[1].ctx.purpose, 'chat');
+    assert.equal(asked[1].ctx.language, 'de');
+
+    // its reply asks nothing: the conversation is over, a microphone without a wake word is the house again
+    await waitFor(() => device.events.filter(e => e.type === 2).length >= 2, 'the end of the free conversation');
+    device.startPipeline('', true);
+    await waitFor(() => asked.length === 3, 'a request without a wake word');
+    assert.equal(asked[2].ctx.purpose, 'home');
+});
+
+test('the follow-up of a free question stays a free question', async t => {
+    const { device, asked } = await languageSatellite(t, {}, { 'okay nabu': 'chat' });
+    assert.equal(asked[0].ctx.purpose, 'chat');
+    // the reply asked a question: the next microphone comes without a new wake word
+    device.startPipeline('okay nabu', true);
+    await waitFor(() => asked.length === 2, 'the answer to the question');
+    assert.equal(asked[1].ctx.wakeWord, '', 'a follow-up');
+    assert.equal(asked[1].ctx.purpose, 'chat');
 });
 
 test('a yes button answers the open question: the mic closes, the reply is announced', async t => {

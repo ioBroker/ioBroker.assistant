@@ -658,7 +658,9 @@ export default class FlowComponent extends ConfigGeneric<ConfigGenericProps, Flo
                     {provider === 'openai' && f.sttBaseUrl ? this.line(t('Server:'), f.sttBaseUrl) : null}
                     {f.sttFallback ? this.line(t('Reserve:'), this.label(STT_PROVIDERS, f.sttFallback)) : null}
                     {this.line(t('Language:'), this.languageLabel)}
-                    {wakeLanguages ? this.line(`${I18n.t('Language per wake word')}:`, String(wakeLanguages)) : null}
+                    {wakeLanguages
+                        ? this.line(`${I18n.t('Language and purpose per wake word')}:`, String(wakeLanguages))
+                        : null}
                     {this.caption(t('Text requests skip this step.'))}
                 </>
             ) : (

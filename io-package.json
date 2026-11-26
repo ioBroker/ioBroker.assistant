@@ -282,6 +282,7 @@
     "esphomeEnabled": false,
     "esphomeDevices": [],
     "wakeWordLanguages": [],
+    "freeTalkPrompt": "",
     "esphomeMediaPort": 8099,
     "esphomeMediaHost": "",
     "esphomeSilenceMs": 900,

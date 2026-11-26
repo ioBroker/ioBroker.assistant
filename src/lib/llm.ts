@@ -231,12 +231,14 @@ export class LlmAgent {
      * `systemPrompt` overrides the configured one for this call (e.g. to inject a device list).
      * `history` are prior turns (user/assistant) prepended so the model can resolve follow-ups.
      * `images` go with the question (a photo from Telegram); the model must be able to see.
+     * `withTools` false: the model gets no tools (a free conversation, which has nothing to do with the house).
      */
     public async ask(
         question: string,
         systemPrompt?: string,
         history: { role: 'user' | 'assistant'; content: string }[] = [],
         images: ImageInput[] = [],
+        withTools = true,
     ): Promise<string> {
         await this.ensureModel();
         this.log.debug(
@@ -246,7 +248,7 @@ export class LlmAgent {
         const sys = systemPrompt ?? this.systemPrompt;
         this.trace?.({
             stage: 'cloud',
-            title: `${this.providerName} · ${this.model}: ${this.tools.length} tools, ${history.length} earlier turn(s)`,
+            title: `${this.providerName} · ${this.model}: ${withTools ? this.tools.length : 0} tools, ${history.length} earlier turn(s)`,
             data: {
                 provider: this.providerName,
                 sdk: this.provider,
@@ -256,16 +258,16 @@ export class LlmAgent {
                 maxRounds: this.maxRounds,
                 reasoningEffort: this.reasoningEffort || undefined,
                 system: sys,
-                tools: this.tools.map(t => t.name),
+                tools: withTools ? this.tools.map(t => t.name) : [],
                 images: images.length ? images.map(i => i.mimeType) : undefined,
             },
         });
         const answer =
             this.provider === 'anthropic'
-                ? await this.askAnthropic(question, sys, history, images)
+                ? await this.askAnthropic(question, sys, history, images, withTools)
                 : needResponsesApi.has(this.modelKey)
-                  ? await this.askOpenAIResponses(question, sys, history, images)
-                  : await this.askOpenAI(question, sys, history, images);
+                  ? await this.askOpenAIResponses(question, sys, history, images, withTools)
+                  : await this.askOpenAI(question, sys, history, images, withTools);
         this.log.debug(`llm answer (${Date.now() - started} ms): ${answer}`);
         return answer;
     }
@@ -572,9 +574,10 @@ export class LlmAgent {
         systemPrompt: string,
         history: { role: 'user' | 'assistant'; content: string }[] = [],
         images: ImageInput[] = [],
+        withTools = true,
     ): Promise<string> {
         const client = this.openai as OpenAI;
-        const tools = this.tools.map(t => ({
+        const tools = (withTools ? this.tools : []).map(t => ({
             type: 'function' as const,
             function: { name: t.name, description: t.description, parameters: t.parameters },
         }));
@@ -714,10 +717,11 @@ export class LlmAgent {
         systemPrompt: string,
         history: { role: 'user' | 'assistant'; content: string }[] = [],
         images: ImageInput[] = [],
+        withTools = true,
     ): Promise<string> {
         const client = this.openai as OpenAI;
         // strict would demand schemas with every property required and no additional ones
-        const tools = this.tools.map(t => ({
+        const tools = (withTools ? this.tools : []).map(t => ({
             type: 'function' as const,
             name: t.name,
             description: t.description,
@@ -845,9 +849,10 @@ export class LlmAgent {
         systemPrompt: string,
         history: { role: 'user' | 'assistant'; content: string }[] = [],
         images: ImageInput[] = [],
+        withTools = true,
     ): Promise<string> {
         const client = this.anthropic as Anthropic;
-        const tools: any[] = this.tools.map(t => ({
+        const tools: any[] = (withTools ? this.tools : []).map(t => ({
             name: t.name,
             description: t.description,
             input_schema: t.parameters as Anthropic.Tool.InputSchema,

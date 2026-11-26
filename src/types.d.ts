@@ -198,8 +198,13 @@ export interface AdapterConfig {
      * = lowest RMS that counts as speech (empty → 250; lower for quiet microphones such as a phone).
      */
     esphomeDevices: { ip: string; port?: number; password?: string; room?: string; speechLevel?: number }[];
-    /** Speech recognition language per wake word of the ESPHome satellites (`lib/voice/wakeWordLanguage.ts`). */
-    wakeWordLanguages: { wakeWord: string; language: string }[];
+    /**
+     * Per wake word of the ESPHome satellites (`lib/voice/wakeWordLanguage.ts`): the language of speech recognition ('' =
+     * the voice language) and the purpose ('' = house and questions, `chat` = free questions only).
+     */
+    wakeWordLanguages: { wakeWord: string; language?: string; purpose?: '' | 'chat' }[];
+    /** System prompt of the wake words for free questions only; '' = the built-in one (`main.freeTalkPrompt`). */
+    freeTalkPrompt?: string;
     /**
      * Port of the small HTTP server that serves spoken replies to those devices — they fetch the audio
      * by URL instead of receiving it over their API socket.

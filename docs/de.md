@@ -761,7 +761,7 @@ sendTo('assistant.0', 'deleteWakeWord', { id: 'hey_hannah_1a2b3c4d' });
 
 Eine Spracherkennung, die die Sprache selbst erkennt, rät bei kurzen Befehlen oft falsch: in einem Haushalt mit
 Deutsch und Russisch kam „Wie ist das Wetter morgen?“ bei Parakeet als „Листа светерморган.“ zurück. Gib stattdessen
-jeder Sprache ihr eigenes Wake-Word und fülle die Tabelle **Sprache je Aktivierungswort** (Reiter Satelliten, unter
+jeder Sprache ihr eigenes Wake-Word und fülle die Tabelle **Sprache und Zweck pro Wake-Word** (Reiter Satelliten, unter
 den ESPHome-Satelliten), z. B. `Alisa` → Русский, `Hey Bro` → Deutsch:
 
 - was nach dem Wake-Word gesagt wird, wird in seiner Sprache erkannt, und die Antwort wird darin gesprochen;
@@ -782,6 +782,25 @@ OpenAI und kompatible Server (Whisper, z. B. speaches oder faster-whisper unter 
 OpenRouter und Vosk. Bei ioBroker.voice wähle das Modell **Canary 1B v2**: ihm wird die Sprache mitgeteilt, und
 es hält Sprache mit Akzent darin, bei etwa doppelter Zeit von Parakeet (immer noch deutlich unter einer Sekunde).
 Parakeet erkennt die Sprache selbst und ignoriert sie.
+
+#### Ein Wake-Word für freie Fragen
+
+Dieselbe Tabelle gibt einem Wake-Word einen **Zweck**. Mit **Nur freie Fragen** wird es zum Gesprächspartner für alle
+Themen, und das Haus bleibt beim anderen Wake-Word: „Alisa, mach das Licht an“ steuert das Haus, „Hey Bro, wie alt
+können Katzen werden?“ beantwortet das Modell aus seinem Wissen.
+
+- Keine Routinen, keine Regeln, kein smart-text2command, keine Geräteliste und keine Tools: „Katzen“ wird nicht für
+  ein Gerät gehalten, und im Haus wird nichts geschaltet. Soll es etwas schalten, verweist es auf das andere Wake-Word.
+- Die Antwort kommt von der Cloud-Stufe (oder wie sonst vom lokalen Modell): das Cloud-Modell bekommt keine Tools,
+  pi-agent ein eigenes Gespräch mit der Anweisung, das Haus in Ruhe zu lassen — seine Tools kann pi-agent nicht pro
+  Anfrage abschalten.
+- Ein eigenes Gespräch: „und Hunde?“ nach den Katzen gehört dazu, nicht zum Gespräch über das Haus.
+- Rückfragen und der Dialogmodus behalten den Zweck ihres Wake-Words, wie die Sprache. Ein Mikrofon ohne Wake-Word
+  nach dem Gespräch und Fragen aus ioBroker sind wieder das Haus.
+- **Anweisungen für freie Fragen** (unter der Tabelle) ersetzen die eingebauten: jedes Thema aus dem Wissen des
+  Modells, kurz und zum Vorlesen, kein Smart Home.
+
+Die Sprachspalte darf bei so einer Zeile auf **Sprache (Stimme)** bleiben.
 
 #### Geräte-Einstellungen
 
