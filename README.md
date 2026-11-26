@@ -237,6 +237,9 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* Added detection of volume commands
+
 ### 1.15.0 (2026-11-26)
 * (@GermanBluefox) A wake word for free questions: the table of the wake words has a purpose, and with "Free questions only" a wake word ("Hey Bro, how old can cats get?") skips the commands of the house and asks the cloud tier without device list and tools, in a conversation of its own; its follow-ups and dialog mode keep it. Instructions of its own: `freeTalkPrompt`
 
