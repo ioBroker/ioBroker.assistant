@@ -9,6 +9,7 @@ const {
     spelledNumbersToDigits,
     mentionsScript,
     dialogCommand,
+    cyrillicToLatin,
 } = require('../../build/lib/nlu.js');
 
 const light = {
@@ -735,6 +736,46 @@ test('volume: louder / quieter are relative steps', () => {
     assert.equal(delta('um 3 lauter'), 30);
     assert.equal(delta('louder'), 10);
     assert.equal(delta('потише'), -10);
+});
+
+test('volume: a sentence that asks for more than the volume goes to the LLM', () => {
+    const sat = new Nlu(['Mobil', 'Mini', 'Gast', 'Küche'], []);
+    const none = text => {
+        assert.equal(sat.parse(text), null, text);
+        assert.deepEqual(sat.parseAll(text), [], text);
+    };
+    // field case 2026-11-26, spoken into "Mini": the rule set Mini to 40 % and the radio never started
+    none('Включи радиостанцию Рекорд на сателите мобиль с громкостью сорок процентов.');
+    none('Включи радиостанцию Рекорд на сателите мобиль с громкостью тридцать процентов.');
+    none('Включи радиостанцию Рекорд с громкостью 40 процентов');
+    none('Spiel Radio Rekord auf Mobil mit Lautstärke 40 Prozent');
+    none('Starte die Musik in der Küche, Lautstärke 30');
+    none('Play Radio Record on Mobil at 40 percent volume');
+    none('Поставь музыку погромче');
+});
+
+test('volume: pure volume commands still work (de/en/ru)', () => {
+    const sat = new Nlu(['Mobil', 'Mini', 'Gast', 'Küche'], []);
+    const v = text => {
+        const i = sat.parse(text);
+        return i?.action === 'volumeSet' ? { value: i.value, delta: i.delta, room: i.room } : null;
+    };
+    assert.deepEqual(v('громкость 40'), { value: 40, delta: undefined, room: undefined });
+    assert.deepEqual(v('сделай тише'), { value: undefined, delta: -10, room: undefined });
+    assert.deepEqual(v('сделай погромче, пожалуйста'), { value: undefined, delta: 10, room: undefined });
+    assert.deepEqual(v('Lautstärke auf 30 Prozent in der Küche'), { value: 30, delta: undefined, room: 'Küche' });
+    assert.deepEqual(v('Mach bitte etwas leiser'), { value: undefined, delta: -10, room: undefined });
+    assert.deepEqual(v('volume up'), { value: undefined, delta: 10, room: undefined });
+    assert.deepEqual(v('turn the volume down'), { value: undefined, delta: -10, room: undefined });
+    assert.deepEqual(v('set the volume to 25 percent'), { value: 25, delta: undefined, room: undefined });
+    // a Latin room name spoken in Russian
+    assert.deepEqual(v('громкость на сателите мобиль 30 процентов'), { value: 30, delta: undefined, room: 'Mobil' });
+});
+
+test('findRoom: a Latin room name matches its Cyrillic spelling', () => {
+    const n = new Nlu(['Mobil', 'Salon'], [{ ...light, name: 'Свет', room: 'Salon' }]);
+    assert.equal(n.parse('включи свет в салоне')?.room, 'Salon');
+    assert.equal(cyrillicToLatin('мобиль'), 'mobil');
 });
 
 test('volume: a named device wins over the satellite', () => {

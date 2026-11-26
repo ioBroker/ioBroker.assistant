@@ -316,6 +316,70 @@ const VOLUME_MAX_TOKENS = new Set(['maximum', 'max', 'voll', 'full', 'макси
 const VOLUME_MIN_TOKENS = new Set(['minimum', 'min', 'минимум']);
 /** Step of a bare "lauter"/"leiser", in percentage points. */
 const VOLUME_STEP = 10;
+/** "volume up" / "turn the volume down": a direction only together with a volume word. */
+const VOLUME_UP_TOKENS = new Set(['up', 'hoch', 'rauf']);
+const VOLUME_DOWN_TOKENS = new Set(['down', 'runter', 'herunter']);
+/**
+ * Small words a pure volume command may carry besides the volume words, the number, the room and a neutral verb
+ * (whole tokens, after the filler is gone). Anything else ("включи радио Рекорд … с громкостью 40") means the
+ * sentence asks for more than the volume, so the rule leaves all of it to the LLM.
+ */
+const VOLUME_SMALL_WORDS = new Set([
+    // de
+    'dem',
+    'des',
+    'am',
+    'zu',
+    'um',
+    'bis',
+    'es',
+    'ein',
+    'eine',
+    'einen',
+    'etwas',
+    'bisschen',
+    'wenig',
+    'noch',
+    'viel',
+    'stufe',
+    'stufen',
+    'volle',
+    'vollen',
+    // en
+    'to',
+    'at',
+    'on',
+    'by',
+    'of',
+    'a',
+    'it',
+    'bit',
+    'little',
+    'slightly',
+    'more',
+    'level',
+    'step',
+    'steps',
+    'can',
+    'could',
+    'you',
+    // ru
+    'до',
+    'с',
+    'со',
+    'еще',
+    'немного',
+    'чуть',
+    'чуть-чуть',
+    'чуточку',
+    'полной',
+    'уровень',
+    'можешь',
+    'сделать',
+]);
+/** Word stems naming the speaker itself ("Lautstärke am Satelliten Mobil auf 30"). */
+const SATELLITE_WORDS = ['satellit', 'сателлит', 'сателит', 'спутник'];
+const PERCENT_TOKEN_RE = /^(?:\d+%?|%|prozent|percent|процент\p{L}*)$/u;
 
 /** Words (de/en/ru, stemmed) that mean "open". */
 const OPEN_WORDS = ['offen', 'geoeffnet', 'geoffnet', 'auf', 'open', 'открыт', 'открыта', 'открыты', 'открытые'];
@@ -936,6 +1000,58 @@ function wordInText(word: string, text: string): boolean {
     } catch {
         return text.includes(stem);
     }
+}
+
+const CYRILLIC_RE = /[Ѐ-ӿ]/u;
+/** A normalized name in Latin letters only (umlauts are already ae/oe/ue). */
+const LATIN_NAME_RE = /^[a-z0-9\s'-]+$/;
+const CYRILLIC_TO_LATIN: Record<string, string> = {
+    а: 'a',
+    б: 'b',
+    в: 'v',
+    г: 'g',
+    д: 'd',
+    е: 'e',
+    ж: 'zh',
+    з: 'z',
+    и: 'i',
+    й: 'y',
+    к: 'k',
+    л: 'l',
+    м: 'm',
+    н: 'n',
+    о: 'o',
+    п: 'p',
+    р: 'r',
+    с: 's',
+    т: 't',
+    у: 'u',
+    ф: 'f',
+    х: 'h',
+    ц: 'ts',
+    ч: 'ch',
+    ш: 'sh',
+    щ: 'sch',
+    ъ: '',
+    ы: 'y',
+    ь: '',
+    э: 'e',
+    ю: 'yu',
+    я: 'ya',
+};
+
+/** Plain transliteration of normalized Russian text ("мобиль" → "mobil"); other characters stay. */
+export function cyrillicToLatin(text: string): string {
+    return text.replace(/[а-я]/gu, c => CYRILLIC_TO_LATIN[c] ?? c);
+}
+
+/** A word of a room name in a token: stem-tolerant either way, and a Latin name in Cyrillic letters. */
+function roomWordFits(word: string, token: string): boolean {
+    return (
+        wordInText(word, token) ||
+        wordInText(token, word) ||
+        (LATIN_NAME_RE.test(word) && CYRILLIC_RE.test(token) && wordInText(word, cyrillicToLatin(token)))
+    );
 }
 
 /**
@@ -1560,10 +1676,16 @@ export class Nlu {
      * to 10 is a step on a 1–10 scale, anything above is percent. "Wie ist die Lautstärke" is not a command.
      */
     private parseVolume(p: Prepared): NluIntent | null {
-        const louder = p.tokens.some(w => LOUDER_TOKENS.has(w));
-        const quieter = p.tokens.some(w => QUIETER_TOKENS.has(w));
         const volumeWord = VOLUME_WORDS.some(w => wordInText(w, p.joined));
+        const louder =
+            p.tokens.some(w => LOUDER_TOKENS.has(w)) || (volumeWord && p.tokens.some(w => VOLUME_UP_TOKENS.has(w)));
+        const quieter =
+            p.tokens.some(w => QUIETER_TOKENS.has(w)) || (volumeWord && p.tokens.some(w => VOLUME_DOWN_TOKENS.has(w)));
         if (!louder && !quieter && !volumeWord) {
+            return null;
+        }
+        const room = this.findRoom(p.joined) || undefined;
+        if (!this.volumeOnly(p, room)) {
             return null;
         }
         const percent = /(?:prozent|percent|процент\p{L}*|%)/u.test(p.norm);
@@ -1574,7 +1696,6 @@ export class Nlu {
             .find(w => /^\d+$/.test(w));
         const n = num === undefined ? null : parseInt(num, 10);
         const scaled = n === null ? null : n <= 10 && !percent ? n * 10 : n;
-        const room = this.findRoom(p.joined) || undefined;
         if (louder !== quieter) {
             const step = scaled ?? VOLUME_STEP;
             return { action: 'volumeSet', delta: louder ? step : -step, room, confidence: 0.85 };
@@ -1592,6 +1713,35 @@ export class Nlu {
             return null;
         }
         return { action: 'volumeSet', value: Math.min(100, Math.max(0, level)), room, confidence: 0.85 };
+    }
+
+    /**
+     * True when the command says nothing but the volume: volume words, louder/quieter, a number or percent, the
+     * room, the speaker, a neutral verb and small words. Every other word — a play verb with its object, a station,
+     * an artist, a device — is a request the rule does not cover ("включи радиостанцию Рекорд на сателите мобиль с
+     * громкостью сорок процентов"): answering only its volume part would drop the rest, so it goes to the LLM.
+     */
+    private volumeOnly(p: Prepared, room: string | undefined): boolean {
+        const roomWords = room ? normalize(room).split(/\s+/).filter(Boolean) : [];
+        return spelledNumbersToDigits(p.tokens.join(' '))
+            .split(' ')
+            .filter(Boolean)
+            .every(
+                t =>
+                    PERCENT_TOKEN_RE.test(t) ||
+                    LOUDER_TOKENS.has(t) ||
+                    QUIETER_TOKENS.has(t) ||
+                    VOLUME_UP_TOKENS.has(t) ||
+                    VOLUME_DOWN_TOKENS.has(t) ||
+                    VOLUME_MAX_TOKENS.has(t) ||
+                    VOLUME_MIN_TOKENS.has(t) ||
+                    VOLUME_SMALL_WORDS.has(t) ||
+                    VOLUME_WORDS.some(w => wordInText(w, t)) ||
+                    SATELLITE_WORDS.some(w => wordInText(w, t)) ||
+                    // stem-tolerant: speech recognition wrote "Setzer Lautstärke auf fünfzig Prozent"
+                    [...NEUTRAL_VERBS].some(v => wordInText(v, t)) ||
+                    roomWords.some(w => roomWordFits(w, t)),
+            );
     }
 
     private parseWindowsOpen(text: string): NluIntent | null {
@@ -1613,17 +1763,26 @@ export class Nlu {
         };
     }
 
-    /** The room whose significant words all appear in the text (stem-tolerant); longest name wins. */
+    /**
+     * The room whose significant words all appear in the text (stem-tolerant); longest name wins. A room with a
+     * Latin name also matches its Cyrillic spelling ("на сателите мобиль" → "Mobil"): a Russian voice gets Russian
+     * letters from speech recognition, whatever the room is called. Anything more distant needs an nluAliases row.
+     */
     private findRoom(text: string): string {
         let best = '';
         let bestLen = 0;
+        const latinText = CYRILLIC_RE.test(text) ? cyrillicToLatin(text) : '';
         for (const name of this.rooms) {
             const n = normalize(name);
             const words = n.split(/\s+/).filter(w => w.length >= 3);
             if (!words.length) {
                 continue;
             }
-            if (words.every(w => wordInText(w, text)) && n.length > bestLen) {
+            const latinName = latinText && LATIN_NAME_RE.test(n);
+            if (
+                words.every(w => wordInText(w, text) || (latinName && wordInText(w, latinText))) &&
+                n.length > bestLen
+            ) {
                 best = name;
                 bestLen = n.length;
             }
