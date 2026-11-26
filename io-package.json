@@ -1,8 +1,21 @@
 {
   "common": {
     "name": "assistant",
-    "version": "1.15.0",
+    "version": "1.15.1",
     "news": {
+      "1.15.1": {
+        "en": "Added detection of volume commands",
+        "de": "Neue Erkennung von Lautstärkebefehlen",
+        "ru": "Добавлено определение команд регулировки громкости",
+        "pt": "Maior detecção de comandos de volume",
+        "nl": "Detectie van volume-opdrachten toegevoegd",
+        "fr": "Ajout de la détection des commandes de volume",
+        "it": "Aggiunto rilevamento del volume",
+        "es": "Se añadió detección de comandos de volumen",
+        "pl": "Dodano wykrywanie poleceń głośności",
+        "uk": "Додано виявлення команд гучності",
+        "zh-cn": "增加了对音量命令的检测"
+      },
       "1.15.0": {
         "en": "A wake word for free questions: the table of the wake words has a purpose, and with \"Free questions only\" a wake word (\"Hey Bro, how old can cats get?\") skips the commands of the house and asks the cloud tier without device list and tools, in a conversation of its own; its follow-ups and dialog mode keep it. Instructions of its own: `freeTalkPrompt`",
         "de": "Ein Weckwort für Gratisfragen: Die Tabelle hat einen Zweck und bei „Nur kostenlose Fragen“ ein Weckwort („Hey Bruder, wie alt können Katzen werden?“) überspringt die Hausbefehle und fragt die Cloud-Stufe ohne Geräteliste und Tools in einem eigenen Gespräch; Follow-ups und Dialogmodus behalten es. Eigene Anweisungen: `freeTalkPrompt`",
@@ -80,19 +93,6 @@
         "pl": "Satelity eSphome: język na jedno słowo (zakładka Satelity, „Language per wake word”, np. Alisa → rosyjski, Hej Bro → niemiecki): rozpoznawanie mowy, głos odpowiedzi i kontynuacje tej rozmowy używają go, a pi-agent zadaje w nim pytania tak/nie\nSatelity ESPhome na ESP32: dwa słowa budzące mogą być aktywne jednocześnie (oprogramowanie układowe zgłasza limit jednego, ale uruchamia każde wysłane słowo wake)\nIobroker.voice pobiera język mowy (używa go jego model Canary 1B v2, Parakeet go ignoruje) i tylko wskazówki w alfabecie języka\nWhisper (OpenAI i kompatybilne serwery) pobiera tylko nazwy urządzeń i pomieszczeń łacińskimi literami jako wskazówki dotyczące napisanego w nich języka: rosyjskie nazwy przyciągnęły niemiecką mowę w kierunku liter cyrylicy",
         "uk": "Супутники ESPHome: мова за слово пробудження (вкладка Супутники, «Мова за слово пробудження», наприклад, Аліса → російська, Hey Bro → Німецька): розпізнавання мовлення, голос відповіді та подальші дії цієї розмови використовують його, і pi-агент задає у ньому свої запитання так/ні\nСупутники ESPHome на ESP32: два слова пробудження можуть бути активними одночасно (прошивка повідомляє про обмеження одного, але запускає кожне надіслане слово пробудження)\nIObroker.voice отримує мову мови (його модель Canary 1B v2 використовує її, Parakeet ігнорує її) і лише підказки в алфавіті мови\nWhisper (OpenAI та сумісні сервери) отримує лише назви пристроїв та кімнат латинськими літерами як підказки на мову, написану на них: російські імена тягнули німецьку мову до кириличних літер",
         "zh-cn": "espHome 卫星：每个唤醒词的语言（选项卡 “卫星”，“每个唤醒词的语言”，例如 Alisa → 俄语，嘿兄弟 → 德语）：语音识别、回复语音和对话的后续都使用它，pi-agent 会在其中问是/否问题\nESP32 上的 ESPhome 卫星：可以同时激活两个唤醒词（固件报告的限制为一个，但发送的每个唤醒字都会运行）\niobroker.Voice 获取语音语言（其模型 Canary 1B v2 使用语音语言，长尾小鹦鹉忽略了语音语言），只有该语言的字母表中的提示\nWhisper（OpenAI 和兼容服务器）仅以拉丁字母获取设备和房间名称作为用拉丁字母书写的语言的提示：俄语名字将德语的语音拉向西里尔字母"
-      },
-      "1.10.0": {
-        "en": "ESPHome satellites: the adapter ships microWakeWord models (\"ioBroker\", \"Hey Bro\", \"Alisa\"); one click in the satellite settings puts one on the device and switches it on, replacing an older version of the same word\nWake words from a training run get a short name with their date, e.g. `261103_iobroker` instead of \"20261103 085427 9b0f Microwakeword Iobroker\"\nA wake word selected right after it was uploaded is no longer dropped as unknown",
-        "de": "ESPHome-Satelliten: Der Adapter enthält MicroWakeWord-Modelle („ioBroker“, „Hey Bro“, „Alisa“); ein Klick in den Satelliteneinstellungen schaltet es ein und ersetzt eine ältere Version desselben Wortes\nWeckworte eines Laufs erhalten einen Kurznamen mit Datum, z. B. `261103_iobroker` statt „20261103 085427 9b0f Microwakeword Iobroker“\nEin nach dem Upload gewähltes Weckwort gilt nicht mehr als unbekannt",
-        "ru": "Спутники EspHome: адаптер поставляется с моделями MicroWakeWord («IOBroker», «Hey Bro», «Alisa»); одним щелчком мыши в настройках спутника устройство включается и включается, заменяя старую версию того же слова\nСлова для бодрствования из тренировочного забега получают краткое название с указанием даты, например «261103_iobroker» вместо «20261103 085427 9b0f Microwakeword Iobroker»\nСлово для пробуждения, выбранное сразу после загрузки, больше не удаляется как неизвестное",
-        "pt": "Satélites ESPHome: o adaptador vem com modelos MicroWakeWord (“ioBroker”, “Hey Bro”, “Alisa”); um clique nas configurações do satélite o liga, substituindo uma versão antiga da mesma palavra\nUse um nome curto com a data, por exemplo, `261103_iobroker` em vez de “20261103 085427 9b0f Microwakeword Iobroker”\nUma palavra de ativação selecionada logo após o upload não é mais desconhecida",
-        "nl": "ESPhome-satellieten: de adapter wordt geleverd met MicroWakeWord-modellen („IOBroker”, „Hey Bro”, „Alisa”); één klik in de satellietinstellingen zet u er een op het apparaat en schakelt het in, ter vervanging van een oudere versie van hetzelfde woord\nWakewords van een trainingsrun krijgen een korte naam met hun datum, bijvoorbeeld `261103_iobroker` in plaats van „20261103 085427 9b0f Microwakeword Iobroker”\nEen activeringswoord dat werd geselecteerd direct nadat het werd geüpload, wordt niet langer als onbekend weggezet",
-        "fr": "Satellites ESPhome : l'adaptateur intègre les modèles MicroWakeword (« IObroker », « Hey Bro », « Alisa ») ; un clic dans les paramètres du satellite permet d'en connecter un sur l'appareil et de l'allumer, en remplacement de l'ancienne version\nLes mots d'un entraînement reçoivent un nom abrégé avec la date, par exemple « 261103_iobroker » au lieu de « 20261103 085427 9b0f Microwakeword Iobroker »\nUn mot de réveil sélectionné juste après sa mise en ligne n'est plus perdu",
-        "it": "Satelliti ESPHome: l'adattatore fornisce modelli MicroWakeWord («IOBroker», «Hey Bro», «Alisa»); un clic nelle impostazioni del satellite ne attiva uno e lo accende, sostituendo una vecchia\nRisveglia le parole di un allenamento con un nome breve con data, ad esempio `261103_iobroker` invece di «20261103 085427 9b0f Microwakeword Iobroker»\nUna wake word selezionata subito dopo il caricamento non è più sconosciuta",
-        "es": "Satélites ESPhome: el adaptador incluye modelos MicroWakeWord («ioBroker», «Hey Bro», «Alisa»); un clic en la configuración del satélite pone uno en el dispositivo y lo enciende, en sustitución de una versión anterior de la misma palabra\nLas palabras de un entrenamiento reciben un nombre corto con su fecha, por ejemplo, «261103_iobroker» en lugar de «20261103 085427 9b0f Microwakeword Iobroker»\nUna palabra clave seleccionada justo después de subirla ya no aparece por desconocida",
-        "pl": "Satelity ESPhome: adapter dostarcza modele MicroWakeWord („ioBroker”, „Hey Bro”, „Alisa”); jedno kliknięcie w ustawieniach satelity umieszcza urządzenie i włącza je, zastępując starszą wersję tego samego słowa\nSłowa z biegu treningowego otrzymują krótką nazwę z datą, np. „261103_iobroker” zamiast „20261103 085427 9b0f Microwakeword Iobroker”\nSłowo typu wake wybrane zaraz po przesłaniu nie jest już upuszczane jako nieznane",
-        "uk": "Супутники ESPHome: адаптер поставляє моделі MicroWakeWord («IObroker», «Hey Bro», «Alisa»); одним клацанням миші в налаштуваннях супутника ставиться один на пристрій і вмикає його, замінюючи старішу версію того ж слова\nСлова з тренувального пробігу отримують коротку назву з їх датою, наприклад `261103_iobroker` замість «20261103 085427 9b0f Microwakeword Iobroker»\nСлово пробудження, вибране відразу після його завантаження, більше не буде скинуто як невідоме",
-        "zh-cn": "espHome 卫星：适配器提供 MicroWakeWord 型号（“ioBroker”、“Hey Bro”、“Alisa”）；在卫星设置中单击一下即可在设备上打开一个模型，然后将其打开，替换同一个单词的旧版本\n训练中醒来的单词会用一个带有日期的简短名称，例如 “261103_iobroker” 而不是 “20261103 085427 9b0f Microwakeword Iobroker”\n上传后立即选择的唤醒词不会再被删除为未知字词"
       }
     },
     "titleLang": {

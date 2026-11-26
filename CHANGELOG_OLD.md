@@ -1,4 +1,8 @@
 # Older changes
+## 1.12.0 (2026-11-19)
+* (@GermanBluefox) Device commands can be understood by the adapter smart-text2command instead of the built-in rules (tab Commands, "Device commands understood by"): it runs only the actions approved there and asks back when the room or the device is unclear; the next utterance of the same satellite or chat answers. What it does not understand goes on to the local and the cloud model; timers, alarms, time, weather and volume stay with the built-in rules
+* (@GermanBluefox) New first tab "Flow": the way of a request as a diagram (sources → speech recognition → local decision → local LLM → cloud LLM / pi-agent → speech output), each step can be set up with a click
+
 ## 1.11.0 (2026-11-18)
 * (@sadam6752-tech) ESPHome satellites: a language per wake word (tab Satellites, "Language per wake word", e.g. Alisa → Russian, Hey Bro → German): speech recognition, the reply voice and the follow-ups of that conversation use it, and pi-agent asks its yes/no questions in it
 * (@sadam6752-tech) ESPHome satellites on an ESP32: two wake words can be active at once (the firmware reports a limit of one, but runs every wake word it is sent)
