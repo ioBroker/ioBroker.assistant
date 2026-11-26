@@ -237,7 +237,7 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
-### **WORK IN PROGRESS**
+### 1.15.0 (2026-11-26)
 * (@GermanBluefox) A wake word for free questions: the table of the wake words has a purpose, and with "Free questions only" a wake word ("Hey Bro, how old can cats get?") skips the commands of the house and asks the cloud tier without device list and tools, in a conversation of its own; its follow-ups and dialog mode keep it. Instructions of its own: `freeTalkPrompt`
 
 ### 1.14.0 (2026-11-23)
@@ -259,12 +259,6 @@ train it twice.
 ### 1.12.0 (2026-11-19)
 * (@GermanBluefox) Device commands can be understood by the adapter smart-text2command instead of the built-in rules (tab Commands, "Device commands understood by"): it runs only the actions approved there and asks back when the room or the device is unclear; the next utterance of the same satellite or chat answers. What it does not understand goes on to the local and the cloud model; timers, alarms, time, weather and volume stay with the built-in rules
 * (@GermanBluefox) New first tab "Flow": the way of a request as a diagram (sources → speech recognition → local decision → local LLM → cloud LLM / pi-agent → speech output), each step can be set up with a click
-
-### 1.11.0 (2026-11-18)
-* (@sadam6752-tech) ESPHome satellites: a language per wake word (tab Satellites, "Language per wake word", e.g. Alisa → Russian, Hey Bro → German): speech recognition, the reply voice and the follow-ups of that conversation use it, and pi-agent asks its yes/no questions in it
-* (@sadam6752-tech) ESPHome satellites on an ESP32: two wake words can be active at once (the firmware reports a limit of one, but runs every wake word it is sent)
-* (@sadam6752-tech) ioBroker.voice gets the language of the speech (its model Canary 1B v2 uses it, Parakeet ignores it) and only the hints in the alphabet of the language
-* (@sadam6752-tech) Whisper (OpenAI and compatible servers) gets only the device and room names in Latin letters as hints for a language written in them: Russian names pulled German speech towards Cyrillic letters
 
 [Older changelogs can be found there](CHANGELOG_OLD.md)
 
