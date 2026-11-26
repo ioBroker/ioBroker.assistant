@@ -629,8 +629,8 @@ Candidates: frigate (event clips), unifi-protect, synology, reolink.
 
 ## history — history databases
 
-`getHistory {id, options}` is already an ioBroker standard (history, influxdb, sql, recorder; also victoriametrics, and
-homee for its own states). growatt has a `getHistory` with another contract (`{type, sn, startDate, endDate}`: the log
+`getHistory {id, options}` is already an ioBroker standard (`history`, `influxdb`, `sql`, `recorder`; also `victoriametrics`, and
+`homee` for its own states). growatt has a `getHistory` with another contract (`{type, sn, startDate, endDate}`: the log
 of the inverter from the Growatt cloud), so a client that asks every instance with `getHistory` must not count on it.
 These come on top:
 
@@ -644,31 +644,31 @@ value, in seconds — "how long was the heating on today?").
 
 Existing:
 
-- sql `getCounter {id, options: {start?, end?}}` ≈ (= `delta`)
-- history, influxdb, sql, recorder `getHistory` with `aggregate` and one step over the whole period ≈ — answers a
+- `sql` `getCounter {id, options: {start?, end?}}` ≈ (= `delta`)
+- `history`, `influxdb`, `sql`, `recorder` `getHistory` with `aggregate` and one step over the whole period ≈ — answers a
   list the caller still has to read
-- recorder `getTimeline` ≈ (number of changes per interval)
+- `recorder` `getTimeline` ≈ (number of changes per interval)
 - 🔸 the same numbers for fixed periods (today, yesterday, this week …), without free `start`/`end`: statistics
   `temp.*`/`save.*` (`sumDelta` = delta, `minmax`, `avg`, `count`, `timeCount` = duration), sourceanalytix
   `<device>.currentYear.*` (consumption and cost), janitza-gridvis `<device>.historic*`
 
-Candidates: history, influxdb, sql, recorder, victoriametrics (VictoriaMetrics computes these itself), homee.
+Candidates: `history`, `influxdb`, `sql`, `recorder`, `victoriametrics` (VictoriaMetrics computes these itself), `homee`.
 
 ### `history.lastChange {id, value?, before?}` — read
 
 When the state last changed (to `value`): `{ts, val}`. "When was the window last open?"
 
-Existing: recorder `getEvents {ids, newest: true, limit: 1}` ≈; history, influxdb, sql
+Existing: `recorder` `getEvents {ids, newest: true, limit: 1}` ≈; `history`, `influxdb`, `sql`
 `getRawEntries {id, sort: 'desc', limit: 1}` ≈ (without the filter by value).
-Candidates: history, influxdb, sql, recorder, victoriametrics, homee.
+Candidates: `history`, `influxdb`, `sql`, `recorder`, `victoriametrics`, `homee`.
 
 ### `history.getEvents {start?, end?, room?, ids?, limit?}` — read
 
 What happened in a period: `{events: [{ts, id, name, room, val, text?}]}`. "What went on while I was away?"
 
-Existing: recorder `getEvents` ✅ (also `getAnomalies`, `getProfile`); eventlist `list {id? | ids?, count?}` ≈ (raw
-events, newest first; no `start`/`end`; only states enabled in eventlist).
-Candidates: eventlist. Writing an entry: eventlist `insert {event, id?, ts?, val?}` — worth a
+Existing: `recorder` `getEvents` ✅ (also `getAnomalies`, `getProfile`); `eventlist` `list {id? | ids?, count?}` ≈ (raw
+events, newest first; no `start`/`end`; only states enabled in `eventlist`).
+Candidates: `eventlist`. Writing an entry: `eventlist` `insert {event, id?, ts?, val?}` — worth a
 `history.addEvent {text, id?, ts?, val?}` once a second adapter (recorder) has one.
 
 ### Charts

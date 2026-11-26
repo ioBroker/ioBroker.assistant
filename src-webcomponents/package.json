@@ -11,11 +11,11 @@
     "devDependencies": {
         "@iobroker/types": "^7.2.5",
         "@iobroker/web-components": "^0.8.0",
-        "@types/react": "^19.3.0",
+        "@types/react": "^19.3.3",
         "@types/react-dom": "^19.3.0",
         "@vitejs/plugin-react": "^6.3.0",
         "react": "^19.3.1",
         "react-dom": "^19.3.1",
-        "vite": "^8.3.8"
+        "vite": "^8.4.0"
     }
 }
