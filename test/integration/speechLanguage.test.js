@@ -59,6 +59,17 @@ test('speechLanguage: a Russian answer on a German satellite is spoken in Russia
     assert.equal(speechLanguage('The light is on.', 'ru'), 'en');
 });
 
+test('speechLanguage: a Russian template with German names stays Russian', () => {
+    // field case 2026-11-27 (satellite Mini, wake word Alisa → ru): the rule answer was spoken by the English voice
+    const answer = 'Температура (Küche): Kueche Sensor 1: 24 °C, Kueche Sensor 2: 23 °C.';
+    assert.equal(speechLanguage(answer, 'ru'), 'ru', 'the satellite listens in Russian');
+    assert.equal(speechLanguage(answer, 'de', 'ru'), 'ru', 'a Russian question on a German satellite');
+    assert.equal(speechLanguage('Температура: Schlafzimmer: 22 °C, Wohnzimmer: 18 °C, Badezimmer: 23 °C', 'ru'), 'ru');
+    // no Russian words at all: still English, and an English report wins over a Russian name in it
+    assert.equal(speechLanguage('The light is on.', 'ru'), 'en');
+    assert.equal(speechLanguage('The lamp "Свет" is on.', 'ru', 'en'), 'en');
+});
+
 test('speechLanguage: the language pi-agent reports wins, unless the letters contradict it', () => {
     assert.equal(speechLanguage('The light is on.', 'de', 'en'), 'en');
     assert.equal(speechLanguage('Свет включён.', 'de', 'ru'), 'ru');

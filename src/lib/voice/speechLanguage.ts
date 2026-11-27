@@ -64,6 +64,20 @@ function scriptOf(lang: string): Script {
     return SCRIPT_OF[baseLanguage(lang)] || 'latin';
 }
 
+/**
+ * Does the text carry words of this language's script? For a language not written in Latin letters a few of its
+ * letters are enough: "Температура (Küche): Kueche Sensor 1: 24 °C" is a Russian sentence with German names in it,
+ * and an English voice would read the Russian words badly. Latin letters prove nothing (names, units, brands).
+ */
+function hasOwnLetters(text: string, lang: string): boolean {
+    const script = scriptOf(lang);
+    if (script === 'latin') {
+        return false;
+    }
+    const re = LETTERS.find(([s]) => s === script)?.[1];
+    return !!re && (text.match(re) || []).length >= MIN_LETTERS;
+}
+
 /** The script most letters of the text are in; '' for too few letters. */
 function dominantScript(text: string): Script | '' {
     let best: Script | '' = '';
@@ -147,13 +161,14 @@ export function replyLanguageLine(lang: string): string {
 export function speechLanguage(text: string, configured: string, reported?: string): string {
     const script = dominantScript(String(text || ''));
     const said = /^[a-z]{2,3}(-[a-z]{2,4})?$/i.test(String(reported || '').trim()) ? baseLanguage(reported) : '';
-    // a report is believed unless the letters contradict it (a "de" mark on a Cyrillic answer)
-    if (said && (!script || scriptOf(said) === script)) {
+    // a report is believed unless the letters contradict it (a "de" mark on a Cyrillic answer); Latin names inside a
+    // Russian sentence do not contradict "ru"
+    if (said && (!script || scriptOf(said) === script || hasOwnLetters(text, said))) {
         // the configured language in its own form ('de-DE'): same voice, same cache entry
         return said === baseLanguage(configured) ? configured : said;
     }
-    if (!script) {
-        return configured;
+    if (!script || (!said && script !== scriptOf(configured) && hasOwnLetters(text, configured))) {
+        return configured; // too few letters, or a sentence of the configured language with Latin names in it
     }
     const byLetters = scriptLanguage(text);
     if (scriptOf(configured) === script) {
