@@ -639,9 +639,50 @@ test('category queries work in English and Russian too', () => {
     assert.equal(en.action, 'categoryQuery');
     assert.equal(en.category, 'temperature');
     const ru = catNlu.parse('Какая температура в спальне?');
-    // The room name is German here, so this only has to recognise the category, not the room.
     assert.equal(ru?.action, 'categoryQuery');
     assert.equal(ru?.category, 'temperature');
+    assert.equal(ru?.room, 'Schlafzimmer', 'a German room found by a Russian room word');
+});
+
+// Field case 2026-11-27 (satellite Mini): both questions got the temperature of every room.
+const fieldRooms = ['Küche', 'Schlafzimmer', 'Badezimmer', 'Wohnzimmer', 'Korridor', 'Office'];
+const fieldNlu = new Nlu(
+    fieldRooms,
+    fieldRooms.map((room, i) => ({ ...temp, name: `Sensor ${i}`, room, controls: { actual: `t.${i}` } })),
+);
+
+test('category query: a general question about the category goes to the LLM', () => {
+    const none = text => assert.deepEqual(fieldNlu.parseAll(text), [], text);
+    none('Какие бывают перепады температуры в пустынях?');
+    none('Wie warm ist es in Berlin?');
+    none('Какая температура в гараже?'); // no such room here: never all rooms instead
+    none('How cold does it get on Mars?');
+});
+
+test('category query: a Russian room word finds the room named in German or English', () => {
+    const room = text => {
+        const i = fieldNlu.parse(text);
+        return i?.action === 'categoryQuery' ? `${i.room ?? '*'}:${i.devices.length}` : null;
+    };
+    assert.equal(room('Какая температура на кухне?'), 'Küche:1');
+    assert.equal(room('какая температура в ванной'), 'Badezimmer:1');
+    assert.equal(room('Сколько градусов в офисе?'), 'Office:1');
+    assert.equal(room('Какая температура в коридоре?'), 'Korridor:1');
+    assert.equal(room('Wie warm ist es im Schlafzimmer?'), 'Schlafzimmer:1');
+    // a pure question without a room is still about the whole house
+    assert.equal(room('Какая температура?'), '*:6');
+    assert.equal(room('Wie warm ist es?'), '*:6');
+    // two rooms of the same kind: the word decides nothing, so the rules step back
+    const twoBaths = new Nlu(['Bad oben', 'Bad unten'], [{ ...temp, room: 'Bad oben' }]);
+    assert.equal(twoBaths.parse('Какая температура в ванной?'), null);
+});
+
+test('windows: a place that is no room here is not answered for all rooms', () => {
+    const win = { ...light, name: 'Kontakt', type: 'window', controls: { actual: 'w.1' } };
+    const n = new Nlu(['Küche'], [win, { ...win, room: 'Küche', controls: { actual: 'w.2' } }]);
+    assert.equal(n.parse('какие окна открыты на кухне')?.room, 'Küche');
+    assert.equal(n.parse('welche Fenster sind offen')?.devices.length, 2);
+    assert.equal(n.parse('welche Fenster sind in Berlin offen'), null);
 });
 
 // ── Weather questions without an LLM ────────────────────────────────────────────
