@@ -237,6 +237,9 @@ train it twice.
     Placeholder for the next version (at the beginning of the line):
     ### **WORK IN PROGRESS**
 -->
+### **WORK IN PROGRESS**
+* MCP tools (`@iobroker/mcp-server` 1.10.1): `set_object` no longer deletes the protected settings of an instance (e.g. the login and password of cloud and iot) and stores a new password (`encryptedNative`) encrypted
+
 ### 1.15.1 (2026-11-26)
 * Added detection of volume commands
 
