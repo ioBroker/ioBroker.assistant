@@ -404,8 +404,8 @@ const WINDOW_SMALL_WORDS = new Set([
 
 /**
  * Common room words in de/en/ru: a room named in one language is also found by these words in the others
- * ("на кухне" → "Küche", "в спальне" → "Schlafzimmer"). Matched stem-tolerant like device names, so the Russian
- * cases (кухня/кухне/кухню) come for free. Anything else needs an nluAliases row.
+ * ("на кухне" → "Küche", "в спальне" → "Schlafzimmer"). Matched in their own forms only (кухня/кухне/кухню, see
+ * {@link roomWordInText}). Anything else needs an nluAliases row.
  */
 const ROOM_WORDS: string[][] = [
     ['kueche', 'kitchen', 'кухня'],
@@ -426,6 +426,23 @@ const ROOM_WORDS: string[][] = [
     ['terrasse', 'terrace', 'терраса'],
     ['waschkueche', 'laundry', 'прачечная'],
 ];
+
+/** German room words that are everyday English words: "how bad is the air" asks nothing about the bathroom. */
+const ENGLISH_LOOKALIKES = new Set(['bad']);
+/** Words only an English sentence has (for {@link ENGLISH_LOOKALIKES}). */
+const ENGLISH_MARKERS = new Set([
+    'how',
+    'what',
+    "what's",
+    'whats',
+    'is',
+    'are',
+    'it',
+    "it's",
+    'which',
+    'there',
+    'does',
+]);
 
 /** The room-word groups a (normalized) room name belongs to: a group word is the name or one of its words. */
 function roomWordGroups(normName: string): string[][] {
@@ -1142,14 +1159,18 @@ export function normalize(s: string): string {
 const STRIP = /[.,!?;:()[\]]/g;
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** The start of a word its inflected forms share: longer words drop more trailing characters. */
+function stemOf(word: string): string {
+    return word.length >= 6 ? word.slice(0, word.length - 2) : word.length >= 5 ? word.slice(0, word.length - 1) : word;
+}
+
 /**
  * Does a name word appear in the text? Matches on a Unicode word boundary and allows a differing
  * suffix (crude stemming) so inflected forms match too — essential for Russian ("подсветку" for
  * "подсветка", "кокпита" for "кокпит"). Longer words drop more trailing characters.
  */
 function wordInText(word: string, text: string): boolean {
-    const stem =
-        word.length >= 6 ? word.slice(0, word.length - 2) : word.length >= 5 ? word.slice(0, word.length - 1) : word;
+    const stem = stemOf(word);
     try {
         return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(stem)}`, 'u').test(text);
     } catch {
@@ -1198,6 +1219,26 @@ const CYRILLIC_TO_LATIN: Record<string, string> = {
 /** Plain transliteration of normalized Russian text ("мобиль" → "mobil"); other characters stay. */
 export function cyrillicToLatin(text: string): string {
     return text.replace(/[а-я]/gu, c => CYRILLIC_TO_LATIN[c] ?? c);
+}
+
+/**
+ * Is a common room word ({@link ROOM_WORDS}) in the text? Stricter than {@link wordInText}, which takes every word
+ * that begins like it: a word of another language counts in its own forms only ("кухне", "зале", "kitchens"), not
+ * as the start of another word ("заливе", "official", "cellphone"), and a German word that is also an English one
+ * not in an English sentence.
+ */
+function roomWordInText(word: string, text: string): boolean {
+    const tokens = text.split(/\s+/);
+    if (ENGLISH_LOOKALIKES.has(word) && tokens.some(t => ENGLISH_MARKERS.has(t))) {
+        return false;
+    }
+    if (word.includes(' ')) {
+        return wordInText(word, text); // "living room": the words in a row
+    }
+    const stem = stemOf(word);
+    // Russian cases and plurals add up to two letters ("гаражах"), German and English one ("Küchen", "kitchens")
+    const longest = word.length + (CYRILLIC_RE.test(word) ? 2 : 1);
+    return tokens.some(t => t.startsWith(stem) && t.length <= longest);
 }
 
 /** A word of a room name in a token: stem-tolerant either way, and a Latin name in Cyrillic letters. */
@@ -1967,7 +2008,7 @@ export class Nlu {
         // No name in the text: a common room word of another language ("на кухне" for "Küche"). Two rooms of the
         // same kind ("Bad oben", "Bad unten") are no answer — the word then stays unmatched and the rules step back.
         const byWord = this.rooms.filter(name =>
-            roomWordGroups(normalize(name)).some(g => g.some(w => wordInText(w, text))),
+            roomWordGroups(normalize(name)).some(g => g.some(w => roomWordInText(w, text))),
         );
         return byWord.length === 1 ? byWord[0] : '';
     }

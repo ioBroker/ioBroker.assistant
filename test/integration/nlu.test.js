@@ -676,6 +676,12 @@ test('category query: a Russian room word finds the room named in German or Engl
     // a pure question without a room is still about the whole house
     assert.equal(room('Какая температура?'), '*:6');
     assert.equal(room('Wie warm ist es?'), '*:6');
+    // a room word of another language counts in its own forms, not as the start of another word, and the German
+    // "Bad" not in an English sentence
+    assert.equal(room('Wie warm ist es im Bad?'), 'Badezimmer:1');
+    assert.equal(room('how bad is the temperature'), null);
+    assert.equal(room('Какая температура в зале?'), 'Wohnzimmer:1');
+    assert.equal(room('Какая температура в заливе?'), null); // a bay, no "зал"
     // two rooms of the same kind: the word decides nothing, so the rules step back
     const twoBaths = new Nlu(['Bad oben', 'Bad unten'], [{ ...temp, room: 'Bad oben' }]);
     assert.equal(twoBaths.parse('Какая температура в ванной?'), null);

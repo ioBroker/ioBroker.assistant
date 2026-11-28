@@ -68,6 +68,10 @@ test('speechLanguage: a Russian template with German names stays Russian', () =>
     // no Russian words at all: still English, and an English report wins over a Russian name in it
     assert.equal(speechLanguage('The light is on.', 'ru'), 'en');
     assert.equal(speechLanguage('The lamp "Свет" is on.', 'ru', 'en'), 'en');
+    // without a report too: Latin words with a sentence's grammar are English, not Russian names
+    assert.equal(speechLanguage('The lamp "Свет" is on.', 'ru'), 'en');
+    // one grammar word in a name does not make the Russian template English
+    assert.equal(speechLanguage('Licht der Terrasse: выключен, Rollladen (Küche): открыт', 'ru'), 'ru');
 });
 
 test('speechLanguage: the language pi-agent reports wins, unless the letters contradict it', () => {
