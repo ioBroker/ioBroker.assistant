@@ -238,6 +238,8 @@ train it twice.
     ### **WORK IN PROGRESS**
 -->
 ### **WORK IN PROGRESS**
+* (@sadam6752-tech) Measurement and window questions are answered by the rules only when they ask nothing more: "how much does the temperature vary in deserts?" or a place that is no room of the house goes to the LLM instead of getting the values of every room. Common room words find a room named in another language (the Russian word for kitchen finds the room named in German), in their own forms only
+* (@sadam6752-tech) A Russian answer with German device names is spoken by the Russian voice, an English sentence with a Russian name by the English one
 * (@GermanBluefox) Announcements: `tts.text` and `satellites.<id>.tts` are acknowledged (`ack: true`) once a satellite got the text; an announcement nobody received stays unacknowledged
 * MCP tools (`@iobroker/mcp-server` 1.10.1): `set_object` no longer deletes the protected settings of an instance (e.g. the login and password of cloud and iot) and stores a new password (`encryptedNative`) encrypted
 
