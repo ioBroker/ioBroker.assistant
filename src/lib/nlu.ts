@@ -316,7 +316,17 @@ const CATEGORY_SMALL_WORDS = new Set([
     'welchem',
     'welchen',
     'grad',
+    'sag',
+    'sage',
+    'mir',
+    'bei',
+    'uns',
+    'hat',
+    'haben',
     // en
+    'tell',
+    'me',
+    'us',
     'it',
     "it's",
     'its',
@@ -340,6 +350,8 @@ const CATEGORY_SMALL_WORDS = new Set([
     'at',
     'on',
     // ru
+    'скажи',
+    'подскажи',
     'какие',
     'сейчас',
     'здесь',
@@ -358,16 +370,23 @@ const CATEGORY_SMALL_WORDS = new Set([
     'градуса',
     'показывает',
 ]);
-/** Small words of a pure "which windows are open" question (see {@link CATEGORY_SMALL_WORDS}). */
+/**
+ * Small words of a pure "which windows are open" question, on top of {@link CATEGORY_SMALL_WORDS} ("gibt es",
+ * "у нас", "дома").
+ */
 const WINDOW_SMALL_WORDS = new Set([
     'ein',
     'eine',
     'irgendein',
+    'irgendwelche',
     'irgendwo',
     'noch',
     'gerade',
     'wo',
+    'a',
+    'an',
     'any',
+    'there',
     'still',
     'where',
     'which',
@@ -377,6 +396,8 @@ const WINDOW_SMALL_WORDS = new Set([
     'ли',
     'есть',
     'где',
+    'где-нибудь',
+    'где-то',
     'еще',
     'сейчас',
 ]);
@@ -1895,8 +1916,10 @@ export class Nlu {
         const known = (t: string): boolean =>
             QUERY_WORDS.has(t) ||
             WINDOW_SMALL_WORDS.has(t) ||
+            CATEGORY_SMALL_WORDS.has(t) ||
             WINDOW_WORDS.some(w => wordInText(w, t)) ||
-            OPEN_WORDS.some(w => wordInText(w, t));
+            OPEN_WORDS.some(w => wordInText(w, t)) ||
+            EVERYWHERE_WORDS.some(w => wordInText(w, t));
         if (!this.onlyKnownWords(p, roomName, known)) {
             return null; // "welche Fenster sind in Berlin offen": not a question about this house's windows
         }

@@ -669,6 +669,10 @@ test('category query: a Russian room word finds the room named in German or Engl
     assert.equal(room('Сколько градусов в офисе?'), 'Office:1');
     assert.equal(room('Какая температура в коридоре?'), 'Korridor:1');
     assert.equal(room('Wie warm ist es im Schlafzimmer?'), 'Schlafzimmer:1');
+    // "tell me" and "has" are no more than the question itself
+    assert.equal(room('Скажи, какая температура в спальне'), 'Schlafzimmer:1');
+    assert.equal(room('Welche Temperatur hat das Wohnzimmer?'), 'Wohnzimmer:1');
+    assert.equal(room('Sag mir, wie warm es bei uns ist'), '*:6');
     // a pure question without a room is still about the whole house
     assert.equal(room('Какая температура?'), '*:6');
     assert.equal(room('Wie warm ist es?'), '*:6');
@@ -683,6 +687,17 @@ test('windows: a place that is no room here is not answered for all rooms', () =
     assert.equal(n.parse('какие окна открыты на кухне')?.room, 'Küche');
     assert.equal(n.parse('welche Fenster sind offen')?.devices.length, 2);
     assert.equal(n.parse('welche Fenster sind in Berlin offen'), null);
+    // the usual ways to ask stay with the rules
+    for (const text of [
+        'Gibt es offene Fenster?',
+        'Is there a window open?',
+        'Are there any windows open?',
+        'Открыто ли где-нибудь окно?',
+        'У нас дома есть открытые окна?',
+        'Sind überall Fenster offen?',
+    ]) {
+        assert.equal(n.parse(text)?.action, 'listByState', text);
+    }
 });
 
 // ── Weather questions without an LLM ────────────────────────────────────────────
