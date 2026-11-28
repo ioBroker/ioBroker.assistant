@@ -81,7 +81,7 @@ mosquitto_pub -h <broker-ip> -t hannah/server -r -m '{"host":"<iobroker-ip>","po
   --mic 0 --speaker 0 --sample-rate 16000 --tts-rate 48000
 ```
 
-Success looks like `Registrierung bestätigt (ACK empfangen)` in the satellite log and
+Success looks like the satellite logging that its registration was acknowledged (ACK) and
 `Satellite registered: wohnzimmer` in the adapter log. Then say the wake word → speak → the answer
 is spoken back.
 
@@ -247,15 +247,15 @@ train it twice.
 * (@GermanBluefox) A wake word for free questions: the table of the wake words has a purpose, and with "Free questions only" a wake word ("Hey Bro, how old can cats get?") skips the commands of the house and asks the cloud tier without device list and tools, in a conversation of its own; its follow-ups and dialog mode keep it. Instructions of its own: `freeTalkPrompt`
 
 ### 1.14.0 (2026-11-23)
-* (@GermanBluefox) Commands of other adapters by the shared catalog (`HELP.md`): the assistant asks the `help` of every instance and understands "ruf Anna an" (`phone.call`), "schick mir ein Bild der Haustür" (`camera.snapshot` → `message.send`), "zeige die Einfahrt auf dem Fernseher" (`screen.show`: camera, view, text) and plays music on the players of other adapters (`media.getPlayers`/`search`/`play`); message `getStandards`
+* (@GermanBluefox) Commands of other adapters by the shared catalog (`HELP.md`): the assistant asks the `help` of every instance and understands "call Anna" (`phone.call`), "send me a picture of the front door" (`camera.snapshot` → `message.send`), "show the driveway on the TV" (`screen.show`: camera, view, text), also in German and Russian, and plays music on the players of other adapters (`media.getPlayers`/`search`/`play`); message `getStandards`
 * (@GermanBluefox) The cloud tier (LLM or pi-agent) gets "answer in <language>" after a question whose language is clear (its letters, the wake word or its words): pi-agent answered a Russian question in German after German turns
 * (@GermanBluefox) Music and YouTube on the players of their tables are understood also with the rule-based commands switched off (pi-agent has no tools for them)
-* (@GermanBluefox) Music without a named player plays on the device that was spoken to (new column "Satellite" in the table, now "Music players", which also takes players of other adapters); "spiel die Piano Guys" works without a kind word and plays only something named like it
-* (@GermanBluefox) 3D plan: "zeig Unterdeck", "show the galley", "покажи кухню", "zeig das ganze Haus" make every open 3D view of home3d fly there (writes `home3d.N.show`); only names the plan knows (`home3d.N.places`) are taken, everything else goes on as before
+* (@GermanBluefox) Music without a named player plays on the device that was spoken to (new column "Satellite" in the table, now "Music players", which also takes players of other adapters); "play the Piano Guys" works without a kind word and plays only something named like it
+* (@GermanBluefox) 3D plan: "show the lower deck", "show the galley", "show the whole house" (also in German and Russian) make every open 3D view of home3d fly there (writes `home3d.N.show`); only names the plan knows (`home3d.N.places`) are taken, everything else goes on as before
 
 ### 1.13.0 (2026-11-20)
-* (@GermanBluefox) Music from Spotify: "play Bohemian Rhapsody by Queen", "spiel das Album … in der Küche", "spiel meine Playlist …" find the song, album, artist or playlist and play it on a Spotify Connect device (table "Spotify players" on the Services tab, needs spotify-premium 3.3.0 or newer); LLM tools `play_music` and `music_player`, message `playMusic`
-* (@GermanBluefox) Music clips on the TV: "spiel den Clip Bohemian Rhapsody von Queen", "play the music video … by …", "включи клип …" search the clip on YouTube and play it on the YouTube player; so does a song for a TV
+* (@GermanBluefox) Music from Spotify: "play Bohemian Rhapsody by Queen", "play the album … in the kitchen", "play my playlist …" (also in German and Russian) find the song, album, artist or playlist and play it on a Spotify Connect device (table "Spotify players" on the Services tab, needs spotify-premium 3.3.0 or newer); LLM tools `play_music` and `music_player`, message `playMusic`
+* (@GermanBluefox) Music clips on the TV: "play the clip Bohemian Rhapsody by Queen", "play the music video … by …" (also in German and Russian) search the clip on YouTube and play it on the YouTube player; so does a song for a TV
 
 ### 1.12.1 (2026-11-19)
 * (@GermanBluefox) Voice per answer language: the language is a drop-down now. A language picked from the suggestions was saved as its label (e.g. "de – Deutsch") and the row was never used; such rows get the language code on the first start
