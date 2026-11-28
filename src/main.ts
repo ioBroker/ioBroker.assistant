@@ -3200,14 +3200,15 @@ class Assistant extends Adapter {
             return;
         } // ignore our own ack-writes
 
-        // Announcements: `tts.text` → all satellites; `satellites.<id>.tts` → that satellite.
-        if (id.endsWith('.tts.text')) {
-            await this.announceToSatellites(String(state.val ?? ''), null);
-            return;
-        }
-        const satTts = id.match(/\.satellites\.([^.]+)\.tts$/);
-        if (satTts) {
-            await this.announceToSatellites(String(state.val ?? ''), satTts[1]); // satTts[1] = satellite state id
+        // Announcements: `tts.text` → all satellites; `satellites.<id>.tts` → that satellite. Acknowledged with
+        // the text once a satellite got it; an announcement nobody received stays unacknowledged.
+        const satTts = id.endsWith('.tts.text') ? null : id.match(/\.satellites\.([^.]+)\.tts$/);
+        if (id.endsWith('.tts.text') || satTts) {
+            const text = String(state.val ?? '');
+            // satTts[1] = satellite state id
+            if (await this.announceToSatellites(text, satTts ? satTts[1] : null)) {
+                await this.setForeignStateAsync(id, { val: text, ack: true });
+            }
             return;
         }
 
