@@ -272,11 +272,183 @@ const CATEGORY_WORDS: { words: string[]; category: string; types: string[] }[] =
     {
         // Last: 'warm'/'temperatur' are the words people use most, so a more specific category above wins
         // when both appear ("wie warm und wie feucht ist es" is answered about the humidity).
-        words: ['temperatur', 'warm', 'kalt', 'grad', 'temperature', 'cold', 'температур', 'тепло', 'холодно'],
+        words: [
+            'temperatur',
+            'warm',
+            'kalt',
+            'grad',
+            'temperature',
+            'cold',
+            'температур',
+            'градус',
+            'тепло',
+            'холодно',
+        ],
         category: 'temperature',
         types: ['temperature', 'thermostat'],
     },
 ];
+
+/**
+ * Small words a pure measurement question may carry besides the query word, the measurement word, the room and
+ * "everywhere" (whole tokens, after the filler is gone). Anything else — "Какие бывают перепады температуры в
+ * пустынях?", a room the house does not have — is a question the sensors cannot answer: it goes to the LLM.
+ */
+const CATEGORY_SMALL_WORDS = new Set([
+    // de
+    'es',
+    'gerade',
+    'grade',
+    'jetzt',
+    'aktuell',
+    'momentan',
+    'hier',
+    'drinnen',
+    'drin',
+    'haus',
+    'hause',
+    'wohnung',
+    'viel',
+    'hoch',
+    'gibt',
+    'zimmer',
+    'raum',
+    'welchem',
+    'welchen',
+    'grad',
+    'sag',
+    'sage',
+    'mir',
+    'bei',
+    'uns',
+    'hat',
+    'haben',
+    // en
+    'tell',
+    'me',
+    'us',
+    'it',
+    "it's",
+    'its',
+    "what's",
+    'whats',
+    'current',
+    'currently',
+    'now',
+    'right',
+    'here',
+    'inside',
+    'indoors',
+    'house',
+    'home',
+    'level',
+    'much',
+    'degrees',
+    'room',
+    'rooms',
+    'of',
+    'at',
+    'on',
+    // ru
+    'скажи',
+    'подскажи',
+    'какие',
+    'сейчас',
+    'здесь',
+    'тут',
+    'дома',
+    'доме',
+    'квартире',
+    'у',
+    'нас',
+    'во',
+    'по',
+    'всех',
+    'комнате',
+    'комнатах',
+    'градусов',
+    'градуса',
+    'показывает',
+]);
+/**
+ * Small words of a pure "which windows are open" question, on top of {@link CATEGORY_SMALL_WORDS} ("gibt es",
+ * "у нас", "дома").
+ */
+const WINDOW_SMALL_WORDS = new Set([
+    'ein',
+    'eine',
+    'irgendein',
+    'irgendwelche',
+    'irgendwo',
+    'noch',
+    'gerade',
+    'wo',
+    'a',
+    'an',
+    'any',
+    'there',
+    'still',
+    'where',
+    'which',
+    'some',
+    'какие',
+    'какое',
+    'ли',
+    'есть',
+    'где',
+    'где-нибудь',
+    'где-то',
+    'еще',
+    'сейчас',
+]);
+
+/**
+ * Common room words in de/en/ru: a room named in one language is also found by these words in the others
+ * ("на кухне" → "Küche", "в спальне" → "Schlafzimmer"). Matched in their own forms only (кухня/кухне/кухню, see
+ * {@link roomWordInText}). Anything else needs an nluAliases row.
+ */
+const ROOM_WORDS: string[][] = [
+    ['kueche', 'kitchen', 'кухня'],
+    ['schlafzimmer', 'bedroom', 'спальня'],
+    ['badezimmer', 'bad', 'bathroom', 'ванная', 'ванна'],
+    ['wohnzimmer', 'living room', 'livingroom', 'lounge', 'гостиная', 'зал'],
+    ['flur', 'diele', 'korridor', 'corridor', 'hallway', 'коридор', 'прихожая'],
+    ['buero', 'arbeitszimmer', 'office', 'study', 'кабинет', 'офис'],
+    ['kinderzimmer', 'nursery', 'kids room', 'детская'],
+    ['gaestezimmer', 'guest room', 'гостевая'],
+    ['esszimmer', 'dining room', 'столовая'],
+    ['toilette', 'wc', 'toilet', 'туалет'],
+    ['keller', 'basement', 'cellar', 'подвал'],
+    ['dachboden', 'attic', 'чердак'],
+    ['garage', 'гараж'],
+    ['garten', 'garden', 'сад'],
+    ['balkon', 'balcony', 'балкон'],
+    ['terrasse', 'terrace', 'терраса'],
+    ['waschkueche', 'laundry', 'прачечная'],
+];
+
+/** German room words that are everyday English words: "how bad is the air" asks nothing about the bathroom. */
+const ENGLISH_LOOKALIKES = new Set(['bad']);
+/** Words only an English sentence has (for {@link ENGLISH_LOOKALIKES}). */
+const ENGLISH_MARKERS = new Set([
+    'how',
+    'what',
+    "what's",
+    'whats',
+    'is',
+    'are',
+    'it',
+    "it's",
+    'which',
+    'there',
+    'does',
+]);
+
+/** The room-word groups a (normalized) room name belongs to: a group word is the name or one of its words. */
+function roomWordGroups(normName: string): string[][] {
+    const words = normName.split(/\s+/);
+    return ROOM_WORDS.filter(g => g.some(w => w === normName || words.includes(w)));
+}
 
 /** Words that ask about every room at once ("wie warm ist es überall"). */
 const EVERYWHERE_WORDS = ['ueberall', 'alle', 'allen', 'everywhere', 'all', 'везде', 'всюду'];
@@ -987,14 +1159,18 @@ export function normalize(s: string): string {
 const STRIP = /[.,!?;:()[\]]/g;
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** The start of a word its inflected forms share: longer words drop more trailing characters. */
+function stemOf(word: string): string {
+    return word.length >= 6 ? word.slice(0, word.length - 2) : word.length >= 5 ? word.slice(0, word.length - 1) : word;
+}
+
 /**
  * Does a name word appear in the text? Matches on a Unicode word boundary and allows a differing
  * suffix (crude stemming) so inflected forms match too — essential for Russian ("подсветку" for
  * "подсветка", "кокпита" for "кокпит"). Longer words drop more trailing characters.
  */
 function wordInText(word: string, text: string): boolean {
-    const stem =
-        word.length >= 6 ? word.slice(0, word.length - 2) : word.length >= 5 ? word.slice(0, word.length - 1) : word;
+    const stem = stemOf(word);
     try {
         return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(stem)}`, 'u').test(text);
     } catch {
@@ -1043,6 +1219,26 @@ const CYRILLIC_TO_LATIN: Record<string, string> = {
 /** Plain transliteration of normalized Russian text ("мобиль" → "mobil"); other characters stay. */
 export function cyrillicToLatin(text: string): string {
     return text.replace(/[а-я]/gu, c => CYRILLIC_TO_LATIN[c] ?? c);
+}
+
+/**
+ * Is a common room word ({@link ROOM_WORDS}) in the text? Stricter than {@link wordInText}, which takes every word
+ * that begins like it: a word of another language counts in its own forms only ("кухне", "зале", "kitchens"), not
+ * as the start of another word ("заливе", "official", "cellphone"), and a German word that is also an English one
+ * not in an English sentence.
+ */
+function roomWordInText(word: string, text: string): boolean {
+    const tokens = text.split(/\s+/);
+    if (ENGLISH_LOOKALIKES.has(word) && tokens.some(t => ENGLISH_MARKERS.has(t))) {
+        return false;
+    }
+    if (word.includes(' ')) {
+        return wordInText(word, text); // "living room": the words in a row
+    }
+    const stem = stemOf(word);
+    // Russian cases and plurals add up to two letters ("гаражах"), German and English one ("Küchen", "kitchens")
+    const longest = word.length + (CYRILLIC_RE.test(word) ? 2 : 1);
+    return tokens.some(t => t.startsWith(stem) && t.length <= longest);
 }
 
 /** A word of a room name in a token: stem-tolerant either way, and a Latin name in Cyrillic letters. */
@@ -1302,7 +1498,7 @@ export class Nlu {
         }
 
         // Aggregate query first ("which windows are open") — before single-device matching.
-        const windowsQuery = this.parseWindowsOpen(p.joined);
+        const windowsQuery = this.parseWindowsOpen(p);
         if (windowsQuery) {
             return windowsQuery;
         }
@@ -1613,6 +1809,14 @@ export class Nlu {
             return null;
         }
         const roomName = this.findRoom(p.joined);
+        const known = (t: string): boolean =>
+            QUERY_WORDS.has(t) ||
+            CATEGORY_SMALL_WORDS.has(t) ||
+            CATEGORY_WORDS.some(c => c.words.some(w => wordInText(w, t))) ||
+            EVERYWHERE_WORDS.some(w => wordInText(w, t));
+        if (!this.onlyKnownWords(p, roomName, known)) {
+            return null; // more than "temperature [in room]", or a place that is no room here → the LLM
+        }
         const everywhere = EVERYWHERE_WORDS.some(w => wordInText(w, p.joined));
         const room = everywhere ? '' : roomName;
         const devices = this.devices.filter(d => match.types.includes(d.type) && (!room || d.room === room));
@@ -1722,7 +1926,7 @@ export class Nlu {
      * громкостью сорок процентов"): answering only its volume part would drop the rest, so it goes to the LLM.
      */
     private volumeOnly(p: Prepared, room: string | undefined): boolean {
-        const roomWords = room ? normalize(room).split(/\s+/).filter(Boolean) : [];
+        const roomWords = this.roomWords(room);
         return spelledNumbersToDigits(p.tokens.join(' '))
             .split(' ')
             .filter(Boolean)
@@ -1744,11 +1948,22 @@ export class Nlu {
             );
     }
 
-    private parseWindowsOpen(text: string): NluIntent | null {
+    private parseWindowsOpen(p: Prepared): NluIntent | null {
+        const text = p.joined;
         if (!WINDOW_WORDS.some(w => wordInText(w, text)) || !OPEN_WORDS.some(w => wordInText(w, text))) {
             return null;
         }
         const roomName = this.findRoom(text);
+        const known = (t: string): boolean =>
+            QUERY_WORDS.has(t) ||
+            WINDOW_SMALL_WORDS.has(t) ||
+            CATEGORY_SMALL_WORDS.has(t) ||
+            WINDOW_WORDS.some(w => wordInText(w, t)) ||
+            OPEN_WORDS.some(w => wordInText(w, t)) ||
+            EVERYWHERE_WORDS.some(w => wordInText(w, t));
+        if (!this.onlyKnownWords(p, roomName, known)) {
+            return null; // "welche Fenster sind in Berlin offen": not a question about this house's windows
+        }
         const windows = this.devices.filter(d => WINDOW_TYPES.has(d.type) && (!roomName || d.room === roomName));
         if (!windows.length) {
             return null; // no window devices known → let the LLM handle it
@@ -1787,7 +2002,39 @@ export class Nlu {
                 bestLen = n.length;
             }
         }
-        return best;
+        if (best) {
+            return best;
+        }
+        // No name in the text: a common room word of another language ("на кухне" for "Küche"). Two rooms of the
+        // same kind ("Bad oben", "Bad unten") are no answer — the word then stays unmatched and the rules step back.
+        const byWord = this.rooms.filter(name =>
+            roomWordGroups(normalize(name)).some(g => g.some(w => roomWordInText(w, text))),
+        );
+        return byWord.length === 1 ? byWord[0] : '';
+    }
+
+    /** The words that may name a room in a command: its own words and the common room words of its kind. */
+    private roomWords(room: string | undefined): string[] {
+        if (!room) {
+            return [];
+        }
+        const n = normalize(room);
+        return [
+            ...n.split(/\s+/).filter(Boolean),
+            ...roomWordGroups(n)
+                .flat()
+                .flatMap(w => w.split(' ')),
+        ];
+    }
+
+    /**
+     * True when every word of the command is a known one (`known`) or names the room: a question that says more
+     * ("Какие бывают перепады температуры в пустынях?") or names a place the house does not have is not one the
+     * rules can answer, and it must never be answered for all rooms instead.
+     */
+    private onlyKnownWords(p: Prepared, room: string | undefined, known: (t: string) => boolean): boolean {
+        const roomWords = this.roomWords(room);
+        return p.tokens.every(t => known(t) || roomWords.some(w => roomWordFits(w, t)));
     }
 
     /**

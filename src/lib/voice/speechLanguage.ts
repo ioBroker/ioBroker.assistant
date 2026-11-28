@@ -64,6 +64,32 @@ function scriptOf(lang: string): Script {
     return SCRIPT_OF[baseLanguage(lang)] || 'latin';
 }
 
+/** Grammar words of English and German: a device name hardly has two of them, a sentence has. */
+const LATIN_GRAMMAR = new Set(
+    "the a an is are was it its it's of to and this that there der die das den dem des ein eine einen ist sind war und es nicht".split(
+        ' ',
+    ),
+);
+
+/**
+ * Does the text carry words of this language's script? For a language not written in Latin letters a few of its
+ * letters are enough: "Температура (Küche): Kueche Sensor 1: 24 °C" is a Russian sentence with German names in it,
+ * and an English voice would read the Russian words badly. Latin letters alone prove nothing (names, units, brands) —
+ * unless they carry the grammar of a sentence: "The lamp "Свет" is on." is English with a Russian name.
+ */
+function hasOwnLetters(text: string, lang: string): boolean {
+    const script = scriptOf(lang);
+    if (script === 'latin') {
+        return false;
+    }
+    const re = LETTERS.find(([s]) => s === script)?.[1];
+    if (!re || (text.match(re) || []).length < MIN_LETTERS) {
+        return false;
+    }
+    const latinWords = text.toLowerCase().match(/[a-zà-ɏ']+/g) || [];
+    return latinWords.filter(w => LATIN_GRAMMAR.has(w)).length < 2;
+}
+
 /** The script most letters of the text are in; '' for too few letters. */
 function dominantScript(text: string): Script | '' {
     let best: Script | '' = '';
@@ -147,13 +173,14 @@ export function replyLanguageLine(lang: string): string {
 export function speechLanguage(text: string, configured: string, reported?: string): string {
     const script = dominantScript(String(text || ''));
     const said = /^[a-z]{2,3}(-[a-z]{2,4})?$/i.test(String(reported || '').trim()) ? baseLanguage(reported) : '';
-    // a report is believed unless the letters contradict it (a "de" mark on a Cyrillic answer)
-    if (said && (!script || scriptOf(said) === script)) {
+    // a report is believed unless the letters contradict it (a "de" mark on a Cyrillic answer); Latin names inside a
+    // Russian sentence do not contradict "ru"
+    if (said && (!script || scriptOf(said) === script || hasOwnLetters(text, said))) {
         // the configured language in its own form ('de-DE'): same voice, same cache entry
         return said === baseLanguage(configured) ? configured : said;
     }
-    if (!script) {
-        return configured;
+    if (!script || (!said && script !== scriptOf(configured) && hasOwnLetters(text, configured))) {
+        return configured; // too few letters, or a sentence of the configured language with Latin names in it
     }
     const byLetters = scriptLanguage(text);
     if (scriptOf(configured) === script) {
